@@ -1,0 +1,41 @@
+[package]
+name = "io-jmap"
+description = "Set of I/O-free coroutines to manage JMAP streams"
+version = "0.0.1"
+authors = ["soywod <pimalaya.org@posteo.net>"]
+rust-version = "1.56"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+categories = ["api-bindings", "email"]
+keywords = ["io-free", "coroutine", "jmap", "rfc8620", "rfc8621"]
+homepage = "https://pimalaya.org"
+documentation = "https://docs.rs/io-jmap/latest/io_jmap"
+repository = "https://github.com/pimalaya/io-jmap"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = []
+
+[dev-dependencies]
+env_logger = "0.11"
+io-stream = { version = "0.0.2", default-features = false, features = ["std"] }
+rustls = "0.23"
+rustls-platform-verifier = "0.6"
+
+[dependencies]
+http = "1.3"
+io-http = { version = "0.0.3", default-features = false }
+io-stream = { version = "0.0.2", default-features = false }
+log = "0.4"
+secrecy = { version = "0.10", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+url = { version = "2.5", features = ["serde"] }
+
+[patch.crates-io]
+io-http.git = "https://github.com/pimalaya/io-http"
+io-stream.git = "https://github.com/pimalaya/io-stream"
