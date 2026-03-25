@@ -46,30 +46,35 @@ pub enum GetJmapSessionResult {
     Reset(http::Uri),
 }
 
-/// I/O-free coroutine to discover a JMAP session.
+/// I/O-free coroutine to fetch a JMAP session (RFC 8620 §2).
 ///
-/// Sends `GET /.well-known/jmap` (RFC 8620 §2) to discover the
-/// server's JMAP session object, which contains the `apiUrl`,
-/// account IDs, and capability configuration.
+/// If `url` has a non-root path (e.g. `https://api.fastmail.com/jmap/api/`),
+/// GETs that path directly as the session endpoint. Otherwise GETs
+/// `/.well-known/jmap` for automatic discovery.
 ///
-/// The discovered session is stored in the returned `context`.
+/// The session is stored in the returned `context`.
 pub struct GetJmapSession {
     context: Option<JmapContext>,
     send: FollowHttpRedirects,
 }
 
 impl GetJmapSession {
-    /// Creates a new session discovery coroutine.
+    /// Creates a new session coroutine.
     ///
-    /// `base_url` should be the HTTPS base URL of the server
-    /// (e.g. `https://mail.example.com`). The `/.well-known/jmap`
-    /// path is appended automatically.
-    pub fn new(context: JmapContext, base_url: &Url) -> Result<Self, GetJmapSessionError> {
-        let host = base_url.host_str().unwrap_or("localhost");
+    /// `url` is either a base URL for discovery (`https://mail.example.com`,
+    /// triggering `GET /.well-known/jmap`) or a direct session endpoint
+    /// (`https://api.example.com/jmap/session/`, used as-is).
+    pub fn new(context: JmapContext, url: &Url) -> Result<Self, GetJmapSessionError> {
+        let host = url.host_str().unwrap_or("localhost");
+
+        let path = match url.path() {
+            "" | "/" => "/.well-known/jmap",
+            p => p,
+        };
 
         let mut builder = http::Request::builder()
             .method(Method::GET)
-            .uri("/.well-known/jmap")
+            .uri(path)
             .header("Host", host)
             .header(ACCEPT, "application/json");
 
@@ -80,7 +85,7 @@ impl GetJmapSession {
 
         let http_request = builder.body(vec![])?;
 
-        info!("discover JMAP session at {base_url}/.well-known/jmap");
+        info!("fetch JMAP session from {host}{path}");
 
         Ok(Self {
             context: Some(context),

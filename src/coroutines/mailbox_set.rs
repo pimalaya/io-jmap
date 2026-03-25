@@ -21,6 +21,8 @@ use crate::{
 pub enum SetJmapMailboxesError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
+    #[error("Serialize Mailbox/set args error: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
     #[error("Parse Mailbox/set response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("Missing Mailbox/set response in method_responses")]
@@ -95,6 +97,14 @@ pub struct MailboxSetArgs {
     pub on_destroy_remove_emails: Option<bool>,
 }
 
+#[derive(Serialize)]
+struct MailboxSetRequest {
+    #[serde(rename = "accountId")]
+    account_id: String,
+    #[serde(flatten)]
+    args: MailboxSetArgs,
+}
+
 /// I/O-free coroutine for the JMAP `Mailbox/set` method.
 ///
 /// Creates, updates, or destroys mailbox objects.
@@ -111,9 +121,8 @@ impl SetJmapMailboxes {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let mut json_args =
-            serde_json::to_value(&args).map_err(|e| SetJmapMailboxesError::ParseResponse(e))?;
-        json_args["accountId"] = serde_json::json!(account_id);
+        let json_args = serde_json::to_value(MailboxSetRequest { account_id, args })
+            .map_err(SetJmapMailboxesError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Mailbox/set", json_args);

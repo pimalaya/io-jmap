@@ -1,4 +1,4 @@
-//! I/O-free coroutine for `EmailSubmission/set` (RFC 8621 §7.5).
+//! I/O-free coroutine for canceling pending `EmailSubmission` objects (RFC 8621 §7.5).
 
 use std::collections::HashMap;
 
@@ -10,7 +10,7 @@ use crate::{
     context::JmapContext,
     coroutines::send::{JmapBatch, SendJmapRequest, SendJmapRequestError, SendJmapRequestResult},
     types::{
-        email_submission::{EmailSubmission, EmailSubmissionCreate},
+        email_submission::{EmailSubmission, EmailSubmissionUpdate, UndoStatus},
         error::JmapMethodError,
         session::capabilities,
     },
@@ -18,16 +18,16 @@ use crate::{
 
 /// Errors that can occur during the coroutine progression.
 #[derive(Debug, Error)]
-pub enum SubmitJmapEmailError {
+pub enum CancelJmapEmailSubmissionsError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
-    #[error("Serialize EmailSubmission/set args error: {0}")]
+    #[error("Serialize EmailSubmission/set (cancel) args error: {0}")]
     SerializeArgs(#[source] serde_json::Error),
-    #[error("Parse EmailSubmission/set response error: {0}")]
+    #[error("Parse EmailSubmission/set (cancel) response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
-    #[error("Missing EmailSubmission/set response in method_responses")]
+    #[error("Missing EmailSubmission/set (cancel) response in method_responses")]
     MissingResponse,
-    #[error("JMAP EmailSubmission/set method error: {0}")]
+    #[error("JMAP EmailSubmission/set (cancel) method error: {0}")]
     Method(#[from] JmapMethodError),
 }
 
@@ -42,66 +42,78 @@ pub struct SetError {
     pub properties: Vec<String>,
 }
 
-/// Result returned by the [`SubmitJmapEmail`] coroutine.
+/// Result returned by the [`CancelJmapEmailSubmissions`] coroutine.
 #[derive(Debug)]
-pub enum SubmitJmapEmailResult {
+pub enum CancelJmapEmailSubmissionsResult {
     Ok {
         context: JmapContext,
         new_state: String,
-        created: HashMap<String, EmailSubmission>,
-        not_created: HashMap<String, SetError>,
+        updated: HashMap<String, Option<EmailSubmission>>,
+        not_updated: HashMap<String, SetError>,
         keep_alive: bool,
     },
     Io(StreamIo),
     Err {
         context: JmapContext,
-        err: SubmitJmapEmailError,
+        err: CancelJmapEmailSubmissionsError,
     },
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EmailSubmissionSetResponse {
+struct EmailSubmissionCancelResponse {
     new_state: String,
     #[serde(default)]
-    created: Option<HashMap<String, EmailSubmission>>,
+    updated: Option<HashMap<String, Option<EmailSubmission>>>,
     #[serde(default)]
-    not_created: Option<HashMap<String, SetError>>,
+    not_updated: Option<HashMap<String, SetError>>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct EmailSubmissionSetArgs {
+struct CancelEmailSubmissionsArgs {
     account_id: String,
-    create: HashMap<String, EmailSubmissionCreate>,
+    update: HashMap<String, EmailSubmissionUpdate>,
 }
 
-/// I/O-free coroutine for the JMAP `EmailSubmission/set` method.
+/// I/O-free coroutine for canceling pending JMAP email submissions.
 ///
-/// Submits emails for sending. This is the JMAP equivalent of SMTP
-/// message submission.
-pub struct SubmitJmapEmail {
+/// Issues an `EmailSubmission/set` request with `undoStatus: "canceled"` for
+/// each of the given submission IDs. Only submissions with
+/// `undoStatus: "pending"` can be canceled; the server will report the others
+/// in `notUpdated`.
+pub struct CancelJmapEmailSubmissions {
     send: SendJmapRequest,
 }
 
-impl SubmitJmapEmail {
+impl CancelJmapEmailSubmissions {
     /// Creates a new coroutine.
     ///
-    /// `submissions` is a map from client-assigned ID to
-    /// [`EmailSubmissionCreate`].
+    /// `ids` is the list of submission IDs to cancel.
     pub fn new(
         context: JmapContext,
-        submissions: HashMap<String, EmailSubmissionCreate>,
-    ) -> Result<Self, SubmitJmapEmailError> {
+        ids: Vec<String>,
+    ) -> Result<Self, CancelJmapEmailSubmissionsError> {
         let account_id = context.account_id.clone().unwrap_or_default();
         let api_url = context
             .api_url()
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let args =
-            serde_json::to_value(EmailSubmissionSetArgs { account_id, create: submissions })
-                .map_err(SubmitJmapEmailError::SerializeArgs)?;
+        let update = ids
+            .into_iter()
+            .map(|id| {
+                (
+                    id,
+                    EmailSubmissionUpdate {
+                        undo_status: Some(UndoStatus::Canceled),
+                    },
+                )
+            })
+            .collect();
+
+        let args = serde_json::to_value(CancelEmailSubmissionsArgs { account_id, update })
+            .map_err(CancelJmapEmailSubmissionsError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("EmailSubmission/set", args);
@@ -117,14 +129,14 @@ impl SubmitJmapEmail {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> SubmitJmapEmailResult {
+    pub fn resume(&mut self, arg: Option<StreamIo>) -> CancelJmapEmailSubmissionsResult {
         let (context, response, keep_alive) = match self.send.resume(arg) {
             SendJmapRequestResult::Ok { context, response, keep_alive } => {
                 (context, response, keep_alive)
             }
-            SendJmapRequestResult::Io(io) => return SubmitJmapEmailResult::Io(io),
+            SendJmapRequestResult::Io(io) => return CancelJmapEmailSubmissionsResult::Io(io),
             SendJmapRequestResult::Err { context, err } => {
-                return SubmitJmapEmailResult::Err {
+                return CancelJmapEmailSubmissionsResult::Err {
                     context,
                     err: err.into(),
                 }
@@ -132,32 +144,32 @@ impl SubmitJmapEmail {
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return SubmitJmapEmailResult::Err {
+            return CancelJmapEmailSubmissionsResult::Err {
                 context,
-                err: SubmitJmapEmailError::MissingResponse,
+                err: CancelJmapEmailSubmissionsError::MissingResponse,
             };
         };
 
         if name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return SubmitJmapEmailResult::Err {
+            return CancelJmapEmailSubmissionsResult::Err {
                 context,
                 err: err.into(),
             };
         }
 
-        match serde_json::from_value::<EmailSubmissionSetResponse>(args) {
-            Ok(r) => SubmitJmapEmailResult::Ok {
+        match serde_json::from_value::<EmailSubmissionCancelResponse>(args) {
+            Ok(r) => CancelJmapEmailSubmissionsResult::Ok {
                 context,
                 new_state: r.new_state,
-                created: r.created.unwrap_or_default(),
-                not_created: r.not_created.unwrap_or_default(),
+                updated: r.updated.unwrap_or_default(),
+                not_updated: r.not_updated.unwrap_or_default(),
                 keep_alive,
             },
-            Err(err) => SubmitJmapEmailResult::Err {
+            Err(err) => CancelJmapEmailSubmissionsResult::Err {
                 context,
-                err: SubmitJmapEmailError::ParseResponse(err),
+                err: CancelJmapEmailSubmissionsError::ParseResponse(err),
             },
         }
     }

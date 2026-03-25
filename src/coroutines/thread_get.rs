@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `Thread/get` method (RFC 8621 §3.3).
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -15,6 +15,8 @@ use crate::{
 pub enum GetJmapThreadsError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
+    #[error("Serialize Thread/get args error: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
     #[error("Parse Thread/get response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("Missing Thread/get response in method_responses")]
@@ -49,6 +51,13 @@ struct ThreadGetResponse {
     state: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadGetArgs {
+    account_id: String,
+    ids: Vec<String>,
+}
+
 /// I/O-free coroutine for the JMAP `Thread/get` method.
 ///
 /// Fetches thread objects by ID, each containing an ordered list of
@@ -69,10 +78,8 @@ impl GetJmapThreads {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let args = serde_json::json!({
-            "accountId": account_id,
-            "ids": ids
-        });
+        let args = serde_json::to_value(ThreadGetArgs { account_id, ids })
+            .map_err(GetJmapThreadsError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Thread/get", args);

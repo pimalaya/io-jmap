@@ -1,11 +1,14 @@
 //! I/O-free JMAP coroutines.
 
+pub mod blob_download;
+pub mod blob_upload;
 pub mod email_copy;
 pub mod email_get;
 pub mod email_import;
 pub mod email_parse;
 pub mod email_query;
 pub mod email_set;
+pub mod email_submission_cancel;
 pub mod email_submission_get;
 pub mod email_submission_query;
 pub mod email_submission_set;

@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `VacationResponse/get` method (RFC 8621 §8.2).
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -15,6 +15,8 @@ use crate::{
 pub enum GetJmapVacationResponseError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
+    #[error("Serialize VacationResponse/get args error: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
     #[error("Parse VacationResponse/get response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("Missing VacationResponse/get response in method_responses")]
@@ -46,6 +48,13 @@ struct VacationResponseGetResponse {
     state: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VacationResponseGetArgs {
+    account_id: String,
+    ids: Vec<String>,
+}
+
 /// I/O-free coroutine for the JMAP `VacationResponse/get` method.
 ///
 /// The `ids` argument should be `["singleton"]` or `null` to fetch the
@@ -56,24 +65,36 @@ pub struct GetJmapVacationResponse {
 
 impl GetJmapVacationResponse {
     pub fn new(context: JmapContext) -> Result<Self, GetJmapVacationResponseError> {
-        let account_id = context.account_id.clone().unwrap_or_default();
+        let account_id = context
+            .account_id_for(capabilities::VACATION_RESPONSE)
+            .unwrap_or_default();
         let api_url = context
             .api_url()
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let args = serde_json::json!({
-            "accountId": account_id,
-            "ids": ["singleton"]
-        });
+        let args = serde_json::to_value(VacationResponseGetArgs {
+            account_id,
+            ids: vec!["singleton".to_string()],
+        })
+        .map_err(GetJmapVacationResponseError::SerializeArgs)?;
+
+        let mut using = vec![capabilities::CORE.into(), capabilities::MAIL.into()];
+        // Only declare the vacation-response capability if the server
+        // advertises it.  Some servers (e.g. Fastmail) return HTTP 403 when
+        // an unknown or unavailable capability appears in `using`.
+        let has_vacation = context
+            .session
+            .as_ref()
+            .map(|s| s.capabilities.contains_key(capabilities::VACATION_RESPONSE))
+            .unwrap_or(true);
+        if has_vacation {
+            using.push(capabilities::VACATION_RESPONSE.into());
+        }
 
         let mut batch = JmapBatch::new();
         batch.add("VacationResponse/get", args);
-        let request = batch.into_request(vec![
-            capabilities::CORE.into(),
-            capabilities::MAIL.into(),
-            capabilities::VACATION_RESPONSE.into(),
-        ]);
+        let request = batch.into_request(using);
 
         Ok(Self {
             send: SendJmapRequest::new(context, &api_url, request)?,

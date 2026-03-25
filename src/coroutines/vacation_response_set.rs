@@ -1,7 +1,9 @@
 //! I/O-free coroutine for the `VacationResponse/set` method (RFC 8621 §8.3).
 
+use std::collections::HashMap;
+
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -36,6 +38,8 @@ pub struct SetError {
     #[serde(rename = "type")]
     pub error_type: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub properties: Vec<String>,
 }
 
 /// Result returned by the [`SetJmapVacationResponse`] coroutine.
@@ -59,7 +63,14 @@ pub enum SetJmapVacationResponseResult {
 struct VacationResponseSetResponse {
     new_state: String,
     #[serde(default)]
-    updated: std::collections::HashMap<String, Option<VacationResponse>>,
+    updated: Option<std::collections::HashMap<String, Option<VacationResponse>>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VacationResponseSetArgs {
+    account_id: String,
+    update: HashMap<&'static str, VacationResponseUpdate>,
 }
 
 /// I/O-free coroutine for the JMAP `VacationResponse/set` method.
@@ -74,27 +85,35 @@ impl SetJmapVacationResponse {
         context: JmapContext,
         patch: VacationResponseUpdate,
     ) -> Result<Self, SetJmapVacationResponseError> {
-        let account_id = context.account_id.clone().unwrap_or_default();
+        let account_id = context
+            .account_id_for(capabilities::VACATION_RESPONSE)
+            .unwrap_or_default();
         let api_url = context
             .api_url()
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let patch_json = serde_json::to_value(&patch)
-            .map_err(SetJmapVacationResponseError::SerializeArgs)?;
+        let args = serde_json::to_value(VacationResponseSetArgs {
+            account_id,
+            update: HashMap::from([("singleton", patch)]),
+        })
+        .map_err(SetJmapVacationResponseError::SerializeArgs)?;
 
-        let args = serde_json::json!({
-            "accountId": account_id,
-            "update": { "singleton": patch_json }
-        });
+        let mut using = vec![capabilities::CORE.into(), capabilities::MAIL.into()];
+        // Only declare the vacation-response capability if the server
+        // advertises it.
+        let has_vacation = context
+            .session
+            .as_ref()
+            .map(|s| s.capabilities.contains_key(capabilities::VACATION_RESPONSE))
+            .unwrap_or(true);
+        if has_vacation {
+            using.push(capabilities::VACATION_RESPONSE.into());
+        }
 
         let mut batch = JmapBatch::new();
         batch.add("VacationResponse/set", args);
-        let request = batch.into_request(vec![
-            capabilities::CORE.into(),
-            capabilities::MAIL.into(),
-            capabilities::VACATION_RESPONSE.into(),
-        ]);
+        let request = batch.into_request(using);
 
         Ok(Self {
             send: SendJmapRequest::new(context, &api_url, request)?,
@@ -129,7 +148,7 @@ impl SetJmapVacationResponse {
             Ok(r) => SetJmapVacationResponseResult::Ok {
                 context,
                 new_state: r.new_state,
-                updated: r.updated.into_values().flatten().next(),
+                updated: r.updated.unwrap_or_default().into_values().flatten().next(),
                 keep_alive,
             },
             Err(err) => SetJmapVacationResponseResult::Err {

@@ -1,7 +1,7 @@
 //! I/O-free coroutine for `Mailbox/changes` (RFC 8621 §2.7).
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -15,6 +15,8 @@ use crate::{
 pub enum GetJmapMailboxChangesError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
+    #[error("Serialize Mailbox/changes args error: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
     #[error("Parse Mailbox/changes response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("Missing Mailbox/changes response in method_responses")]
@@ -52,6 +54,15 @@ struct MailboxChangesResponse {
     destroyed: Vec<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MailboxChangesArgs {
+    account_id: String,
+    since_state: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_changes: Option<u64>,
+}
+
 /// I/O-free coroutine for the JMAP `Mailbox/changes` method.
 ///
 /// Returns the changes to mailboxes since the given `since_state`.
@@ -72,14 +83,12 @@ impl GetJmapMailboxChanges {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let mut args = serde_json::json!({
-            "accountId": account_id,
-            "sinceState": since_state.into()
-        });
-
-        if let Some(max) = max_changes {
-            args["maxChanges"] = serde_json::json!(max);
-        }
+        let args = serde_json::to_value(MailboxChangesArgs {
+            account_id,
+            since_state: since_state.into(),
+            max_changes,
+        })
+        .map_err(GetJmapMailboxChangesError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Mailbox/changes", args);

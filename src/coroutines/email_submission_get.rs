@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `EmailSubmission/get` method (RFC 8621 §7.2).
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -15,6 +15,8 @@ use crate::{
 pub enum GetJmapEmailSubmissionsError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
+    #[error("Serialize EmailSubmission/get args error: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
     #[error("Parse EmailSubmission/get response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("Missing EmailSubmission/get response in method_responses")]
@@ -49,6 +51,13 @@ struct EmailSubmissionGetResponse {
     state: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmailSubmissionGetArgs {
+    account_id: String,
+    ids: Option<Vec<String>>,
+}
+
 /// I/O-free coroutine for the JMAP `EmailSubmission/get` method.
 ///
 /// Fetches EmailSubmission objects by ID. Pass `ids: None` to fetch all.
@@ -67,11 +76,8 @@ impl GetJmapEmailSubmissions {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let mut args = serde_json::json!({ "accountId": account_id });
-        match ids {
-            Some(ids) => args["ids"] = serde_json::json!(ids),
-            None => args["ids"] = serde_json::Value::Null,
-        }
+        let args = serde_json::to_value(EmailSubmissionGetArgs { account_id, ids })
+            .map_err(GetJmapEmailSubmissionsError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("EmailSubmission/get", args);

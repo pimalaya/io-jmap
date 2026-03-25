@@ -121,6 +121,11 @@ pub enum JmapMethodError {
     /// The message has already been sent and cannot be unsent.
     CannotUnsendMessage,
 
+    /// The method is not known to the server.
+    UnknownMethod {
+        description: Option<String>,
+    },
+
     /// An unknown error type not yet enumerated.
     #[serde(other)]
     Unknown,
@@ -234,6 +239,13 @@ impl std::fmt::Display for JmapMethodError {
             Self::ForbiddenMailFrom => write!(f, "JMAP forbiddenMailFrom"),
             Self::ForbiddenToSend => write!(f, "JMAP forbiddenToSend"),
             Self::CannotUnsendMessage => write!(f, "JMAP cannotUnsendMessage"),
+            Self::UnknownMethod { description } => {
+                write!(f, "JMAP unknownMethod")?;
+                if let Some(d) = description {
+                    write!(f, ": {d}")?;
+                }
+                Ok(())
+            }
             Self::Unknown => write!(f, "JMAP unknown error"),
         }
     }

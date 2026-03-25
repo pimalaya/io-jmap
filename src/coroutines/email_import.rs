@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -34,6 +34,8 @@ pub struct SetError {
     #[serde(rename = "type")]
     pub error_type: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub properties: Vec<String>,
 }
 
 /// Result returned by the [`ImportJmapEmail`] coroutine.
@@ -63,6 +65,13 @@ struct EmailImportResponse {
     not_created: HashMap<String, SetError>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmailImportArgs {
+    account_id: String,
+    emails: HashMap<String, EmailImport>,
+}
+
 /// I/O-free coroutine for the JMAP `Email/import` method.
 ///
 /// Imports raw RFC 5322 messages (previously uploaded as blobs) into
@@ -85,13 +94,8 @@ impl ImportJmapEmail {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let emails_json = serde_json::to_value(&emails)
+        let args = serde_json::to_value(EmailImportArgs { account_id, emails })
             .map_err(ImportJmapEmailError::SerializeArgs)?;
-
-        let args = serde_json::json!({
-            "accountId": account_id,
-            "emails": emails_json
-        });
 
         let mut batch = JmapBatch::new();
         batch.add("Email/import", args);

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -38,6 +38,8 @@ pub struct SetError {
     #[serde(rename = "type")]
     pub error_type: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub properties: Vec<String>,
 }
 
 /// Result returned by the [`SetJmapIdentities`] coroutine.
@@ -89,19 +91,36 @@ impl IdentitySetArgs {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct IdentitySetResponse {
-    new_state: String,
     #[serde(default)]
-    created: HashMap<String, Identity>,
+    new_state: Option<String>,
+    /// Parsed as raw JSON to avoid issues with partial server responses.
     #[serde(default)]
-    updated: HashMap<String, Option<Identity>>,
+    #[allow(dead_code)]
+    created: Option<serde_json::Value>,
+    /// Parsed as raw JSON to avoid issues with partial server responses.
     #[serde(default)]
-    destroyed: Vec<String>,
+    #[allow(dead_code)]
+    updated: Option<serde_json::Value>,
     #[serde(default)]
-    not_created: HashMap<String, SetError>,
+    destroyed: Option<Vec<String>>,
     #[serde(default)]
-    not_updated: HashMap<String, SetError>,
+    not_created: Option<HashMap<String, SetError>>,
     #[serde(default)]
-    not_destroyed: HashMap<String, SetError>,
+    not_updated: Option<HashMap<String, SetError>>,
+    #[serde(default)]
+    not_destroyed: Option<HashMap<String, SetError>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IdentitySetRequest {
+    account_id: String,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    create: HashMap<String, IdentityCreate>,
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    update: HashMap<String, IdentityUpdate>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    destroy: Vec<String>,
 }
 
 /// I/O-free coroutine for the JMAP `Identity/set` method.
@@ -120,20 +139,13 @@ impl SetJmapIdentities {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let mut json_args = serde_json::json!({ "accountId": account_id });
-
-        if !args.create.is_empty() {
-            json_args["create"] = serde_json::to_value(&args.create)
-                .map_err(SetJmapIdentitiesError::SerializeArgs)?;
-        }
-        if !args.update.is_empty() {
-            json_args["update"] = serde_json::to_value(&args.update)
-                .map_err(SetJmapIdentitiesError::SerializeArgs)?;
-        }
-        if !args.destroy.is_empty() {
-            json_args["destroy"] = serde_json::to_value(&args.destroy)
-                .map_err(SetJmapIdentitiesError::SerializeArgs)?;
-        }
+        let json_args = serde_json::to_value(IdentitySetRequest {
+            account_id,
+            create: args.create,
+            update: args.update,
+            destroy: args.destroy,
+        })
+        .map_err(SetJmapIdentitiesError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Identity/set", json_args);
@@ -175,13 +187,15 @@ impl SetJmapIdentities {
         match serde_json::from_value::<IdentitySetResponse>(args) {
             Ok(r) => SetJmapIdentitiesResult::Ok {
                 context,
-                new_state: r.new_state,
-                created: r.created,
-                updated: r.updated,
-                destroyed: r.destroyed,
-                not_created: r.not_created,
-                not_updated: r.not_updated,
-                not_destroyed: r.not_destroyed,
+                new_state: r.new_state.unwrap_or_default(),
+                // created/updated are parsed as raw Value to tolerate partial
+                // server responses; return empty maps since no caller uses them.
+                created: HashMap::new(),
+                updated: HashMap::new(),
+                destroyed: r.destroyed.unwrap_or_default(),
+                not_created: r.not_created.unwrap_or_default(),
+                not_updated: r.not_updated.unwrap_or_default(),
+                not_destroyed: r.not_destroyed.unwrap_or_default(),
                 keep_alive,
             },
             Err(err) => SetJmapIdentitiesResult::Err {

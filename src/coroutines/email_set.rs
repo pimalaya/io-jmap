@@ -69,17 +69,17 @@ pub enum SetJmapEmailsResult {
 struct EmailSetResponse {
     new_state: String,
     #[serde(default)]
-    created: HashMap<String, Email>,
+    created: Option<HashMap<String, Email>>,
     #[serde(default)]
-    updated: HashMap<String, Option<Email>>,
+    updated: Option<HashMap<String, Option<Email>>>,
     #[serde(default)]
-    destroyed: Vec<String>,
+    destroyed: Option<Vec<String>>,
     #[serde(default)]
-    not_created: HashMap<String, SetError>,
+    not_created: Option<HashMap<String, SetError>>,
     #[serde(default)]
-    not_updated: HashMap<String, SetError>,
+    not_updated: Option<HashMap<String, SetError>>,
     #[serde(default)]
-    not_destroyed: HashMap<String, SetError>,
+    not_destroyed: Option<HashMap<String, SetError>>,
 }
 
 /// Arguments for an `Email/set` request.
@@ -156,6 +156,14 @@ impl EmailSetArgs {
     }
 }
 
+#[derive(Serialize)]
+struct EmailSetRequest {
+    #[serde(rename = "accountId")]
+    account_id: String,
+    #[serde(flatten)]
+    args: EmailSetArgs,
+}
+
 /// I/O-free coroutine for the JMAP `Email/set` method.
 ///
 /// Creates, updates (e.g. sets keywords/flags), or destroys email objects.
@@ -172,9 +180,8 @@ impl SetJmapEmails {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let mut json_args =
-            serde_json::to_value(&args).map_err(SetJmapEmailsError::SerializeArgs)?;
-        json_args["accountId"] = serde_json::json!(account_id);
+        let json_args = serde_json::to_value(EmailSetRequest { account_id, args })
+            .map_err(SetJmapEmailsError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Email/set", json_args);
@@ -223,12 +230,12 @@ impl SetJmapEmails {
             Ok(r) => SetJmapEmailsResult::Ok {
                 context,
                 new_state: r.new_state,
-                created: r.created,
-                updated: r.updated,
-                destroyed: r.destroyed,
-                not_created: r.not_created,
-                not_updated: r.not_updated,
-                not_destroyed: r.not_destroyed,
+                created: r.created.unwrap_or_default(),
+                updated: r.updated.unwrap_or_default(),
+                destroyed: r.destroyed.unwrap_or_default(),
+                not_created: r.not_created.unwrap_or_default(),
+                not_updated: r.not_updated.unwrap_or_default(),
+                not_destroyed: r.not_destroyed.unwrap_or_default(),
                 keep_alive,
             },
             Err(err) => SetJmapEmailsResult::Err {

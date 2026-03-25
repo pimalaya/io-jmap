@@ -61,11 +61,12 @@ pub struct Identity {
     pub bcc: Option<Vec<EmailAddress>>,
 
     /// Plaintext signature to append to outgoing email.
-    pub text_signature: String,
+    pub text_signature: Option<String>,
 
     /// HTML signature to append to outgoing email.
-    pub html_signature: String,
+    pub html_signature: Option<String>,
 
     /// Whether the user may delete this identity.
+    #[serde(default)]
     pub may_delete: bool,
 }

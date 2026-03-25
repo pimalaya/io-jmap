@@ -57,4 +57,17 @@ impl JmapContext {
     pub fn api_url(&self) -> Option<&url::Url> {
         self.session.as_ref().map(|s| &s.api_url)
     }
+
+    /// Returns the primary account ID for the given capability URN.
+    ///
+    /// Falls back to `account_id` (the mail primary account) if the session
+    /// does not advertise a separate primary account for the capability.
+    pub fn account_id_for(&self, capability: &str) -> Option<String> {
+        if let Some(session) = &self.session {
+            if let Some(id) = session.primary_accounts.get(capability) {
+                return Some(id.clone());
+            }
+        }
+        self.account_id.clone()
+    }
 }

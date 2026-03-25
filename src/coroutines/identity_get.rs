@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `Identity/get` method (RFC 8621 §6.3).
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -15,6 +15,8 @@ use crate::{
 pub enum GetJmapIdentitiesError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
+    #[error("Serialize Identity/get args error: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
     #[error("Parse Identity/get response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("Missing Identity/get response in method_responses")]
@@ -49,6 +51,13 @@ struct IdentityGetResponse {
     state: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IdentityGetArgs {
+    account_id: String,
+    ids: Option<Vec<String>>,
+}
+
 /// I/O-free coroutine for the JMAP `Identity/get` method.
 ///
 /// Fetches sender identity objects. Pass `ids: None` to fetch all identities.
@@ -68,13 +77,8 @@ impl GetJmapIdentities {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let mut args = serde_json::json!({ "accountId": account_id });
-
-        if let Some(ids) = ids {
-            args["ids"] = serde_json::json!(ids);
-        } else {
-            args["ids"] = serde_json::Value::Null;
-        }
+        let args = serde_json::to_value(IdentityGetArgs { account_id, ids })
+            .map_err(GetJmapIdentitiesError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Identity/get", args);

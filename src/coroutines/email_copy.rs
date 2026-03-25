@@ -3,13 +3,17 @@
 use std::collections::HashMap;
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     context::JmapContext,
     coroutines::send::{JmapBatch, SendJmapRequest, SendJmapRequestError, SendJmapRequestResult},
-    types::{email::{Email, EmailCopy}, error::JmapMethodError, session::capabilities},
+    types::{
+        email::{Email, EmailCopy},
+        error::JmapMethodError,
+        session::capabilities,
+    },
 };
 
 /// Errors that can occur during the coroutine progression.
@@ -34,6 +38,8 @@ pub struct SetError {
     #[serde(rename = "type")]
     pub error_type: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub properties: Vec<String>,
 }
 
 /// Result returned by the [`CopyJmapEmails`] coroutine.
@@ -63,6 +69,14 @@ struct EmailCopyResponse {
     not_created: HashMap<String, SetError>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmailCopyArgs {
+    from_account_id: String,
+    account_id: String,
+    create: HashMap<String, EmailCopy>,
+}
+
 /// I/O-free coroutine for the JMAP `Email/copy` method.
 ///
 /// Copies emails from `from_account_id` into the current account.
@@ -83,14 +97,12 @@ impl CopyJmapEmails {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let emails_json = serde_json::to_value(&emails)
-            .map_err(CopyJmapEmailsError::SerializeArgs)?;
-
-        let args = serde_json::json!({
-            "fromAccountId": from_account_id.into(),
-            "accountId": account_id,
-            "create": emails_json
-        });
+        let args = serde_json::to_value(EmailCopyArgs {
+            from_account_id: from_account_id.into(),
+            account_id,
+            create: emails,
+        })
+        .map_err(CopyJmapEmailsError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Email/copy", args);
@@ -104,12 +116,17 @@ impl CopyJmapEmails {
 
     pub fn resume(&mut self, arg: Option<StreamIo>) -> CopyJmapEmailsResult {
         let (context, response, keep_alive) = match self.send.resume(arg) {
-            SendJmapRequestResult::Ok { context, response, keep_alive } => {
-                (context, response, keep_alive)
-            }
+            SendJmapRequestResult::Ok {
+                context,
+                response,
+                keep_alive,
+            } => (context, response, keep_alive),
             SendJmapRequestResult::Io(io) => return CopyJmapEmailsResult::Io(io),
             SendJmapRequestResult::Err { context, err } => {
-                return CopyJmapEmailsResult::Err { context, err: err.into() }
+                return CopyJmapEmailsResult::Err {
+                    context,
+                    err: err.into(),
+                }
             }
         };
 
@@ -121,9 +138,12 @@ impl CopyJmapEmails {
         };
 
         if name == "error" {
-            let err = serde_json::from_value::<JmapMethodError>(args)
-                .unwrap_or(JmapMethodError::Unknown);
-            return CopyJmapEmailsResult::Err { context, err: err.into() };
+            let err =
+                serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
+            return CopyJmapEmailsResult::Err {
+                context,
+                err: err.into(),
+            };
         }
 
         match serde_json::from_value::<EmailCopyResponse>(args) {

@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `Email/get` method (RFC 8621 §4.5).
 
 use io_stream::io::StreamIo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
@@ -15,6 +15,8 @@ use crate::{
 pub enum GetJmapEmailsError {
     #[error("Send JMAP request error: {0}")]
     Send(#[from] SendJmapRequestError),
+    #[error("Serialize Email/get args error: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
     #[error("Parse Email/get response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("Missing Email/get response in method_responses")]
@@ -49,6 +51,29 @@ struct EmailGetResponse {
     state: String,
 }
 
+fn is_false(b: &bool) -> bool {
+    !b
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmailGetArgs {
+    account_id: String,
+    ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    properties: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "is_false")]
+    fetch_text_body_values: bool,
+    #[serde(rename = "fetchHTMLBodyValues", skip_serializing_if = "is_false")]
+    fetch_html_body_values: bool,
+    #[serde(skip_serializing_if = "is_zero")]
+    max_body_value_bytes: u64,
+}
+
 /// I/O-free coroutine for the JMAP `Email/get` method.
 ///
 /// Fetches email objects by ID with the specified properties.
@@ -71,7 +96,7 @@ impl GetJmapEmails {
         properties: Option<Vec<String>>,
         fetch_text_body_values: bool,
         fetch_html_body_values: bool,
-        max_body_value_bytes: Option<u64>,
+        max_body_value_bytes: u64,
     ) -> Result<Self, GetJmapEmailsError> {
         let account_id = context.account_id.clone().unwrap_or_default();
         let api_url = context
@@ -79,28 +104,15 @@ impl GetJmapEmails {
             .cloned()
             .unwrap_or_else(|| "http://localhost".parse().unwrap());
 
-        let mut args = serde_json::json!({
-            "accountId": account_id,
-            "ids": ids
-        });
-
-        if let Some(props) = properties {
-            args["properties"] = serde_json::json!(props);
-        }
-
-        if fetch_text_body_values {
-            args["fetchTextBodyValues"] = serde_json::json!(true);
-        }
-
-        if fetch_html_body_values {
-            args["fetchHTMLBodyValues"] = serde_json::json!(true);
-        }
-
-        if let Some(max) = max_body_value_bytes {
-            if max > 0 {
-                args["maxBodyValueBytes"] = serde_json::json!(max);
-            }
-        }
+        let args = serde_json::to_value(EmailGetArgs {
+            account_id,
+            ids,
+            properties,
+            fetch_text_body_values,
+            fetch_html_body_values,
+            max_body_value_bytes,
+        })
+        .map_err(GetJmapEmailsError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add("Email/get", args);
