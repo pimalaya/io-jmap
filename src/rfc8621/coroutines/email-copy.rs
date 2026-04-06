@@ -1,8 +1,8 @@
 //! I/O-free coroutine for the `Email/copy` method (RFC 8621 §4.10).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,12 +37,12 @@ pub enum JmapEmailCopyError {
 pub enum JmapEmailCopyResult {
     Ok {
         new_state: String,
-        created: HashMap<String, Email>,
-        not_created: HashMap<String, SetError>,
+        created: BTreeMap<String, Email>,
+        not_created: BTreeMap<String, SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailCopyError,
@@ -54,9 +54,9 @@ pub enum JmapEmailCopyResult {
 struct EmailCopyResponse {
     new_state: String,
     #[serde(default)]
-    created: HashMap<String, Email>,
+    created: BTreeMap<String, Email>,
     #[serde(default)]
-    not_created: HashMap<String, SetError>,
+    not_created: BTreeMap<String, SetError>,
 }
 
 #[derive(Serialize)]
@@ -64,7 +64,7 @@ struct EmailCopyResponse {
 struct EmailCopyArgs {
     from_account_id: String,
     account_id: String,
-    create: HashMap<String, EmailCopy>,
+    create: BTreeMap<String, EmailCopy>,
 }
 
 /// I/O-free coroutine for the JMAP `Email/copy` method.
@@ -80,7 +80,7 @@ impl JmapEmailCopy {
         session: &JmapSession,
         http_auth: &SecretString,
         from_account_id: impl Into<String>,
-        emails: HashMap<String, EmailCopy>,
+        emails: BTreeMap<String, EmailCopy>,
     ) -> Result<Self, JmapEmailCopyError> {
         let account_id = session
             .primary_accounts
@@ -106,13 +106,13 @@ impl JmapEmailCopy {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailCopyResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailCopyResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapEmailCopyResult::Io { io },
+            JmapSendResult::Io { input } => return JmapEmailCopyResult::Io { input },
             JmapSendResult::Err { err } => return JmapEmailCopyResult::Err { err: err.into() },
         };
 

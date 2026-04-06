@@ -1,6 +1,7 @@
 //! JMAP Mailbox types (RFC 8621 §2).
 
-use std::fmt;
+use alloc::string::{String, ToString};
+use core::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 

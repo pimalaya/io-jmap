@@ -1,6 +1,7 @@
 //! JMAP EmailSubmission types (RFC 8621 §7).
 
-use std::{collections::HashMap, fmt};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +52,7 @@ pub struct EmailSubmission {
     pub undo_status: Option<UndoStatus>,
 
     /// Per-recipient delivery status.
-    pub delivery_status: Option<HashMap<String, DeliveryStatus>>,
+    pub delivery_status: Option<BTreeMap<String, DeliveryStatus>>,
 
     /// Blob IDs of DSN messages.
     pub dsn_blob_ids: Option<Vec<String>>,
@@ -79,7 +80,7 @@ pub struct EmailAddressWithParameters {
     pub email: String,
 
     /// SMTP parameters (e.g. `NOTIFY`, `ORCPT`).
-    pub parameters: Option<HashMap<String, Option<String>>>,
+    pub parameters: Option<BTreeMap<String, Option<String>>>,
 }
 
 /// Delivery state of a single recipient (RFC 8621 §7.1.1).

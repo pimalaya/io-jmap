@@ -1,8 +1,8 @@
 //! I/O-free coroutine for the `Email/set` method (RFC 8621 §4.7).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -31,16 +31,16 @@ pub enum JmapEmailSetError {
 pub enum JmapEmailSetResult {
     Ok {
         new_state: String,
-        created: HashMap<String, Email>,
-        updated: HashMap<String, Option<Email>>,
+        created: BTreeMap<String, Email>,
+        updated: BTreeMap<String, Option<Email>>,
         destroyed: Vec<String>,
-        not_created: HashMap<String, SetError>,
-        not_updated: HashMap<String, SetError>,
-        not_destroyed: HashMap<String, SetError>,
+        not_created: BTreeMap<String, SetError>,
+        not_updated: BTreeMap<String, SetError>,
+        not_destroyed: BTreeMap<String, SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailSetError,
@@ -53,11 +53,11 @@ pub enum JmapEmailSetResult {
 pub struct JmapEmailSetArgs {
     /// Objects to create (client ID → partial email object).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create: Option<HashMap<String, Email>>,
+    pub create: Option<BTreeMap<String, Email>>,
 
     /// Objects to update (email ID → patch).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update: Option<HashMap<String, EmailPatch>>,
+    pub update: Option<BTreeMap<String, EmailPatch>>,
 
     /// IDs to destroy (delete).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,7 +104,7 @@ impl JmapEmailSetArgs {
     pub fn replace_keywords(
         &mut self,
         id: impl Into<String>,
-        keywords: HashMap<String, bool>,
+        keywords: BTreeMap<String, bool>,
     ) -> &mut Self {
         self.patch(id)
             .0
@@ -137,7 +137,7 @@ impl JmapEmailSetArgs {
     pub fn replace_mailbox_ids(
         &mut self,
         id: impl Into<String>,
-        ids: HashMap<String, bool>,
+        ids: BTreeMap<String, bool>,
     ) -> &mut Self {
         self.patch(id).0.push(EmailPatchOp::ReplaceMailboxIds(ids));
         self
@@ -195,7 +195,7 @@ impl JmapEmailSet {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailSetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSetResult {
         match self.set.resume(arg) {
             JmapSetResult::Ok {
                 new_state,
@@ -216,7 +216,7 @@ impl JmapEmailSet {
                 not_destroyed,
                 keep_alive,
             },
-            JmapSetResult::Io { io } => JmapEmailSetResult::Io { io },
+            JmapSetResult::Io { input } => JmapEmailSetResult::Io { input },
             JmapSetResult::Err { err } => JmapEmailSetResult::Err { err: err.into() },
         }
     }

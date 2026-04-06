@@ -1,6 +1,6 @@
 //! JMAP Email types (RFC 8621 §4).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
@@ -18,12 +18,12 @@ pub struct Email {
     pub thread_id: Option<String>,
 
     /// Map of mailbox ID to `true` for each mailbox containing this email.
-    pub mailbox_ids: Option<HashMap<String, bool>>,
+    pub mailbox_ids: Option<BTreeMap<String, bool>>,
 
     /// Map of keyword to `true` for each keyword set on this email.
     ///
     /// Standard keywords: `$seen`, `$flagged`, `$answered`, `$draft`.
-    pub keywords: Option<HashMap<String, bool>>,
+    pub keywords: Option<BTreeMap<String, bool>>,
 
     /// Size in bytes of the raw RFC 5322 message.
     pub size: Option<u64>,
@@ -68,7 +68,7 @@ pub struct Email {
     pub body_structure: Option<EmailBodyPart>,
 
     /// Map of part ID to body value for text parts.
-    pub body_values: Option<HashMap<String, EmailBodyValue>>,
+    pub body_values: Option<BTreeMap<String, EmailBodyValue>>,
 
     /// List of text body parts.
     pub text_body: Option<Vec<EmailBodyPart>>,
@@ -344,13 +344,13 @@ pub enum EmailPatchOp {
     /// Unset a keyword: `"keywords/<kw>": null`
     UnsetKeyword(String),
     /// Replace all keywords atomically: `"keywords": { ... }`
-    ReplaceKeywords(HashMap<String, bool>),
+    ReplaceKeywords(BTreeMap<String, bool>),
     /// Add email to a mailbox: `"mailboxIds/<id>": true`
     AddToMailbox(String),
     /// Remove email from a mailbox: `"mailboxIds/<id>": null`
     RemoveFromMailbox(String),
     /// Replace mailbox membership atomically: `"mailboxIds": { ... }`
-    ReplaceMailboxIds(HashMap<String, bool>),
+    ReplaceMailboxIds(BTreeMap<String, bool>),
 }
 
 /// A set of patch operations applied to a single email in `Email/set`.
@@ -370,7 +370,7 @@ impl EmailPatch {
         self
     }
 
-    pub fn replace_keywords(mut self, keywords: HashMap<String, bool>) -> Self {
+    pub fn replace_keywords(mut self, keywords: BTreeMap<String, bool>) -> Self {
         self.0.push(EmailPatchOp::ReplaceKeywords(keywords));
         self
     }
@@ -385,7 +385,7 @@ impl EmailPatch {
         self
     }
 
-    pub fn replace_mailbox_ids(mut self, ids: HashMap<String, bool>) -> Self {
+    pub fn replace_mailbox_ids(mut self, ids: BTreeMap<String, bool>) -> Self {
         self.0.push(EmailPatchOp::ReplaceMailboxIds(ids));
         self
     }
@@ -428,11 +428,11 @@ pub struct EmailImport {
     pub blob_id: String,
 
     /// Map of mailbox ID → `true` for mailboxes to place the email in.
-    pub mailbox_ids: HashMap<String, bool>,
+    pub mailbox_ids: BTreeMap<String, bool>,
 
     /// Keywords to set on the imported email.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub keywords: Option<HashMap<String, bool>>,
+    pub keywords: Option<BTreeMap<String, bool>>,
 
     /// Override the `receivedAt` time (RFC 3339).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -449,11 +449,11 @@ pub struct EmailCopy {
     pub id: String,
 
     /// Map of mailbox ID → `true` for destination mailboxes.
-    pub mailbox_ids: HashMap<String, bool>,
+    pub mailbox_ids: BTreeMap<String, bool>,
 
     /// Keywords to set on the copy (replaces source keywords).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub keywords: Option<HashMap<String, bool>>,
+    pub keywords: Option<BTreeMap<String, bool>>,
 
     /// Override the `receivedAt` time on the copy.
     #[serde(skip_serializing_if = "Option::is_none")]

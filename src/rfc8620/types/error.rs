@@ -1,5 +1,7 @@
 //! JMAP error types (RFC 8620 §3.6, RFC 8621).
 
+use alloc::{string::String, vec::Vec};
+use core::fmt;
 use serde::{Deserialize, Serialize};
 
 /// A JMAP method-level error (RFC 8620 §3.6).
@@ -107,8 +109,8 @@ pub enum JmapMethodError {
     Unknown,
 }
 
-impl std::fmt::Display for JmapMethodError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for JmapMethodError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ServerFail { description } => {
                 write!(f, "JMAP serverFail")?;
@@ -227,7 +229,7 @@ impl std::fmt::Display for JmapMethodError {
     }
 }
 
-impl std::error::Error for JmapMethodError {}
+impl core::error::Error for JmapMethodError {}
 
 /// Per-object error returned in `Foo/set` responses (RFC 8620 §5.3).
 #[derive(Clone, Debug, Deserialize)]

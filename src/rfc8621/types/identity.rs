@@ -1,5 +1,6 @@
 //! JMAP Identity types (RFC 8621 §6).
 
+use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 use crate::rfc8621::types::email::EmailAddress;

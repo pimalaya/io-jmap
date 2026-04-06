@@ -7,7 +7,11 @@
 }:
 
 let
-  inherit (pkgs) openssl pkg-config;
+  inherit (pkgs)
+    cargo-deny
+    openssl
+    pkg-config
+    ;
 
   shell = pimalaya.mkShell {
     inherit
@@ -29,6 +33,7 @@ shell.overrideAttrs (prev: {
   ];
 
   buildInputs = (prev.buildInputs or [ ]) ++ [
+    cargo-deny
     openssl
   ];
 })

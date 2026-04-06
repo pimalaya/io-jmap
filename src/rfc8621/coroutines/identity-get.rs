@@ -1,13 +1,14 @@
 //! I/O-free coroutine for the `Identity/get` method (RFC 8621 §6.3).
 
-use io_stream::io::StreamIo;
+use alloc::{string::String, vec, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     rfc8620::coroutines::get::{JmapGet, JmapGetError, JmapGetResult},
-    rfc8620::types::session::capabilities,
     rfc8620::types::session::JmapSession,
+    rfc8620::types::session::capabilities,
     rfc8621::types::identity::Identity,
 };
 
@@ -28,7 +29,7 @@ pub enum JmapIdentityGetResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapIdentityGetError,
@@ -66,7 +67,7 @@ impl JmapIdentityGet {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapIdentityGetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapIdentityGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -79,7 +80,7 @@ impl JmapIdentityGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { io } => JmapIdentityGetResult::Io { io },
+            JmapGetResult::Io { input } => JmapIdentityGetResult::Io { input },
             JmapGetResult::Err { err } => JmapIdentityGetResult::Err { err: err.into() },
         }
     }

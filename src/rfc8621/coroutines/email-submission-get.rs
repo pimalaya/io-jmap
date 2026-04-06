@@ -1,13 +1,14 @@
 //! I/O-free coroutine for the `EmailSubmission/get` method (RFC 8621 §7.2).
 
-use io_stream::io::StreamIo;
+use alloc::{string::String, vec, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     rfc8620::coroutines::get::{JmapGet, JmapGetError, JmapGetResult},
-    rfc8620::types::session::capabilities,
     rfc8620::types::session::JmapSession,
+    rfc8620::types::session::capabilities,
     rfc8621::types::email_submission::EmailSubmission,
 };
 
@@ -28,7 +29,7 @@ pub enum JmapEmailSubmissionGetResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailSubmissionGetError,
@@ -64,7 +65,7 @@ impl JmapEmailSubmissionGet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailSubmissionGetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSubmissionGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -77,7 +78,7 @@ impl JmapEmailSubmissionGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { io } => JmapEmailSubmissionGetResult::Io { io },
+            JmapGetResult::Io { input } => JmapEmailSubmissionGetResult::Io { input },
             JmapGetResult::Err { err } => JmapEmailSubmissionGetResult::Err { err: err.into() },
         }
     }

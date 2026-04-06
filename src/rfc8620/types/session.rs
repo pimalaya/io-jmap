@@ -1,6 +1,6 @@
 //! JMAP session object types (RFC 8620 §2).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String};
 
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -16,15 +16,15 @@ pub struct JmapSession {
     pub username: String,
 
     /// Map of account ID to account information.
-    pub accounts: HashMap<String, JmapAccountInfo>,
+    pub accounts: BTreeMap<String, JmapAccountInfo>,
 
     /// Map of capability URN to the primary account ID for that capability.
     ///
     /// For example: `"urn:ietf:params:jmap:mail" -> "account-id"`.
-    pub primary_accounts: HashMap<String, String>,
+    pub primary_accounts: BTreeMap<String, String>,
 
     /// Map of capability URN to capability-specific configuration.
-    pub capabilities: HashMap<String, serde_json::Value>,
+    pub capabilities: BTreeMap<String, serde_json::Value>,
 
     /// The URL to use for all JMAP API requests (POST).
     pub api_url: Url,
@@ -58,7 +58,7 @@ pub struct JmapAccountInfo {
     pub is_read_only: bool,
 
     /// Map of capability URN to capability-specific account configuration.
-    pub account_capabilities: HashMap<String, serde_json::Value>,
+    pub account_capabilities: BTreeMap<String, serde_json::Value>,
 }
 
 impl JmapSession {

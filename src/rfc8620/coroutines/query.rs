@@ -1,6 +1,7 @@
 //! Generic I/O-free coroutine for the `Foo/query` method (RFC 8620 §5.5).
 
-use io_stream::io::StreamIo;
+use alloc::{string::String, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -38,7 +39,7 @@ pub enum JmapQueryResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapQueryError,
@@ -145,13 +146,13 @@ impl JmapQuery {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapQueryResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapQueryResult::Io { io },
+            JmapSendResult::Io { input } => return JmapQueryResult::Io { input },
             JmapSendResult::Err { err } => return JmapQueryResult::Err { err: err.into() },
         };
 

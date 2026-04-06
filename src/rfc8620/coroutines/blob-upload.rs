@@ -1,11 +1,11 @@
 //! I/O-free coroutine for uploading a blob (RFC 8620 §6.1).
 
-use http::{
-    header::{AUTHORIZATION, CONTENT_TYPE},
-    Method,
+use alloc::{string::String, vec::Vec};
+use io_http::{
+    rfc9110::request::HttpRequest,
+    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
 };
-use io_http::v1_1::coroutines::send::{SendHttp, SendHttpError, SendHttpResult};
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::ExposeSecret;
 use secrecy::SecretString;
 use serde::Deserialize;
@@ -15,10 +15,8 @@ use url::Url;
 /// Errors that can occur during the coroutine progression.
 #[derive(Debug, Error)]
 pub enum JmapBlobUploadError {
-    #[error("Build HTTP request error: {0}")]
-    BuildHttp(#[from] http::Error),
     #[error("Send HTTP request error: {0}")]
-    SendHttp(#[from] SendHttpError),
+    SendHttp(#[from] Http11SendError),
     #[error("Parse blob upload response error: {0}")]
     ParseResponse(#[source] serde_json::Error),
     #[error("JMAP blob upload returned HTTP {0}")]
@@ -35,7 +33,7 @@ pub enum JmapBlobUploadResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapBlobUploadError,
@@ -56,7 +54,7 @@ struct BlobUploadResponse {
 /// The caller is responsible for resolving the URL template and opening
 /// a stream to the correct host before driving this coroutine.
 pub struct JmapBlobUpload {
-    send: SendHttp,
+    send: Http11Send,
 }
 
 impl JmapBlobUpload {
@@ -70,56 +68,52 @@ impl JmapBlobUpload {
         upload_url: &Url,
         content_type: &str,
         data: Vec<u8>,
-    ) -> Result<Self, JmapBlobUploadError> {
+    ) -> Self {
         let host = upload_url.host_str().unwrap_or("localhost");
-        let path_and_query = format!(
-            "{}{}",
-            upload_url.path(),
-            upload_url
-                .query()
-                .map(|q| format!("?{q}"))
-                .unwrap_or_default()
-        );
 
-        let http_request = http::Request::builder()
-            .method(Method::POST)
-            .uri(&path_and_query)
+        let mut http_request = HttpRequest::get(upload_url.clone())
             .header("Host", host)
-            .header(CONTENT_TYPE, content_type)
-            .header(AUTHORIZATION, http_auth.expose_secret())
-            .body(data)?;
+            .header("Content-Type", content_type)
+            .header("Authorization", http_auth.expose_secret())
+            .body(data);
+        http_request.method = "POST".into();
 
-        Ok(Self {
-            send: SendHttp::new(http_request),
-        })
+        Self {
+            send: Http11Send::new(http_request),
+        }
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapBlobUploadResult {
-        let ok = match self.send.resume(arg) {
-            SendHttpResult::Ok(ok) => ok,
-            SendHttpResult::Io(io) => return JmapBlobUploadResult::Io { io },
-            SendHttpResult::Err(err) => {
-                return JmapBlobUploadResult::Err { err: err.into() };
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapBlobUploadResult {
+        match self.send.resume(arg) {
+            Http11SendResult::Ok {
+                response,
+                keep_alive,
+                ..
+            } => {
+                if !response.status.is_success() {
+                    return JmapBlobUploadResult::Err {
+                        err: JmapBlobUploadError::HttpStatus(*response.status),
+                    };
+                }
+
+                match serde_json::from_slice::<BlobUploadResponse>(&response.body) {
+                    Ok(r) => JmapBlobUploadResult::Ok {
+                        blob_id: r.blob_id,
+                        blob_type: r.r#type,
+                        size: r.size,
+                        keep_alive,
+                    },
+                    Err(err) => JmapBlobUploadResult::Err {
+                        err: JmapBlobUploadError::ParseResponse(err),
+                    },
+                }
             }
-        };
-
-        if !ok.response.status().is_success() {
-            return JmapBlobUploadResult::Err {
-                err: JmapBlobUploadError::HttpStatus(ok.response.status().as_u16()),
-            };
-        }
-
-        match serde_json::from_slice::<BlobUploadResponse>(ok.response.body()) {
-            Ok(r) => JmapBlobUploadResult::Ok {
-                blob_id: r.blob_id,
-                blob_type: r.r#type,
-                size: r.size,
-                keep_alive: ok.keep_alive,
+            Http11SendResult::Io { input } => JmapBlobUploadResult::Io { input },
+            Http11SendResult::Redirect { .. } => JmapBlobUploadResult::Err {
+                err: JmapBlobUploadError::HttpStatus(302),
             },
-            Err(err) => JmapBlobUploadResult::Err {
-                err: JmapBlobUploadError::ParseResponse(err),
-            },
+            Http11SendResult::Err { err } => JmapBlobUploadResult::Err { err: err.into() },
         }
     }
 }

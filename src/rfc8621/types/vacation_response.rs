@@ -1,5 +1,6 @@
 //! JMAP VacationResponse types (RFC 8621 §8).
 
+use alloc::string::String;
 use serde::{Deserialize, Serialize};
 
 /// A JMAP VacationResponse object (RFC 8621 §8.1).

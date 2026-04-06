@@ -1,10 +1,11 @@
 //! Generic I/O-free coroutine for the `Foo/set` method (RFC 8620 §5.3).
 
-use std::{collections::HashMap, marker::PhantomData};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use core::marker::PhantomData;
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 use crate::rfc8620::{
@@ -35,16 +36,16 @@ pub enum JmapSetError {
 pub enum JmapSetResult<T> {
     Ok {
         new_state: String,
-        created: HashMap<String, T>,
-        updated: HashMap<String, Option<T>>,
+        created: BTreeMap<String, T>,
+        updated: BTreeMap<String, Option<T>>,
         destroyed: Vec<String>,
-        not_created: HashMap<String, SetError>,
-        not_updated: HashMap<String, SetError>,
-        not_destroyed: HashMap<String, SetError>,
+        not_created: BTreeMap<String, SetError>,
+        not_updated: BTreeMap<String, SetError>,
+        not_destroyed: BTreeMap<String, SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapSetError,
@@ -58,9 +59,9 @@ struct SetArgs<C: Serialize, U: Serialize> {
     #[serde(skip_serializing_if = "Option::is_none")]
     if_in_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    create: Option<HashMap<String, C>>,
+    create: Option<BTreeMap<String, C>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    update: Option<HashMap<String, U>>,
+    update: Option<BTreeMap<String, U>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     destroy: Option<Vec<String>>,
 }
@@ -69,12 +70,12 @@ struct SetArgs<C: Serialize, U: Serialize> {
 #[serde(rename_all = "camelCase")]
 struct SetResponse<T> {
     new_state: String,
-    created: Option<HashMap<String, T>>,
-    updated: Option<HashMap<String, Option<T>>>,
+    created: Option<BTreeMap<String, T>>,
+    updated: Option<BTreeMap<String, Option<T>>>,
     destroyed: Option<Vec<String>>,
-    not_created: Option<HashMap<String, SetError>>,
-    not_updated: Option<HashMap<String, SetError>>,
-    not_destroyed: Option<HashMap<String, SetError>>,
+    not_created: Option<BTreeMap<String, SetError>>,
+    not_updated: Option<BTreeMap<String, SetError>>,
+    not_destroyed: Option<BTreeMap<String, SetError>>,
 }
 
 /// Generic I/O-free coroutine for the JMAP `Foo/set` method (RFC 8620 §5.3).
@@ -105,8 +106,8 @@ impl<T: DeserializeOwned> JmapSet<T> {
         method: impl Into<String>,
         capabilities: Vec<String>,
         if_in_state: Option<String>,
-        create: Option<HashMap<String, C>>,
-        update: Option<HashMap<String, U>>,
+        create: Option<BTreeMap<String, C>>,
+        update: Option<BTreeMap<String, U>>,
         destroy: Option<Vec<String>>,
     ) -> Result<Self, JmapSetError> {
         let account_id = session.primary_account_id();
@@ -143,13 +144,13 @@ impl<T: DeserializeOwned> JmapSet<T> {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapSetResult<T> {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapSetResult<T> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapSetResult::Io { io },
+            JmapSendResult::Io { input } => return JmapSetResult::Io { input },
             JmapSendResult::Err { err } => return JmapSetResult::Err { err: err.into() },
         };
 

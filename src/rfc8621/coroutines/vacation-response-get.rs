@@ -1,6 +1,11 @@
 //! I/O-free coroutine for the `VacationResponse/get` method (RFC 8621 §8.2).
 
-use io_stream::io::StreamIo;
+use alloc::{
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -8,8 +13,8 @@ use thiserror::Error;
 use crate::{
     rfc8620::coroutines::get::{JmapGet, JmapGetError, JmapGetResult},
     rfc8620::coroutines::send::{JmapBatch, JmapSend, JmapSendError},
-    rfc8620::types::session::capabilities,
     rfc8620::types::session::JmapSession,
+    rfc8620::types::session::capabilities,
     rfc8621::types::vacation_response::VacationResponse,
 };
 
@@ -33,7 +38,7 @@ pub enum JmapVacationResponseGetResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapVacationResponseGetError,
@@ -95,7 +100,7 @@ impl JmapVacationResponseGet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapVacationResponseGetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapVacationResponseGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -107,7 +112,7 @@ impl JmapVacationResponseGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { io } => JmapVacationResponseGetResult::Io { io },
+            JmapGetResult::Io { input } => JmapVacationResponseGetResult::Io { input },
             JmapGetResult::Err { err } => JmapVacationResponseGetResult::Err { err: err.into() },
         }
     }

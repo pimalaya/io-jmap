@@ -4,7 +4,8 @@
 //! result reference so the server resolves the IDs without a second
 //! round-trip.
 
-use io_stream::io::StreamIo;
+use alloc::{string::String, vec, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -51,7 +52,7 @@ pub enum JmapMailboxQueryResult {
         keep_alive: bool,
     },
     /// The coroutine wants stream I/O.
-    Io { io: StreamIo },
+    Io { input: SocketInput },
     /// The coroutine encountered an error.
     Err { err: JmapMailboxQueryError },
 }
@@ -170,13 +171,13 @@ impl JmapMailboxQuery {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapMailboxQueryResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapMailboxQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapMailboxQueryResult::Io { io },
+            JmapSendResult::Io { input } => return JmapMailboxQueryResult::Io { input },
             JmapSendResult::Err { err } => return JmapMailboxQueryResult::Err { err: err.into() },
         };
 
@@ -202,7 +203,7 @@ impl JmapMailboxQuery {
             Err(err) => {
                 return JmapMailboxQueryResult::Err {
                     err: JmapMailboxQueryError::ParseQueryResponse(err),
-                }
+                };
             }
         };
 

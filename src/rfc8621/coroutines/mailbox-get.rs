@@ -1,13 +1,14 @@
 //! I/O-free coroutine for the standalone `Mailbox/get` method (RFC 8621 §2.5).
 
-use io_stream::io::StreamIo;
+use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     rfc8620::coroutines::get::{JmapGet, JmapGetError, JmapGetResult},
-    rfc8620::types::session::capabilities,
     rfc8620::types::session::JmapSession,
+    rfc8620::types::session::capabilities,
     rfc8621::types::mailbox::{Mailbox, MailboxProperty},
 };
 
@@ -28,7 +29,7 @@ pub enum JmapMailboxGetResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapMailboxGetError,
@@ -72,7 +73,7 @@ impl JmapMailboxGet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapMailboxGetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapMailboxGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -85,7 +86,7 @@ impl JmapMailboxGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { io } => JmapMailboxGetResult::Io { io },
+            JmapGetResult::Io { input } => JmapMailboxGetResult::Io { input },
             JmapGetResult::Err { err } => JmapMailboxGetResult::Err { err: err.into() },
         }
     }

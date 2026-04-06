@@ -1,11 +1,10 @@
 //! I/O-free coroutine to discover a JMAP session (RFC 8620 §2).
 
-use http::{
-    header::{ACCEPT, AUTHORIZATION},
-    Method,
+use io_http::{
+    rfc9110::request::HttpRequest,
+    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
 };
-use io_http::v1_1::coroutines::{follow_redirects::*, send::*};
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use log::info;
 use secrecy::ExposeSecret;
 use secrecy::SecretString;
@@ -17,10 +16,8 @@ use crate::rfc8620::types::session::JmapSession;
 /// Errors that can occur during the coroutine progression.
 #[derive(Debug, Error)]
 pub enum JmapSessionGetError {
-    #[error("Build HTTP request error: {0}")]
-    BuildHttp(#[from] http::Error),
     #[error("Send HTTP GET /.well-known/jmap error: {0}")]
-    SendHttp(#[from] FollowHttpRedirectsError),
+    SendHttp(#[from] Http11SendError),
     #[error("HTTP error status {0}")]
     HttpStatus(u16),
     #[error("Parse JMAP session object error: {0}")]
@@ -37,25 +34,32 @@ pub enum JmapSessionGetResult {
         session: JmapSession,
         keep_alive: bool,
     },
-    /// The coroutine wants stream I/O.
-    Io {
-        io: StreamIo,
-    },
+    /// The coroutine wants socket I/O.
+    Io { input: SocketInput },
     /// The coroutine encountered an error.
-    Err {
-        err: JmapSessionGetError,
+    Err { err: JmapSessionGetError },
+    /// The server responded with a redirect to a new URL.
+    ///
+    /// The caller must open a new connection to the redirected URL and
+    /// create a new [`JmapSessionGet`] coroutine targeting it.
+    Redirect {
+        url: Url,
+        keep_alive: bool,
+        same_origin: bool,
     },
-    Reset(http::Uri),
 }
 
 /// I/O-free coroutine to fetch a JMAP session (RFC 8620 §2).
 ///
-/// If `url` has a non-root path (e.g. `https://api.fastmail.com/jmap/api/`),
+/// If `url` has a non-root path (e.g. `https://api.fastmail.com/jmap/session/`),
 /// GETs that path directly as the session endpoint. Otherwise GETs
 /// `/.well-known/jmap` for automatic discovery.
+///
+/// When the server responds with a 3xx redirect, the coroutine returns
+/// [`JmapSessionGetResult::Redirect`]. The caller is responsible for
+/// opening a new connection and retrying with a new coroutine.
 pub struct JmapSessionGet {
-    http_auth: SecretString,
-    send: FollowHttpRedirects,
+    send: Http11Send,
 }
 
 impl JmapSessionGet {
@@ -64,77 +68,66 @@ impl JmapSessionGet {
     /// `url` is either a base URL for discovery (`https://mail.example.com`,
     /// triggering `GET /.well-known/jmap`) or a direct session endpoint
     /// (`https://api.example.com/jmap/session/`, used as-is).
-    pub fn new(http_auth: &SecretString, url: &Url) -> Result<Self, JmapSessionGetError> {
+    pub fn new(http_auth: &SecretString, url: &Url) -> Self {
         let host = url.host_str().unwrap_or("localhost");
 
-        let path = match url.path() {
-            "" | "/" => "/.well-known/jmap",
-            p => p,
+        let session_url = match url.path() {
+            "" | "/" => {
+                let mut u = url.clone();
+                u.set_path("/.well-known/jmap");
+                u
+            }
+            _ => url.clone(),
         };
 
-        let http_request = http::Request::builder()
-            .method(Method::GET)
-            .uri(path)
+        info!("fetch JMAP session from {session_url}");
+
+        let http_request = HttpRequest::get(session_url)
             .header("Host", host)
-            .header(ACCEPT, "application/json")
-            .header(AUTHORIZATION, http_auth.expose_secret())
-            .body(vec![])?;
+            .header("Accept", "application/json")
+            .header("Authorization", http_auth.expose_secret());
 
-        info!("fetch JMAP session from {host}{path}");
-
-        Ok(Self {
-            http_auth: http_auth.clone(),
-            send: FollowHttpRedirects::new(SendHttp::new(http_request)),
-        })
+        Self {
+            send: Http11Send::new(http_request),
+        }
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapSessionGetResult {
-        let ok = match self.send.resume(arg) {
-            FollowHttpRedirectsResult::Ok(ok) => ok,
-            FollowHttpRedirectsResult::Io(io) => return JmapSessionGetResult::Io { io },
-            FollowHttpRedirectsResult::Reset(uri) => {
-                let host = uri.host().unwrap_or("localhost");
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapSessionGetResult {
+        match self.send.resume(arg) {
+            Http11SendResult::Ok {
+                response,
+                keep_alive,
+                ..
+            } => {
+                if !response.status.is_success() {
+                    return JmapSessionGetResult::Err {
+                        err: JmapSessionGetError::HttpStatus(*response.status),
+                    };
+                }
 
-                let mut builder = http::Request::builder()
-                    .method(Method::GET)
-                    .uri(uri.clone())
-                    .header("Host", host)
-                    .header(ACCEPT, "application/json");
-
-                builder = builder.header(AUTHORIZATION, self.http_auth.expose_secret());
-
-                let http_request = match builder.body(vec![]) {
-                    Ok(req) => req,
-                    Err(err) => return JmapSessionGetResult::Err { err: err.into() },
-                };
-
-                self.send = FollowHttpRedirects::new(SendHttp::new(http_request));
-                return JmapSessionGetResult::Reset(uri);
-            }
-            FollowHttpRedirectsResult::Err(err) => {
-                return JmapSessionGetResult::Err { err: err.into() }
-            }
-        };
-
-        if !ok.response.status().is_success() {
-            return JmapSessionGetResult::Err {
-                err: JmapSessionGetError::HttpStatus(ok.response.status().as_u16()),
-            };
-        }
-
-        let session = match serde_json::from_slice::<JmapSession>(ok.response.body()) {
-            Ok(s) => s,
-            Err(err) => {
-                return JmapSessionGetResult::Err {
-                    err: JmapSessionGetError::ParseSession(err),
+                match serde_json::from_slice::<JmapSession>(&response.body) {
+                    Ok(session) => JmapSessionGetResult::Ok {
+                        session,
+                        keep_alive,
+                    },
+                    Err(err) => JmapSessionGetResult::Err {
+                        err: JmapSessionGetError::ParseSession(err),
+                    },
                 }
             }
-        };
-
-        JmapSessionGetResult::Ok {
-            session,
-            keep_alive: ok.keep_alive,
+            Http11SendResult::Io { input } => JmapSessionGetResult::Io { input },
+            Http11SendResult::Redirect {
+                url,
+                keep_alive,
+                same_origin,
+                ..
+            } => JmapSessionGetResult::Redirect {
+                url,
+                keep_alive,
+                same_origin,
+            },
+            Http11SendResult::Err { err } => JmapSessionGetResult::Err { err: err.into() },
         }
     }
 }

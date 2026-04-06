@@ -1,8 +1,8 @@
 //! I/O-free coroutine for the `Mailbox/set` method (RFC 8621 §2.6).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -10,8 +10,8 @@ use thiserror::Error;
 use crate::{
     rfc8620::coroutines::send::{JmapBatch, JmapSend, JmapSendError},
     rfc8620::coroutines::set::{JmapSet, JmapSetError, JmapSetResult},
-    rfc8620::types::session::capabilities,
     rfc8620::types::session::JmapSession,
+    rfc8620::types::session::capabilities,
     rfc8621::types::mailbox::{Mailbox, MailboxCreate, MailboxUpdate},
 };
 
@@ -31,16 +31,16 @@ pub enum JmapMailboxSetError {
 pub enum JmapMailboxSetResult {
     Ok {
         new_state: String,
-        created: HashMap<String, Mailbox>,
-        updated: HashMap<String, Option<Mailbox>>,
+        created: BTreeMap<String, Mailbox>,
+        updated: BTreeMap<String, Option<Mailbox>>,
         destroyed: Vec<String>,
-        not_created: HashMap<String, crate::rfc8620::types::error::SetError>,
-        not_updated: HashMap<String, crate::rfc8620::types::error::SetError>,
-        not_destroyed: HashMap<String, crate::rfc8620::types::error::SetError>,
+        not_created: BTreeMap<String, crate::rfc8620::types::error::SetError>,
+        not_updated: BTreeMap<String, crate::rfc8620::types::error::SetError>,
+        not_destroyed: BTreeMap<String, crate::rfc8620::types::error::SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapMailboxSetError,
@@ -53,11 +53,11 @@ pub enum JmapMailboxSetResult {
 pub struct JmapMailboxSetArgs {
     /// Objects to create (client ID → partial mailbox object).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create: Option<HashMap<String, MailboxCreate>>,
+    pub create: Option<BTreeMap<String, MailboxCreate>>,
 
     /// Objects to update (mailbox ID → patch object).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update: Option<HashMap<String, MailboxUpdate>>,
+    pub update: Option<BTreeMap<String, MailboxUpdate>>,
 
     /// IDs of objects to destroy.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -112,7 +112,7 @@ impl JmapMailboxSet {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapMailboxSetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapMailboxSetResult {
         match self.set.resume(arg) {
             JmapSetResult::Ok {
                 new_state,
@@ -133,7 +133,7 @@ impl JmapMailboxSet {
                 not_destroyed,
                 keep_alive,
             },
-            JmapSetResult::Io { io } => JmapMailboxSetResult::Io { io },
+            JmapSetResult::Io { input } => JmapMailboxSetResult::Io { input },
             JmapSetResult::Err { err } => JmapMailboxSetResult::Err { err: err.into() },
         }
     }

@@ -1,8 +1,8 @@
 //! I/O-free coroutine for the `Email/import` method (RFC 8621 §4.9).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,12 +37,12 @@ pub enum JmapEmailImportError {
 pub enum JmapEmailImportResult {
     Ok {
         new_state: String,
-        created: HashMap<String, Email>,
-        not_created: HashMap<String, SetError>,
+        created: BTreeMap<String, Email>,
+        not_created: BTreeMap<String, SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailImportError,
@@ -54,16 +54,16 @@ pub enum JmapEmailImportResult {
 struct EmailImportResponse {
     new_state: String,
     #[serde(default)]
-    created: HashMap<String, Email>,
+    created: BTreeMap<String, Email>,
     #[serde(default)]
-    not_created: HashMap<String, SetError>,
+    not_created: BTreeMap<String, SetError>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EmailImportArgs {
     account_id: String,
-    emails: HashMap<String, EmailImport>,
+    emails: BTreeMap<String, EmailImport>,
 }
 
 /// I/O-free coroutine for the JMAP `Email/import` method.
@@ -81,7 +81,7 @@ impl JmapEmailImport {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        emails: HashMap<String, EmailImport>,
+        emails: BTreeMap<String, EmailImport>,
     ) -> Result<Self, JmapEmailImportError> {
         let account_id = session
             .primary_accounts
@@ -104,13 +104,13 @@ impl JmapEmailImport {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailImportResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailImportResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapEmailImportResult::Io { io },
+            JmapSendResult::Io { input } => return JmapEmailImportResult::Io { input },
             JmapSendResult::Err { err } => return JmapEmailImportResult::Err { err: err.into() },
         };
 

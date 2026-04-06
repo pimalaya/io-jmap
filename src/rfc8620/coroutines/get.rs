@@ -1,10 +1,11 @@
 //! Generic I/O-free coroutine for the `Foo/get` method (RFC 8620 §5.1).
 
-use std::marker::PhantomData;
+use alloc::{string::String, vec::Vec};
+use core::marker::PhantomData;
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 use crate::rfc8620::{
@@ -37,7 +38,7 @@ pub enum JmapGetResult<T> {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapGetError,
@@ -122,13 +123,13 @@ impl<T: DeserializeOwned> JmapGet<T> {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapGetResult<T> {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapGetResult<T> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapGetResult::Io { io },
+            JmapSendResult::Io { input } => return JmapGetResult::Io { input },
             JmapSendResult::Err { err } => return JmapGetResult::Err { err: err.into() },
         };
 

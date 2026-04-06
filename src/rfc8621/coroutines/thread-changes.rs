@@ -1,13 +1,14 @@
 //! I/O-free coroutine for `Thread/changes` (RFC 8621 §3.2).
 
-use io_stream::io::StreamIo;
+use alloc::{string::String, vec, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     rfc8620::coroutines::changes::{JmapChanges, JmapChangesError, JmapChangesResult},
-    rfc8620::types::session::capabilities,
     rfc8620::types::session::JmapSession,
+    rfc8620::types::session::capabilities,
 };
 
 /// Errors that can occur during the coroutine progression.
@@ -29,7 +30,7 @@ pub enum JmapThreadChangesResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapThreadChangesError,
@@ -64,7 +65,7 @@ impl JmapThreadChanges {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapThreadChangesResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapThreadChangesResult {
         match self.changes.resume(arg) {
             JmapChangesResult::Ok {
                 new_state,
@@ -81,7 +82,7 @@ impl JmapThreadChanges {
                 destroyed,
                 keep_alive,
             },
-            JmapChangesResult::Io { io } => JmapThreadChangesResult::Io { io },
+            JmapChangesResult::Io { input } => JmapThreadChangesResult::Io { input },
             JmapChangesResult::Err { err } => JmapThreadChangesResult::Err { err: err.into() },
         }
     }

@@ -1,7 +1,8 @@
 //! I/O-free coroutine for batched `EmailSubmission/query` + `EmailSubmission/get`
 //! (RFC 8621 §7.3–7.2).
 
-use io_stream::io::StreamIo;
+use alloc::{string::String, vec, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -49,7 +50,7 @@ pub enum JmapEmailSubmissionQueryResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailSubmissionQueryError,
@@ -158,15 +159,15 @@ impl JmapEmailSubmissionQuery {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailSubmissionQueryResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSubmissionQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapEmailSubmissionQueryResult::Io { io },
+            JmapSendResult::Io { input } => return JmapEmailSubmissionQueryResult::Io { input },
             JmapSendResult::Err { err } => {
-                return JmapEmailSubmissionQueryResult::Err { err: err.into() }
+                return JmapEmailSubmissionQueryResult::Err { err: err.into() };
             }
         };
 
@@ -191,7 +192,7 @@ impl JmapEmailSubmissionQuery {
             Err(err) => {
                 return JmapEmailSubmissionQueryResult::Err {
                     err: JmapEmailSubmissionQueryError::ParseQueryResponse(err),
-                }
+                };
             }
         };
 

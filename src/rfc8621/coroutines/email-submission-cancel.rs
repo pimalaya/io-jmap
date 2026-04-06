@@ -1,8 +1,8 @@
 //! I/O-free coroutine for canceling pending `EmailSubmission` objects (RFC 8621 §7.5).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,12 +37,12 @@ pub enum JmapEmailSubmissionCancelError {
 pub enum JmapEmailSubmissionCancelResult {
     Ok {
         new_state: String,
-        updated: HashMap<String, Option<EmailSubmission>>,
-        not_updated: HashMap<String, SetError>,
+        updated: BTreeMap<String, Option<EmailSubmission>>,
+        not_updated: BTreeMap<String, SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailSubmissionCancelError,
@@ -54,16 +54,16 @@ pub enum JmapEmailSubmissionCancelResult {
 struct EmailSubmissionCancelResponse {
     new_state: String,
     #[serde(default)]
-    updated: Option<HashMap<String, Option<EmailSubmission>>>,
+    updated: Option<BTreeMap<String, Option<EmailSubmission>>>,
     #[serde(default)]
-    not_updated: Option<HashMap<String, SetError>>,
+    not_updated: Option<BTreeMap<String, SetError>>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CancelEmailSubmissionsArgs {
     account_id: String,
-    update: HashMap<String, EmailSubmissionUpdate>,
+    update: BTreeMap<String, EmailSubmissionUpdate>,
 }
 
 /// I/O-free coroutine for canceling pending JMAP email submissions.
@@ -121,15 +121,15 @@ impl JmapEmailSubmissionCancel {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailSubmissionCancelResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSubmissionCancelResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapEmailSubmissionCancelResult::Io { io },
+            JmapSendResult::Io { input } => return JmapEmailSubmissionCancelResult::Io { input },
             JmapSendResult::Err { err } => {
-                return JmapEmailSubmissionCancelResult::Err { err: err.into() }
+                return JmapEmailSubmissionCancelResult::Err { err: err.into() };
             }
         };
 

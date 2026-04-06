@@ -1,8 +1,8 @@
 //! I/O-free coroutine for the `Email/parse` method (RFC 8621 §4.11).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -33,13 +33,13 @@ pub enum JmapEmailParseError {
 #[derive(Debug)]
 pub enum JmapEmailParseResult {
     Ok {
-        parsed: HashMap<String, Email>,
+        parsed: BTreeMap<String, Email>,
         not_parsable: Vec<String>,
         not_found: Vec<String>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailParseError,
@@ -64,7 +64,7 @@ struct EmailParseArgs<'a> {
 #[serde(rename_all = "camelCase")]
 struct EmailParseResponse {
     #[serde(default)]
-    parsed: HashMap<String, Email>,
+    parsed: BTreeMap<String, Email>,
     not_parsable: Option<Vec<String>>,
     not_found: Option<Vec<String>>,
 }
@@ -117,13 +117,13 @@ impl JmapEmailParse {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailParseResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailParseResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapEmailParseResult::Io { io },
+            JmapSendResult::Io { input } => return JmapEmailParseResult::Io { input },
             JmapSendResult::Err { err } => return JmapEmailParseResult::Err { err: err.into() },
         };
 

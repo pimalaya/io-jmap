@@ -11,4 +11,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initiated basic coroutines.
 
-[unreleased]: https://github.com/pimalaya/himalaya/compare/root...HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/root...HEAD

@@ -1,8 +1,8 @@
 //! I/O-free coroutine for the `Identity/set` method (RFC 8621 §6.4).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,16 +37,16 @@ pub enum JmapIdentitySetError {
 pub enum JmapIdentitySetResult {
     Ok {
         new_state: String,
-        created: HashMap<String, Identity>,
-        updated: HashMap<String, Option<Identity>>,
+        created: BTreeMap<String, Identity>,
+        updated: BTreeMap<String, Option<Identity>>,
         destroyed: Vec<String>,
-        not_created: HashMap<String, SetError>,
-        not_updated: HashMap<String, SetError>,
-        not_destroyed: HashMap<String, SetError>,
+        not_created: BTreeMap<String, SetError>,
+        not_updated: BTreeMap<String, SetError>,
+        not_destroyed: BTreeMap<String, SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapIdentitySetError,
@@ -56,8 +56,8 @@ pub enum JmapIdentitySetResult {
 /// Arguments for an `Identity/set` request.
 #[derive(Clone, Debug, Default)]
 pub struct JmapIdentitySetArgs {
-    pub create: HashMap<String, IdentityCreate>,
-    pub update: HashMap<String, IdentityUpdate>,
+    pub create: BTreeMap<String, IdentityCreate>,
+    pub update: BTreeMap<String, IdentityUpdate>,
     pub destroy: Vec<String>,
 }
 
@@ -94,21 +94,21 @@ struct IdentitySetResponse {
     #[serde(default)]
     destroyed: Option<Vec<String>>,
     #[serde(default)]
-    not_created: Option<HashMap<String, SetError>>,
+    not_created: Option<BTreeMap<String, SetError>>,
     #[serde(default)]
-    not_updated: Option<HashMap<String, SetError>>,
+    not_updated: Option<BTreeMap<String, SetError>>,
     #[serde(default)]
-    not_destroyed: Option<HashMap<String, SetError>>,
+    not_destroyed: Option<BTreeMap<String, SetError>>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IdentitySetRequest {
     account_id: String,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    create: HashMap<String, IdentityCreate>,
-    #[serde(skip_serializing_if = "HashMap::is_empty")]
-    update: HashMap<String, IdentityUpdate>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    create: BTreeMap<String, IdentityCreate>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    update: BTreeMap<String, IdentityUpdate>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     destroy: Vec<String>,
 }
@@ -152,13 +152,13 @@ impl JmapIdentitySet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapIdentitySetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapIdentitySetResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapIdentitySetResult::Io { io },
+            JmapSendResult::Io { input } => return JmapIdentitySetResult::Io { input },
             JmapSendResult::Err { err } => return JmapIdentitySetResult::Err { err: err.into() },
         };
 
@@ -179,8 +179,8 @@ impl JmapIdentitySet {
                 new_state: r.new_state.unwrap_or_default(),
                 // created/updated are parsed as raw Value to tolerate partial
                 // server responses; return empty maps since no caller uses them.
-                created: HashMap::new(),
-                updated: HashMap::new(),
+                created: BTreeMap::new(),
+                updated: BTreeMap::new(),
                 destroyed: r.destroyed.unwrap_or_default(),
                 not_created: r.not_created.unwrap_or_default(),
                 not_updated: r.not_updated.unwrap_or_default(),

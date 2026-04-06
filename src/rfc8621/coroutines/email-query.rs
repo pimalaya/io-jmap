@@ -6,7 +6,8 @@
 //! This is a key performance advantage over IMAP, which requires
 //! multiple round-trips for the same operation.
 
-use io_stream::io::StreamIo;
+use alloc::{string::String, vec, vec::Vec};
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -50,7 +51,7 @@ pub enum JmapEmailQueryResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailQueryError,
@@ -174,13 +175,13 @@ impl JmapEmailQuery {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailQueryResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapEmailQueryResult::Io { io },
+            JmapSendResult::Io { input } => return JmapEmailQueryResult::Io { input },
             JmapSendResult::Err { err } => return JmapEmailQueryResult::Err { err: err.into() },
         };
 
@@ -206,7 +207,7 @@ impl JmapEmailQuery {
             Err(err) => {
                 return JmapEmailQueryResult::Err {
                     err: JmapEmailQueryError::ParseQueryResponse(err),
-                }
+                };
             }
         };
 

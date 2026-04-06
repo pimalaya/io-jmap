@@ -1,5 +1,6 @@
 //! JMAP Thread types (RFC 8621 §3).
 
+use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 /// A JMAP Thread object (RFC 8621 §3.1).

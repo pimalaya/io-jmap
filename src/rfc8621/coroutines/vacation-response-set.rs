@@ -1,8 +1,8 @@
 //! I/O-free coroutine for the `VacationResponse/set` method (RFC 8621 §8.3).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -38,7 +38,7 @@ pub enum JmapVacationResponseSetResult {
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapVacationResponseSetError,
@@ -50,14 +50,14 @@ pub enum JmapVacationResponseSetResult {
 struct VacationResponseSetResponse {
     new_state: String,
     #[serde(default)]
-    updated: Option<std::collections::HashMap<String, Option<VacationResponse>>>,
+    updated: Option<BTreeMap<String, Option<VacationResponse>>>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VacationResponseSetArgs {
     account_id: String,
-    update: HashMap<&'static str, VacationResponseUpdate>,
+    update: BTreeMap<&'static str, VacationResponseUpdate>,
 }
 
 /// I/O-free coroutine for the JMAP `VacationResponse/set` method.
@@ -83,7 +83,7 @@ impl JmapVacationResponseSet {
 
         let args = serde_json::to_value(VacationResponseSetArgs {
             account_id,
-            update: HashMap::from([("singleton", patch)]),
+            update: BTreeMap::from([("singleton", patch)]),
         })
         .map_err(JmapVacationResponseSetError::SerializeArgs)?;
 
@@ -106,15 +106,15 @@ impl JmapVacationResponseSet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapVacationResponseSetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapVacationResponseSetResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapVacationResponseSetResult::Io { io },
+            JmapSendResult::Io { input } => return JmapVacationResponseSetResult::Io { input },
             JmapSendResult::Err { err } => {
-                return JmapVacationResponseSetResult::Err { err: err.into() }
+                return JmapVacationResponseSetResult::Err { err: err.into() };
             }
         };
 

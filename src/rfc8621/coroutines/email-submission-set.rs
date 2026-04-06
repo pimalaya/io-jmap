@@ -1,8 +1,8 @@
 //! I/O-free coroutine for `EmailSubmission/set` (RFC 8621 §7.5).
 
-use std::collections::HashMap;
+use alloc::{collections::BTreeMap, string::String, vec};
 
-use io_stream::io::StreamIo;
+use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,12 +37,12 @@ pub enum JmapEmailSubmissionSetError {
 pub enum JmapEmailSubmissionSetResult {
     Ok {
         new_state: String,
-        created: HashMap<String, EmailSubmission>,
-        not_created: HashMap<String, SetError>,
+        created: BTreeMap<String, EmailSubmission>,
+        not_created: BTreeMap<String, SetError>,
         keep_alive: bool,
     },
     Io {
-        io: StreamIo,
+        input: SocketInput,
     },
     Err {
         err: JmapEmailSubmissionSetError,
@@ -54,16 +54,16 @@ pub enum JmapEmailSubmissionSetResult {
 struct EmailSubmissionSetResponse {
     new_state: String,
     #[serde(default)]
-    created: Option<HashMap<String, EmailSubmission>>,
+    created: Option<BTreeMap<String, EmailSubmission>>,
     #[serde(default)]
-    not_created: Option<HashMap<String, SetError>>,
+    not_created: Option<BTreeMap<String, SetError>>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct EmailSubmissionSetArgs {
     account_id: String,
-    create: HashMap<String, EmailSubmissionCreate>,
+    create: BTreeMap<String, EmailSubmissionCreate>,
 }
 
 /// I/O-free coroutine for the JMAP `EmailSubmission/set` method.
@@ -82,7 +82,7 @@ impl JmapEmailSubmissionSet {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        submissions: HashMap<String, EmailSubmissionCreate>,
+        submissions: BTreeMap<String, EmailSubmissionCreate>,
     ) -> Result<Self, JmapEmailSubmissionSetError> {
         let account_id = session
             .primary_accounts
@@ -111,15 +111,15 @@ impl JmapEmailSubmissionSet {
     }
 
     /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<StreamIo>) -> JmapEmailSubmissionSetResult {
+    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSubmissionSetResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { io } => return JmapEmailSubmissionSetResult::Io { io },
+            JmapSendResult::Io { input } => return JmapEmailSubmissionSetResult::Io { input },
             JmapSendResult::Err { err } => {
-                return JmapEmailSubmissionSetResult::Err { err: err.into() }
+                return JmapEmailSubmissionSetResult::Err { err: err.into() };
             }
         };
 
