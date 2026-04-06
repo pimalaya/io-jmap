@@ -6,7 +6,7 @@
 
 mod stub;
 
-use io_jmap::rfc8620::coroutines::session_get::{JmapSessionGet, JmapSessionGetResult};
+use io_jmap::rfc8620::session_get::{JmapSessionGet, JmapSessionGetResult};
 use io_socket::runtimes::std_stream::handle;
 use secrecy::SecretString;
 use stub::StubStream;
@@ -68,7 +68,10 @@ fn session_get_200() {
     match run_session_get(&response) {
         JmapSessionGetResult::Ok { session, .. } => {
             assert_eq!(session.username, "user@example.com");
-            assert_eq!(session.primary_account_id(), "acc1");
+            assert_eq!(
+                session.primary_account_id_for("urn:ietf:params:jmap:mail"),
+                "acc1"
+            );
         }
         other => panic!("unexpected result: {other:?}"),
     }

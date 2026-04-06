@@ -12,7 +12,7 @@
 
 use std::{env, net::TcpStream, sync::Arc};
 
-use io_jmap::rfc8620::coroutines::session_get::{JmapSessionGet, JmapSessionGetResult};
+use io_jmap::rfc8620::session_get::{JmapSessionGet, JmapSessionGetResult};
 use io_socket::runtimes::std_stream::handle;
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
 use rustls_platform_verifier::ConfigVerifierExt;
@@ -41,7 +41,7 @@ fn fastmail_session_get() {
     let server_name = ServerName::try_from(host.to_owned()).expect("valid server name");
     let config = ClientConfig::with_platform_verifier().expect("TLS config");
     let conn = ClientConnection::new(Arc::new(config), server_name).expect("TLS handshake");
-    let tcp = TcpStream::connect((host, 443u16)).expect("TCP connect");
+    let tcp = TcpStream::connect((host, 443)).expect("TCP connect");
     let mut stream = StreamOwned::new(conn, tcp);
 
     let mut coroutine = JmapSessionGet::new(&token, &url);
@@ -66,5 +66,8 @@ fn fastmail_session_get() {
 
     println!("username: {}", session.username);
     println!("apiUrl:   {}", session.api_url);
-    println!("primaryMailAccount: {}", session.primary_account_id());
+    println!(
+        "primaryMailAccount: {}",
+        session.primary_account_id_for("urn:ietf:params:jmap:mail")
+    );
 }
