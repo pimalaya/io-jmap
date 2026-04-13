@@ -1,5 +1,5 @@
 {
-  description = "Set of I/O-free coroutines to manage JMAP streams";
+  description = "I/O-free JMAP client library written in Rust";
 
   inputs = {
     nixpkgs = {
