@@ -2,7 +2,6 @@
 
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -33,6 +32,7 @@ pub enum JmapIdentitySetError {
 /// Result returned by the [`JmapIdentitySet`] coroutine.
 #[derive(Debug)]
 pub enum JmapIdentitySetResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         created: BTreeMap<String, Identity>,
@@ -43,12 +43,12 @@ pub enum JmapIdentitySetResult {
         not_destroyed: BTreeMap<String, IdentitySetError>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapIdentitySetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapIdentitySetError),
 }
 
 /// Arguments for an `Identity/set` request.
@@ -150,33 +150,30 @@ impl JmapIdentitySet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapIdentitySetResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapIdentitySetResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapIdentitySetResult::Io { input },
-            JmapSendResult::Err { err } => return JmapIdentitySetResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapIdentitySetResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapIdentitySetResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapIdentitySetResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapIdentitySetResult::Err {
-                err: JmapIdentitySetError::MissingResponse,
-            };
+            return JmapIdentitySetResult::Err(JmapIdentitySetError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapIdentitySetResult::Err { err: err.into() };
+            return JmapIdentitySetResult::Err(err.into());
         }
 
         match serde_json::from_value::<IdentitySetResponse>(args) {
             Ok(r) => JmapIdentitySetResult::Ok {
                 new_state: r.new_state.unwrap_or_default(),
-                // created/updated are parsed as raw Value to tolerate partial
-                // server responses; return empty maps since no caller uses them.
                 created: BTreeMap::new(),
                 updated: BTreeMap::new(),
                 destroyed: r.destroyed.unwrap_or_default(),
@@ -185,9 +182,7 @@ impl JmapIdentitySet {
                 not_destroyed: r.not_destroyed.unwrap_or_default(),
                 keep_alive,
             },
-            Err(err) => JmapIdentitySetResult::Err {
-                err: JmapIdentitySetError::ParseResponse(err),
-            },
+            Err(err) => JmapIdentitySetResult::Err(JmapIdentitySetError::ParseResponse(err)),
         }
     }
 }

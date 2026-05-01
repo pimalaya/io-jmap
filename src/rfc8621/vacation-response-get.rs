@@ -5,7 +5,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -32,17 +32,18 @@ pub enum JmapVacationResponseGetError {
 /// Result returned by the [`JmapVacationResponseGet`] coroutine.
 #[derive(Debug)]
 pub enum JmapVacationResponseGetResult {
+    /// The coroutine has successfully completed.
     Ok {
         vacation_response: Option<VacationResponse>,
         new_state: String,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapVacationResponseGetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapVacationResponseGetError),
 }
 
 #[derive(Serialize)]
@@ -80,9 +81,6 @@ impl JmapVacationResponseGet {
         .map_err(JmapVacationResponseGetError::SerializeArgs)?;
 
         let mut using = vec![capabilities::CORE.into(), capabilities::MAIL.into()];
-        // Only declare the vacation-response capability if the server
-        // advertises it.  Some servers (e.g. Fastmail) return HTTP 403 when
-        // an unknown or unavailable capability appears in `using`.
         let has_vacation = session
             .capabilities
             .contains_key(capabilities::VACATION_RESPONSE);
@@ -100,7 +98,7 @@ impl JmapVacationResponseGet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapVacationResponseGetResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapVacationResponseGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -112,8 +110,9 @@ impl JmapVacationResponseGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { input } => JmapVacationResponseGetResult::Io { input },
-            JmapGetResult::Err { err } => JmapVacationResponseGetResult::Err { err: err.into() },
+            JmapGetResult::WantsRead => JmapVacationResponseGetResult::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapVacationResponseGetResult::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapVacationResponseGetResult::Err(err.into()),
         }
     }
 }

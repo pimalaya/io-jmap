@@ -1,7 +1,7 @@
 //! Generic I/O-free coroutine for the `Foo/query` method (RFC 8620 §5.5).
 
 use alloc::{string::String, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -28,6 +28,7 @@ pub enum JmapQueryError {
 
 #[derive(Debug)]
 pub enum JmapQueryResult {
+    /// The coroutine has successfully completed.
     Ok {
         query_state: String,
         can_calculate_changes: bool,
@@ -37,12 +38,12 @@ pub enum JmapQueryResult {
         limit: Option<u64>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapQueryError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapQueryError),
 }
 
 #[derive(Serialize)]
@@ -124,26 +125,25 @@ impl JmapQuery {
         Self { send }
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapQueryResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapQueryResult::Io { input },
-            JmapSendResult::Err { err } => return JmapQueryResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapQueryResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapQueryResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapQueryResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapQueryResult::Err {
-                err: JmapQueryError::MissingResponse,
-            };
+            return JmapQueryResult::Err(JmapQueryError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapQueryResult::Err { err: err.into() };
+            return JmapQueryResult::Err(err.into());
         }
 
         match serde_json::from_value::<QueryResponse>(args) {
@@ -156,9 +156,7 @@ impl JmapQuery {
                 limit: r.limit,
                 keep_alive,
             },
-            Err(err) => JmapQueryResult::Err {
-                err: JmapQueryError::ParseResponse(err),
-            },
+            Err(err) => JmapQueryResult::Err(JmapQueryError::ParseResponse(err)),
         }
     }
 }

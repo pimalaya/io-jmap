@@ -7,7 +7,7 @@
 //! multiple round-trips for the same operation.
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -43,6 +43,7 @@ pub enum JmapEmailQueryError {
 /// Result returned by the [`JmapEmailQuery`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailQueryResult {
+    /// The coroutine has successfully completed.
     Ok {
         emails: Vec<Email>,
         total: Option<u64>,
@@ -50,12 +51,12 @@ pub enum JmapEmailQueryResult {
         query_state: String,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailQueryError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailQueryError),
 }
 
 #[derive(Serialize)]
@@ -174,56 +175,45 @@ impl JmapEmailQuery {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailQueryResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapEmailQueryResult::Io { input },
-            JmapSendResult::Err { err } => return JmapEmailQueryResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapEmailQueryResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapEmailQueryResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapEmailQueryResult::Err(err.into()),
         };
 
         let mut responses = response.method_responses.into_iter();
 
-        // Parse Email/query response
         let Some((query_name, query_args, _)) = responses.next() else {
-            return JmapEmailQueryResult::Err {
-                err: JmapEmailQueryError::MissingQueryResponse,
-            };
+            return JmapEmailQueryResult::Err(JmapEmailQueryError::MissingQueryResponse);
         };
 
         if query_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(query_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailQueryResult::Err {
-                err: JmapEmailQueryError::QueryMethod(err),
-            };
+            return JmapEmailQueryResult::Err(JmapEmailQueryError::QueryMethod(err));
         }
 
         let query_response = match serde_json::from_value::<EmailQueryResponse>(query_args) {
             Ok(r) => r,
             Err(err) => {
-                return JmapEmailQueryResult::Err {
-                    err: JmapEmailQueryError::ParseQueryResponse(err),
-                };
+                return JmapEmailQueryResult::Err(JmapEmailQueryError::ParseQueryResponse(err));
             }
         };
 
-        // Parse Email/get response
         let Some((get_name, get_args, _)) = responses.next() else {
-            return JmapEmailQueryResult::Err {
-                err: JmapEmailQueryError::MissingGetResponse,
-            };
+            return JmapEmailQueryResult::Err(JmapEmailQueryError::MissingGetResponse);
         };
 
         if get_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(get_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailQueryResult::Err {
-                err: JmapEmailQueryError::GetMethod(err),
-            };
+            return JmapEmailQueryResult::Err(JmapEmailQueryError::GetMethod(err));
         }
 
         match serde_json::from_value::<EmailGetResponse>(get_args) {
@@ -234,9 +224,7 @@ impl JmapEmailQuery {
                 query_state: query_response.query_state,
                 keep_alive,
             },
-            Err(err) => JmapEmailQueryResult::Err {
-                err: JmapEmailQueryError::ParseGetResponse(err),
-            },
+            Err(err) => JmapEmailQueryResult::Err(JmapEmailQueryError::ParseGetResponse(err)),
         }
     }
 }

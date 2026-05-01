@@ -1,13 +1,13 @@
 //! I/O-free coroutine for uploading a blob (RFC 8620 §6.1).
 
 use alloc::{string::String, vec::Vec};
+
 use io_http::{
     rfc9110::request::HttpRequest,
     rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
 };
-use io_socket::io::{SocketInput, SocketOutput};
-use secrecy::ExposeSecret;
-use secrecy::SecretString;
+use log::trace;
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use thiserror::Error;
 use url::Url;
@@ -21,23 +21,26 @@ pub enum JmapBlobUploadError {
     ParseResponse(#[source] serde_json::Error),
     #[error("JMAP blob upload returned HTTP {0}")]
     HttpStatus(u16),
+    #[error("JMAP blob upload returned unexpected redirect")]
+    UnexpectedRedirect,
 }
 
 /// Result returned by the [`JmapBlobUpload`] coroutine.
 #[derive(Debug)]
 pub enum JmapBlobUploadResult {
+    /// The coroutine has successfully completed.
     Ok {
         blob_id: String,
         blob_type: String,
         size: u64,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapBlobUploadError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapBlobUploadError),
 }
 
 #[derive(Deserialize)]
@@ -78,13 +81,20 @@ impl JmapBlobUpload {
             .body(data);
         http_request.method = "POST".into();
 
+        trace!("upload JMAP blob to {upload_url}");
+
         Self {
             send: Http11Send::new(http_request),
         }
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapBlobUploadResult {
+    /// Advances the coroutine.
+    ///
+    /// Pass [`None`] when there is no data to provide (initial call,
+    /// after a write). Pass `Some(data)` with bytes read from the
+    /// socket after a [`JmapBlobUploadResult::WantsRead`]. Pass
+    /// `Some(&[])` to signal EOF.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapBlobUploadResult {
         match self.send.resume(arg) {
             Http11SendResult::Ok {
                 response,
@@ -92,9 +102,8 @@ impl JmapBlobUpload {
                 ..
             } => {
                 if !response.status.is_success() {
-                    return JmapBlobUploadResult::Err {
-                        err: JmapBlobUploadError::HttpStatus(*response.status),
-                    };
+                    let err = JmapBlobUploadError::HttpStatus(*response.status);
+                    return JmapBlobUploadResult::Err(err);
                 }
 
                 match serde_json::from_slice::<BlobUploadResponse>(&response.body) {
@@ -104,16 +113,15 @@ impl JmapBlobUpload {
                         size: r.size,
                         keep_alive,
                     },
-                    Err(err) => JmapBlobUploadResult::Err {
-                        err: JmapBlobUploadError::ParseResponse(err),
-                    },
+                    Err(err) => JmapBlobUploadResult::Err(JmapBlobUploadError::ParseResponse(err)),
                 }
             }
-            Http11SendResult::Io { input } => JmapBlobUploadResult::Io { input },
-            Http11SendResult::Redirect { .. } => JmapBlobUploadResult::Err {
-                err: JmapBlobUploadError::HttpStatus(302),
-            },
-            Http11SendResult::Err { err } => JmapBlobUploadResult::Err { err: err.into() },
+            Http11SendResult::WantsRead => JmapBlobUploadResult::WantsRead,
+            Http11SendResult::WantsWrite(bytes) => JmapBlobUploadResult::WantsWrite(bytes),
+            Http11SendResult::WantsRedirect { .. } => {
+                JmapBlobUploadResult::Err(JmapBlobUploadError::UnexpectedRedirect)
+            }
+            Http11SendResult::Err(err) => JmapBlobUploadResult::Err(err.into()),
         }
     }
 }

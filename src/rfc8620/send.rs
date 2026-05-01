@@ -6,10 +6,8 @@ use io_http::{
     rfc9110::request::HttpRequest,
     rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
 };
-use io_socket::io::{SocketInput, SocketOutput};
-use log::info;
-use secrecy::ExposeSecret;
-use secrecy::SecretString;
+use log::trace;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
@@ -72,10 +70,12 @@ pub enum JmapSendResult {
         response: JmapResponse,
         keep_alive: bool,
     },
-    /// The coroutine wants socket I/O.
-    Io { input: SocketInput },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
     /// The coroutine encountered an error.
-    Err { err: JmapSendError },
+    Err(JmapSendError),
 }
 
 /// I/O-free coroutine to send a JMAP API request and receive the response.
@@ -115,15 +115,20 @@ impl JmapSend {
 
         http_request.method = "POST".into();
 
-        info!("send JMAP request to {api_url}");
+        trace!("send JMAP request to {api_url}");
 
         Ok(Self {
             send: Http11Send::new(http_request),
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapSendResult {
+    /// Advances the coroutine.
+    ///
+    /// Pass [`None`] when there is no data to provide (initial call,
+    /// after a write). Pass `Some(data)` with bytes read from the
+    /// socket after a [`JmapSendResult::WantsRead`]. Pass `Some(&[])`
+    /// to signal EOF.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapSendResult {
         match self.send.resume(arg) {
             Http11SendResult::Ok {
                 response,
@@ -131,9 +136,8 @@ impl JmapSend {
                 ..
             } => {
                 if !response.status.is_success() {
-                    return JmapSendResult::Err {
-                        err: JmapSendError::HttpStatus(*response.status),
-                    };
+                    let err = JmapSendError::HttpStatus(*response.status);
+                    return JmapSendResult::Err(err);
                 }
 
                 match serde_json::from_slice::<JmapResponse>(&response.body) {
@@ -141,16 +145,15 @@ impl JmapSend {
                         response: jmap_response,
                         keep_alive,
                     },
-                    Err(err) => JmapSendResult::Err {
-                        err: JmapSendError::ParseResponse(err),
-                    },
+                    Err(err) => JmapSendResult::Err(JmapSendError::ParseResponse(err)),
                 }
             }
-            Http11SendResult::Io { input } => JmapSendResult::Io { input },
-            Http11SendResult::Redirect { .. } => JmapSendResult::Err {
-                err: JmapSendError::UnexpectedRedirect,
-            },
-            Http11SendResult::Err { err } => JmapSendResult::Err { err: err.into() },
+            Http11SendResult::WantsRead => JmapSendResult::WantsRead,
+            Http11SendResult::WantsWrite(bytes) => JmapSendResult::WantsWrite(bytes),
+            Http11SendResult::WantsRedirect { .. } => {
+                JmapSendResult::Err(JmapSendError::UnexpectedRedirect)
+            }
+            Http11SendResult::Err(err) => JmapSendResult::Err(err.into()),
         }
     }
 }

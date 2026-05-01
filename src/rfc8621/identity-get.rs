@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `Identity/get` method (RFC 8621 §6.3).
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use thiserror::Error;
 
@@ -22,18 +22,19 @@ pub enum JmapIdentityGetError {
 /// Result returned by the [`JmapIdentityGet`] coroutine.
 #[derive(Debug)]
 pub enum JmapIdentityGetResult {
+    /// The coroutine has successfully completed.
     Ok {
         identities: Vec<Identity>,
         not_found: Vec<String>,
         new_state: String,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapIdentityGetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapIdentityGetError),
 }
 
 /// I/O-free coroutine for the JMAP `Identity/get` method.
@@ -74,8 +75,8 @@ impl JmapIdentityGet {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapIdentityGetResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapIdentityGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -88,8 +89,9 @@ impl JmapIdentityGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { input } => JmapIdentityGetResult::Io { input },
-            JmapGetResult::Err { err } => JmapIdentityGetResult::Err { err: err.into() },
+            JmapGetResult::WantsRead => JmapIdentityGetResult::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapIdentityGetResult::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapIdentityGetResult::Err(err.into()),
         }
     }
 }

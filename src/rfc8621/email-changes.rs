@@ -1,7 +1,7 @@
 //! I/O-free coroutine for `Email/changes` (RFC 8621 §4.3).
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use thiserror::Error;
 
@@ -21,6 +21,7 @@ pub enum JmapEmailChangesError {
 /// Result returned by the [`JmapEmailChanges`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailChangesResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         has_more_changes: bool,
@@ -29,12 +30,12 @@ pub enum JmapEmailChangesResult {
         destroyed: Vec<String>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailChangesError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailChangesError),
 }
 
 /// I/O-free coroutine for the JMAP `Email/changes` method.
@@ -72,8 +73,8 @@ impl JmapEmailChanges {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailChangesResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailChangesResult {
         match self.changes.resume(arg) {
             JmapChangesResult::Ok {
                 new_state,
@@ -90,8 +91,9 @@ impl JmapEmailChanges {
                 destroyed,
                 keep_alive,
             },
-            JmapChangesResult::Io { input } => JmapEmailChangesResult::Io { input },
-            JmapChangesResult::Err { err } => JmapEmailChangesResult::Err { err: err.into() },
+            JmapChangesResult::WantsRead => JmapEmailChangesResult::WantsRead,
+            JmapChangesResult::WantsWrite(bytes) => JmapEmailChangesResult::WantsWrite(bytes),
+            JmapChangesResult::Err(err) => JmapEmailChangesResult::Err(err.into()),
         }
     }
 }

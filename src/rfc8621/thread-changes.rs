@@ -1,7 +1,7 @@
 //! I/O-free coroutine for `Thread/changes` (RFC 8621 §3.2).
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use thiserror::Error;
 
@@ -21,6 +21,7 @@ pub enum JmapThreadChangesError {
 /// Result returned by the [`JmapThreadChanges`] coroutine.
 #[derive(Debug)]
 pub enum JmapThreadChangesResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         has_more_changes: bool,
@@ -29,12 +30,12 @@ pub enum JmapThreadChangesResult {
         destroyed: Vec<String>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapThreadChangesError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapThreadChangesError),
 }
 
 /// I/O-free coroutine for the JMAP `Thread/changes` method.
@@ -72,8 +73,8 @@ impl JmapThreadChanges {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapThreadChangesResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapThreadChangesResult {
         match self.changes.resume(arg) {
             JmapChangesResult::Ok {
                 new_state,
@@ -90,8 +91,9 @@ impl JmapThreadChanges {
                 destroyed,
                 keep_alive,
             },
-            JmapChangesResult::Io { input } => JmapThreadChangesResult::Io { input },
-            JmapChangesResult::Err { err } => JmapThreadChangesResult::Err { err: err.into() },
+            JmapChangesResult::WantsRead => JmapThreadChangesResult::WantsRead,
+            JmapChangesResult::WantsWrite(bytes) => JmapThreadChangesResult::WantsWrite(bytes),
+            JmapChangesResult::Err(err) => JmapThreadChangesResult::Err(err.into()),
         }
     }
 }

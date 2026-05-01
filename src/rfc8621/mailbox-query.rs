@@ -5,7 +5,7 @@
 //! round-trip.
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -43,7 +43,7 @@ pub enum JmapMailboxQueryError {
 /// Result returned by the [`JmapMailboxQuery`] coroutine.
 #[derive(Debug)]
 pub enum JmapMailboxQueryResult {
-    /// The coroutine successfully queried mailboxes.
+    /// The coroutine has successfully completed.
     Ok {
         mailboxes: Vec<Mailbox>,
         total: Option<u64>,
@@ -51,10 +51,12 @@ pub enum JmapMailboxQueryResult {
         query_state: String,
         keep_alive: bool,
     },
-    /// The coroutine wants stream I/O.
-    Io { input: SocketInput },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
     /// The coroutine encountered an error.
-    Err { err: JmapMailboxQueryError },
+    Err(JmapMailboxQueryError),
 }
 
 #[derive(Serialize)]
@@ -170,56 +172,45 @@ impl JmapMailboxQuery {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapMailboxQueryResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapMailboxQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapMailboxQueryResult::Io { input },
-            JmapSendResult::Err { err } => return JmapMailboxQueryResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapMailboxQueryResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapMailboxQueryResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapMailboxQueryResult::Err(err.into()),
         };
 
         let mut responses = response.method_responses.into_iter();
 
-        // Parse Mailbox/query response
         let Some((query_name, query_args, _)) = responses.next() else {
-            return JmapMailboxQueryResult::Err {
-                err: JmapMailboxQueryError::MissingQueryResponse,
-            };
+            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::MissingQueryResponse);
         };
 
         if query_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(query_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapMailboxQueryResult::Err {
-                err: JmapMailboxQueryError::QueryMethod(err),
-            };
+            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::QueryMethod(err));
         }
 
         let query_response = match serde_json::from_value::<MailboxQueryResponse>(query_args) {
             Ok(r) => r,
             Err(err) => {
-                return JmapMailboxQueryResult::Err {
-                    err: JmapMailboxQueryError::ParseQueryResponse(err),
-                };
+                return JmapMailboxQueryResult::Err(JmapMailboxQueryError::ParseQueryResponse(err));
             }
         };
 
-        // Parse Mailbox/get response
         let Some((get_name, get_args, _)) = responses.next() else {
-            return JmapMailboxQueryResult::Err {
-                err: JmapMailboxQueryError::MissingGetResponse,
-            };
+            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::MissingGetResponse);
         };
 
         if get_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(get_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapMailboxQueryResult::Err {
-                err: JmapMailboxQueryError::GetMethod(err),
-            };
+            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::GetMethod(err));
         }
 
         match serde_json::from_value::<MailboxGetResponse>(get_args) {
@@ -230,9 +221,7 @@ impl JmapMailboxQuery {
                 query_state: query_response.query_state,
                 keep_alive,
             },
-            Err(err) => JmapMailboxQueryResult::Err {
-                err: JmapMailboxQueryError::ParseGetResponse(err),
-            },
+            Err(err) => JmapMailboxQueryResult::Err(JmapMailboxQueryError::ParseGetResponse(err)),
         }
     }
 }

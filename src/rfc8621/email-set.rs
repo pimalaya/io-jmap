@@ -2,7 +2,6 @@
 
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -29,6 +28,7 @@ pub enum JmapEmailSetError {
 /// Result returned by the [`JmapEmailSet`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailSetResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         created: BTreeMap<String, Email>,
@@ -39,12 +39,12 @@ pub enum JmapEmailSetResult {
         not_destroyed: BTreeMap<String, EmailSetError>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailSetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailSetError),
 }
 
 /// Arguments for an `Email/set` request.
@@ -80,8 +80,6 @@ impl JmapEmailSetArgs {
             .push(id.into());
         self
     }
-
-    // --- patch helpers (mirror EmailPatch, but routed by email ID) ---
 
     pub fn set_keyword(&mut self, id: impl Into<String>, keyword: impl Into<String>) -> &mut Self {
         self.patch(id)
@@ -194,8 +192,8 @@ impl JmapEmailSet {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSetResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSetResult {
         match self.set.resume(arg) {
             JmapSetResult::Ok {
                 new_state,
@@ -226,8 +224,9 @@ impl JmapEmailSet {
                     keep_alive,
                 }
             }
-            JmapSetResult::Io { input } => JmapEmailSetResult::Io { input },
-            JmapSetResult::Err { err } => JmapEmailSetResult::Err { err: err.into() },
+            JmapSetResult::WantsRead => JmapEmailSetResult::WantsRead,
+            JmapSetResult::WantsWrite(bytes) => JmapEmailSetResult::WantsWrite(bytes),
+            JmapSetResult::Err(err) => JmapEmailSetResult::Err(err.into()),
         }
     }
 }

@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `EmailSubmission/get` method (RFC 8621 §7.2).
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use thiserror::Error;
 
@@ -22,18 +22,19 @@ pub enum JmapEmailSubmissionGetError {
 /// Result returned by the [`JmapEmailSubmissionGet`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailSubmissionGetResult {
+    /// The coroutine has successfully completed.
     Ok {
         submissions: Vec<EmailSubmission>,
         not_found: Vec<String>,
         new_state: String,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailSubmissionGetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailSubmissionGetError),
 }
 
 /// I/O-free coroutine for the JMAP `EmailSubmission/get` method.
@@ -73,7 +74,7 @@ impl JmapEmailSubmissionGet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSubmissionGetResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSubmissionGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -86,8 +87,9 @@ impl JmapEmailSubmissionGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { input } => JmapEmailSubmissionGetResult::Io { input },
-            JmapGetResult::Err { err } => JmapEmailSubmissionGetResult::Err { err: err.into() },
+            JmapGetResult::WantsRead => JmapEmailSubmissionGetResult::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapEmailSubmissionGetResult::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapEmailSubmissionGetResult::Err(err.into()),
         }
     }
 }

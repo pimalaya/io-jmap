@@ -2,7 +2,6 @@
 
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -35,18 +34,19 @@ pub enum JmapEmailSubmissionCancelError {
 /// Result returned by the [`JmapEmailSubmissionCancel`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailSubmissionCancelResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         updated: BTreeMap<String, Option<EmailSubmission>>,
         not_updated: BTreeMap<String, EmailSubmissionSetError>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailSubmissionCancelError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailSubmissionCancelError),
 }
 
 #[derive(Deserialize)]
@@ -120,29 +120,30 @@ impl JmapEmailSubmissionCancel {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSubmissionCancelResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSubmissionCancelResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapEmailSubmissionCancelResult::Io { input },
-            JmapSendResult::Err { err } => {
-                return JmapEmailSubmissionCancelResult::Err { err: err.into() };
+            JmapSendResult::WantsRead => return JmapEmailSubmissionCancelResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => {
+                return JmapEmailSubmissionCancelResult::WantsWrite(bytes);
             }
+            JmapSendResult::Err(err) => return JmapEmailSubmissionCancelResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapEmailSubmissionCancelResult::Err {
-                err: JmapEmailSubmissionCancelError::MissingResponse,
-            };
+            return JmapEmailSubmissionCancelResult::Err(
+                JmapEmailSubmissionCancelError::MissingResponse,
+            );
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailSubmissionCancelResult::Err { err: err.into() };
+            return JmapEmailSubmissionCancelResult::Err(err.into());
         }
 
         match serde_json::from_value::<EmailSubmissionCancelResponse>(args) {
@@ -152,9 +153,9 @@ impl JmapEmailSubmissionCancel {
                 not_updated: r.not_updated.unwrap_or_default(),
                 keep_alive,
             },
-            Err(err) => JmapEmailSubmissionCancelResult::Err {
-                err: JmapEmailSubmissionCancelError::ParseResponse(err),
-            },
+            Err(err) => JmapEmailSubmissionCancelResult::Err(
+                JmapEmailSubmissionCancelError::ParseResponse(err),
+            ),
         }
     }
 }

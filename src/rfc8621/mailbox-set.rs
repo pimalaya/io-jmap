@@ -2,7 +2,6 @@
 
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -29,6 +28,7 @@ pub enum JmapMailboxSetError {
 /// Result returned by the [`JmapMailboxSet`] coroutine.
 #[derive(Debug)]
 pub enum JmapMailboxSetResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         created: BTreeMap<String, Mailbox>,
@@ -39,12 +39,12 @@ pub enum JmapMailboxSetResult {
         not_destroyed: BTreeMap<String, MailboxSetError>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapMailboxSetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapMailboxSetError),
 }
 
 /// Arguments for a `Mailbox/set` request.
@@ -111,8 +111,8 @@ impl JmapMailboxSet {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapMailboxSetResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapMailboxSetResult {
         match self.set.resume(arg) {
             JmapSetResult::Ok {
                 new_state,
@@ -143,8 +143,9 @@ impl JmapMailboxSet {
                     keep_alive,
                 }
             }
-            JmapSetResult::Io { input } => JmapMailboxSetResult::Io { input },
-            JmapSetResult::Err { err } => JmapMailboxSetResult::Err { err: err.into() },
+            JmapSetResult::WantsRead => JmapMailboxSetResult::WantsRead,
+            JmapSetResult::WantsWrite(bytes) => JmapMailboxSetResult::WantsWrite(bytes),
+            JmapSetResult::Err(err) => JmapMailboxSetResult::Err(err.into()),
         }
     }
 }
