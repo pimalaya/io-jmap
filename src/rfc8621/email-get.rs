@@ -1,7 +1,7 @@
 //! I/O-free coroutine for the `Email/get` method (RFC 8621 §4.5).
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -28,18 +28,19 @@ pub enum JmapEmailGetError {
 /// Result returned by the [`JmapEmailGet`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailGetResult {
+    /// The coroutine has successfully completed.
     Ok {
         emails: Vec<Email>,
         not_found: Vec<String>,
         new_state: String,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailGetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailGetError),
 }
 
 fn is_false(b: &bool) -> bool {
@@ -117,8 +118,8 @@ impl JmapEmailGet {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailGetResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailGetResult {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
@@ -131,8 +132,9 @@ impl JmapEmailGet {
                 new_state: state,
                 keep_alive,
             },
-            JmapGetResult::Io { input } => JmapEmailGetResult::Io { input },
-            JmapGetResult::Err { err } => JmapEmailGetResult::Err { err: err.into() },
+            JmapGetResult::WantsRead => JmapEmailGetResult::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapEmailGetResult::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapEmailGetResult::Err(err.into()),
         }
     }
 }

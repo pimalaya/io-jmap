@@ -3,7 +3,6 @@
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::marker::PhantomData;
 
-use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
@@ -32,6 +31,7 @@ pub enum JmapSetError {
 /// Result returned by the [`JmapSet`] coroutine.
 #[derive(Debug)]
 pub enum JmapSetResult<T> {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         created: BTreeMap<String, T>,
@@ -42,12 +42,12 @@ pub enum JmapSetResult<T> {
         not_destroyed: BTreeMap<String, serde_json::Value>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapSetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapSetError),
 }
 
 #[derive(Serialize)]
@@ -124,27 +124,26 @@ impl<T: DeserializeOwned> JmapSet<T> {
         }
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapSetResult<T> {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapSetResult<T> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapSetResult::Io { input },
-            JmapSendResult::Err { err } => return JmapSetResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapSetResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapSetResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapSetResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapSetResult::Err {
-                err: JmapSetError::MissingResponse,
-            };
+            return JmapSetResult::Err(JmapSetError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapSetResult::Err { err: err.into() };
+            return JmapSetResult::Err(err.into());
         }
 
         match serde_json::from_value::<SetResponse<T>>(args) {
@@ -158,9 +157,7 @@ impl<T: DeserializeOwned> JmapSet<T> {
                 not_destroyed: r.not_destroyed.unwrap_or_default(),
                 keep_alive,
             },
-            Err(err) => JmapSetResult::Err {
-                err: JmapSetError::ParseResponse(err),
-            },
+            Err(err) => JmapSetResult::Err(JmapSetError::ParseResponse(err)),
         }
     }
 }

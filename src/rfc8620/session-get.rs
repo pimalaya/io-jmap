@@ -1,13 +1,13 @@
 //! I/O-free coroutine to discover a JMAP session (RFC 8620 §2).
 
+use alloc::vec::Vec;
+
 use io_http::{
     rfc9110::request::HttpRequest,
     rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
 };
-use io_socket::io::{SocketInput, SocketOutput};
-use log::info;
-use secrecy::ExposeSecret;
-use secrecy::SecretString;
+use log::trace;
+use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
 
@@ -34,19 +34,21 @@ pub enum JmapSessionGetResult {
         session: JmapSession,
         keep_alive: bool,
     },
-    /// The coroutine wants socket I/O.
-    Io { input: SocketInput },
-    /// The coroutine encountered an error.
-    Err { err: JmapSessionGetError },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
     /// The server responded with a redirect to a new URL.
     ///
     /// The caller must open a new connection to the redirected URL and
     /// create a new [`JmapSessionGet`] coroutine targeting it.
-    Redirect {
+    WantsRedirect {
         url: Url,
         keep_alive: bool,
         same_origin: bool,
     },
+    /// The coroutine encountered an error.
+    Err(JmapSessionGetError),
 }
 
 /// I/O-free coroutine to fetch a JMAP session (RFC 8620 §2).
@@ -56,8 +58,8 @@ pub enum JmapSessionGetResult {
 /// `/.well-known/jmap` for automatic discovery.
 ///
 /// When the server responds with a 3xx redirect, the coroutine returns
-/// [`JmapSessionGetResult::Redirect`]. The caller is responsible for
-/// opening a new connection and retrying with a new coroutine.
+/// [`JmapSessionGetResult::WantsRedirect`]. The caller is responsible
+/// for opening a new connection and retrying with a new coroutine.
 pub struct JmapSessionGet {
     send: Http11Send,
 }
@@ -80,7 +82,7 @@ impl JmapSessionGet {
             _ => url.clone(),
         };
 
-        info!("fetch JMAP session from {session_url}");
+        trace!("fetch JMAP session from {session_url}");
 
         let http_request = HttpRequest::get(session_url)
             .header("Host", host)
@@ -92,8 +94,13 @@ impl JmapSessionGet {
         }
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapSessionGetResult {
+    /// Advances the coroutine.
+    ///
+    /// Pass [`None`] when there is no data to provide (initial call,
+    /// after a write). Pass `Some(data)` with bytes read from the
+    /// socket after a [`JmapSessionGetResult::WantsRead`]. Pass
+    /// `Some(&[])` to signal EOF.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapSessionGetResult {
         match self.send.resume(arg) {
             Http11SendResult::Ok {
                 response,
@@ -101,9 +108,8 @@ impl JmapSessionGet {
                 ..
             } => {
                 if !response.status.is_success() {
-                    return JmapSessionGetResult::Err {
-                        err: JmapSessionGetError::HttpStatus(*response.status),
-                    };
+                    let err = JmapSessionGetError::HttpStatus(*response.status);
+                    return JmapSessionGetResult::Err(err);
                 }
 
                 match serde_json::from_slice::<JmapSession>(&response.body) {
@@ -111,23 +117,22 @@ impl JmapSessionGet {
                         session,
                         keep_alive,
                     },
-                    Err(err) => JmapSessionGetResult::Err {
-                        err: JmapSessionGetError::ParseSession(err),
-                    },
+                    Err(err) => JmapSessionGetResult::Err(JmapSessionGetError::ParseSession(err)),
                 }
             }
-            Http11SendResult::Io { input } => JmapSessionGetResult::Io { input },
-            Http11SendResult::Redirect {
+            Http11SendResult::WantsRead => JmapSessionGetResult::WantsRead,
+            Http11SendResult::WantsWrite(bytes) => JmapSessionGetResult::WantsWrite(bytes),
+            Http11SendResult::WantsRedirect {
                 url,
                 keep_alive,
                 same_origin,
                 ..
-            } => JmapSessionGetResult::Redirect {
+            } => JmapSessionGetResult::WantsRedirect {
                 url,
                 keep_alive,
                 same_origin,
             },
-            Http11SendResult::Err { err } => JmapSessionGetResult::Err { err: err.into() },
+            Http11SendResult::Err(err) => JmapSessionGetResult::Err(err.into()),
         }
     }
 }

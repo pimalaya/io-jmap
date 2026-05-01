@@ -2,7 +2,6 @@
 
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -33,18 +32,19 @@ pub enum JmapEmailParseError {
 /// Result returned by the [`JmapEmailParse`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailParseResult {
+    /// The coroutine has successfully completed.
     Ok {
         parsed: BTreeMap<String, Email>,
         not_parsable: Vec<String>,
         not_found: Vec<String>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailParseError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailParseError),
 }
 
 #[derive(Serialize)]
@@ -118,26 +118,25 @@ impl JmapEmailParse {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailParseResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailParseResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapEmailParseResult::Io { input },
-            JmapSendResult::Err { err } => return JmapEmailParseResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapEmailParseResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapEmailParseResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapEmailParseResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapEmailParseResult::Err {
-                err: JmapEmailParseError::MissingResponse,
-            };
+            return JmapEmailParseResult::Err(JmapEmailParseError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailParseResult::Err { err: err.into() };
+            return JmapEmailParseResult::Err(err.into());
         }
 
         match serde_json::from_value::<EmailParseResponse>(args) {
@@ -147,9 +146,7 @@ impl JmapEmailParse {
                 not_found: r.not_found.unwrap_or_default(),
                 keep_alive,
             },
-            Err(err) => JmapEmailParseResult::Err {
-                err: JmapEmailParseError::ParseResponse(err),
-            },
+            Err(err) => JmapEmailParseResult::Err(JmapEmailParseError::ParseResponse(err)),
         }
     }
 }

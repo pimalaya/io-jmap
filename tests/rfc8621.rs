@@ -1,10 +1,7 @@
 //! Tests for RFC 8621 — JMAP for Mail.
 //!
 //! All tests drive JMAP coroutines against pre-crafted in-memory HTTP
-//! response buffers via [`stub::StubStream`].  No network connection is
-//! made.
-
-mod stub;
+//! response buffers. No network connection is made.
 
 use io_jmap::{
     rfc8620::session::JmapSession,
@@ -17,11 +14,7 @@ use io_jmap::{
         mailbox_set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetResult},
     },
 };
-use io_socket::runtimes::std_stream::handle;
 use secrecy::SecretString;
-use stub::StubStream;
-
-// ── Session fixture ───────────────────────────────────────────────────────────
 
 /// A minimal session object with a single mail account `acc1`.
 const SESSION_JSON: &[u8] = br#"{
@@ -57,8 +50,6 @@ fn make_token() -> SecretString {
     SecretString::from("Bearer test-token")
 }
 
-// ── HTTP response helpers ─────────────────────────────────────────────────────
-
 fn http_response(status: &str, body: &[u8]) -> Vec<u8> {
     let mut response = format!(
         "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
@@ -73,18 +64,17 @@ fn http_ok(body: &[u8]) -> Vec<u8> {
     http_response("200 OK", body)
 }
 
-// ── Coroutine drivers ─────────────────────────────────────────────────────────
-
 fn run_mailbox_query(http_response_bytes: &[u8]) -> JmapMailboxQueryResult {
     let session = make_session();
     let token = make_token();
-    let mut stream = StubStream::new(http_response_bytes);
     let mut coroutine =
         JmapMailboxQuery::new(&session, &token, None, None, None, None, None).unwrap();
-    let mut arg = None;
+    let mut arg: Option<&[u8]> = None;
+
     loop {
         match coroutine.resume(arg.take()) {
-            JmapMailboxQueryResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
+            JmapMailboxQueryResult::WantsWrite(_) => arg = None,
+            JmapMailboxQueryResult::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
@@ -93,12 +83,13 @@ fn run_mailbox_query(http_response_bytes: &[u8]) -> JmapMailboxQueryResult {
 fn run_mailbox_get(http_response_bytes: &[u8], ids: Option<Vec<String>>) -> JmapMailboxGetResult {
     let session = make_session();
     let token = make_token();
-    let mut stream = StubStream::new(http_response_bytes);
     let mut coroutine = JmapMailboxGet::new(&session, &token, ids, None).unwrap();
-    let mut arg = None;
+    let mut arg: Option<&[u8]> = None;
+
     loop {
         match coroutine.resume(arg.take()) {
-            JmapMailboxGetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
+            JmapMailboxGetResult::WantsWrite(_) => arg = None,
+            JmapMailboxGetResult::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
@@ -107,12 +98,13 @@ fn run_mailbox_get(http_response_bytes: &[u8], ids: Option<Vec<String>>) -> Jmap
 fn run_mailbox_set(http_response_bytes: &[u8], args: JmapMailboxSetArgs) -> JmapMailboxSetResult {
     let session = make_session();
     let token = make_token();
-    let mut stream = StubStream::new(http_response_bytes);
     let mut coroutine = JmapMailboxSet::new(&session, &token, args).unwrap();
-    let mut arg = None;
+    let mut arg: Option<&[u8]> = None;
+
     loop {
         match coroutine.resume(arg.take()) {
-            JmapMailboxSetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
+            JmapMailboxSetResult::WantsWrite(_) => arg = None,
+            JmapMailboxSetResult::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
@@ -121,13 +113,14 @@ fn run_mailbox_set(http_response_bytes: &[u8], args: JmapMailboxSetArgs) -> Jmap
 fn run_email_query(http_response_bytes: &[u8]) -> JmapEmailQueryResult {
     let session = make_session();
     let token = make_token();
-    let mut stream = StubStream::new(http_response_bytes);
     let mut coroutine =
         JmapEmailQuery::new(&session, &token, None, None, None, None, None).unwrap();
-    let mut arg = None;
+    let mut arg: Option<&[u8]> = None;
+
     loop {
         match coroutine.resume(arg.take()) {
-            JmapEmailQueryResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
+            JmapEmailQueryResult::WantsWrite(_) => arg = None,
+            JmapEmailQueryResult::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
@@ -136,18 +129,17 @@ fn run_email_query(http_response_bytes: &[u8]) -> JmapEmailQueryResult {
 fn run_email_get(http_response_bytes: &[u8], ids: Vec<String>) -> JmapEmailGetResult {
     let session = make_session();
     let token = make_token();
-    let mut stream = StubStream::new(http_response_bytes);
     let mut coroutine = JmapEmailGet::new(&session, &token, ids, None, false, false, 0).unwrap();
-    let mut arg = None;
+    let mut arg: Option<&[u8]> = None;
+
     loop {
         match coroutine.resume(arg.take()) {
-            JmapEmailGetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
+            JmapEmailGetResult::WantsWrite(_) => arg = None,
+            JmapEmailGetResult::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
 }
-
-// ── Mailbox/query tests ───────────────────────────────────────────────────────
 
 #[test]
 fn mailbox_query_ok() {
@@ -238,7 +230,7 @@ fn mailbox_query_method_error() {
     }"#;
 
     match run_mailbox_query(&http_ok(body)) {
-        JmapMailboxQueryResult::Err { err } => {
+        JmapMailboxQueryResult::Err(err) => {
             assert!(
                 err.to_string().contains("unknownMethod"),
                 "expected unknownMethod error, got: {err}"
@@ -250,7 +242,6 @@ fn mailbox_query_method_error() {
 
 #[test]
 fn mailbox_query_missing_get_response() {
-    // Only Mailbox/query response; Mailbox/get is absent.
     let body = br#"{
       "methodResponses": [
         ["Mailbox/query", {"queryState": "s1", "position": 0, "ids": ["mbox1"]}, "c0"]
@@ -259,7 +250,7 @@ fn mailbox_query_missing_get_response() {
     }"#;
 
     match run_mailbox_query(&http_ok(body)) {
-        JmapMailboxQueryResult::Err { err } => {
+        JmapMailboxQueryResult::Err(err) => {
             assert!(
                 err.to_string().contains("Missing"),
                 "expected missing response error, got: {err}"
@@ -274,7 +265,7 @@ fn mailbox_query_http_error() {
     let response = http_response("401 Unauthorized", b"{}");
 
     match run_mailbox_query(&response) {
-        JmapMailboxQueryResult::Err { err } => {
+        JmapMailboxQueryResult::Err(err) => {
             assert!(
                 err.to_string().contains("401"),
                 "expected 401 error, got: {err}"
@@ -283,8 +274,6 @@ fn mailbox_query_http_error() {
         other => panic!("unexpected result: {other:?}"),
     }
 }
-
-// ── Mailbox/get tests ─────────────────────────────────────────────────────────
 
 #[test]
 fn mailbox_get_ok() {
@@ -347,7 +336,6 @@ fn mailbox_get_not_found() {
 
 #[test]
 fn mailbox_get_all() {
-    // ids = None fetches all mailboxes.
     let body = br#"{
       "methodResponses": [
         ["Mailbox/get", {
@@ -370,8 +358,6 @@ fn mailbox_get_all() {
         other => panic!("unexpected result: {other:?}"),
     }
 }
-
-// ── Mailbox/set tests ─────────────────────────────────────────────────────────
 
 #[test]
 fn mailbox_set_create_ok() {
@@ -454,8 +440,6 @@ fn mailbox_set_destroy_ok() {
     }
 }
 
-// ── Email/query tests ─────────────────────────────────────────────────────────
-
 #[test]
 fn email_query_ok() {
     let body = br#"{
@@ -513,7 +497,7 @@ fn email_query_method_error() {
     }"#;
 
     match run_email_query(&http_ok(body)) {
-        JmapEmailQueryResult::Err { err } => {
+        JmapEmailQueryResult::Err(err) => {
             assert!(
                 err.to_string().contains("invalidArguments"),
                 "expected invalidArguments error, got: {err}"
@@ -522,8 +506,6 @@ fn email_query_method_error() {
         other => panic!("unexpected result: {other:?}"),
     }
 }
-
-// ── Email/get tests ───────────────────────────────────────────────────────────
 
 #[test]
 fn email_get_ok() {

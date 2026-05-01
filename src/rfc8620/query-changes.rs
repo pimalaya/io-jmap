@@ -1,7 +1,7 @@
 //! Generic I/O-free coroutine for the `Foo/queryChanges` method (RFC 8620 §5.6).
 
 use alloc::{string::String, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -34,6 +34,7 @@ pub struct AddedItem {
 
 #[derive(Debug)]
 pub enum JmapQueryChangesResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_query_state: String,
         total: Option<u64>,
@@ -41,12 +42,12 @@ pub enum JmapQueryChangesResult {
         added: Vec<AddedItem>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapQueryChangesError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapQueryChangesError),
 }
 
 #[derive(Serialize)]
@@ -115,26 +116,25 @@ impl JmapQueryChanges {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapQueryChangesResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapQueryChangesResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapQueryChangesResult::Io { input },
-            JmapSendResult::Err { err } => return JmapQueryChangesResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapQueryChangesResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapQueryChangesResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapQueryChangesResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapQueryChangesResult::Err {
-                err: JmapQueryChangesError::MissingResponse,
-            };
+            return JmapQueryChangesResult::Err(JmapQueryChangesError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapQueryChangesResult::Err { err: err.into() };
+            return JmapQueryChangesResult::Err(err.into());
         }
 
         match serde_json::from_value::<QueryChangesResponse>(args) {
@@ -145,9 +145,7 @@ impl JmapQueryChanges {
                 added: r.added,
                 keep_alive,
             },
-            Err(err) => JmapQueryChangesResult::Err {
-                err: JmapQueryChangesError::ParseResponse(err),
-            },
+            Err(err) => JmapQueryChangesResult::Err(JmapQueryChangesError::ParseResponse(err)),
         }
     }
 }

@@ -18,7 +18,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dev-dependencies]
 env_logger = "0.11"
-io-socket = { version = "0.0.1", default-features = false, features = ["std-stream"] }
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
 secrecy = { version = "0.10", default-features = false }
@@ -27,7 +26,6 @@ url = { version = "2.5", default-features = false }
 
 [dependencies]
 io-http = { version = "0.0.3", default-features = false }
-io-socket = { version = "0.0.1", default-features = false }
 log = { version = "0.4", default-features = false }
 secrecy = { version = "0.10", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
@@ -37,4 +35,3 @@ url = { version = "2.5", default-features = false, features = ["serde"] }
 
 [patch.crates-io]
 io-http.git = "https://github.com/pimalaya/io-http"
-io-socket.git = "https://github.com/pimalaya/io-socket"

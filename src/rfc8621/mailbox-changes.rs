@@ -1,7 +1,7 @@
 //! I/O-free coroutine for `Mailbox/changes` (RFC 8621 §2.7).
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use thiserror::Error;
 
@@ -21,6 +21,7 @@ pub enum JmapMailboxChangesError {
 /// Result returned by the [`JmapMailboxChanges`] coroutine.
 #[derive(Debug)]
 pub enum JmapMailboxChangesResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         has_more_changes: bool,
@@ -29,12 +30,12 @@ pub enum JmapMailboxChangesResult {
         destroyed: Vec<String>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapMailboxChangesError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapMailboxChangesError),
 }
 
 /// I/O-free coroutine for the JMAP `Mailbox/changes` method.
@@ -72,8 +73,8 @@ impl JmapMailboxChanges {
         })
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapMailboxChangesResult {
+    /// Advances the coroutine.
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapMailboxChangesResult {
         match self.changes.resume(arg) {
             JmapChangesResult::Ok {
                 new_state,
@@ -90,8 +91,9 @@ impl JmapMailboxChanges {
                 destroyed,
                 keep_alive,
             },
-            JmapChangesResult::Io { input } => JmapMailboxChangesResult::Io { input },
-            JmapChangesResult::Err { err } => JmapMailboxChangesResult::Err { err: err.into() },
+            JmapChangesResult::WantsRead => JmapMailboxChangesResult::WantsRead,
+            JmapChangesResult::WantsWrite(bytes) => JmapMailboxChangesResult::WantsWrite(bytes),
+            JmapChangesResult::Err(err) => JmapMailboxChangesResult::Err(err.into()),
         }
     }
 }

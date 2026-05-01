@@ -50,15 +50,12 @@ use io_jmap::{
         thread_get::{JmapThreadGet, JmapThreadGetResult},
     },
 };
-use io_socket::runtimes::std_stream::handle;
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;
 use url::Url;
 
 /// A stream that is either a plain TCP connection or a TLS-wrapped one.
-///
-/// Allows [`run`] to work with both without dynamic dispatch.
 enum JmapStream {
     Plain(TcpStream),
     Tls(StreamOwned<ClientConnection, TcpStream>),
@@ -90,16 +87,6 @@ impl Write for JmapStream {
 }
 
 /// A shared end-to-end JMAP test flow over plain HTTP.
-///
-/// Connects to `host:port` (no TLS) and runs the full protocol
-/// sequence.
-///
-/// The connect closure always uses the provided `host:port`, ignoring
-/// the URL argument.  This is intentional: a local server
-/// (e.g. Stalwart) may advertise a machine hostname in `apiUrl` that
-/// does not resolve from the test runner's perspective.  The URL is
-/// still passed into the coroutines for the HTTP `Host` header and
-/// request path — TCP routing is separate.
 pub fn run_jmap(host: &str, port: u16, http_auth: &str, email: &str) {
     let _ = env_logger::try_init();
     let h = host.to_owned();
@@ -114,8 +101,6 @@ pub fn run_jmap(host: &str, port: u16, http_auth: &str, email: &str) {
 }
 
 /// A shared end-to-end JMAP test flow over HTTPS (TLS).
-///
-/// Connects to `host:port` with TLS and runs the full protocol sequence.
 pub fn run_jmaps(host: &str, port: u16, http_auth: &str, email: &str) {
     let _ = env_logger::try_init();
     let session_url = format!("https://{host}/jmap/session");
@@ -145,11 +130,14 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
     let mbox_name = format!("io-jmap-test-{ts}");
     let session_url = Url::parse(session_url).expect("parse session URL");
 
+    let mut buf = [0u8; 8192];
+
     // ── SESSION GET ──────────────────────────────────────────────────────────
 
     let mut stream = connect(&session_url);
     let mut coroutine = JmapSessionGet::new(&token, &session_url);
-    let mut arg = None;
+    let mut arg: Option<&[u8]> = None;
+    let mut read_buf = Vec::<u8>::new();
 
     let session = loop {
         match coroutine.resume(arg.take()) {
@@ -157,17 +145,24 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                 session,
                 keep_alive,
             } => {
-                // Reconnect to the API host (may differ from the session host,
-                // e.g. api.fastmail.com → jmap.fastmail.com) or if the server
-                // closed the connection.
                 if !keep_alive || session.api_url.host_str() != session_url.host_str() {
                     stream = connect(&session.api_url);
                 }
                 break session;
             }
-            JmapSessionGetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
-            JmapSessionGetResult::Redirect { url, .. } => panic!("unexpected redirect to {url}"),
-            JmapSessionGetResult::Err { err } => panic!("SESSION GET: {err}"),
+            JmapSessionGetResult::WantsRead => {
+                let n = stream.read(&mut buf).expect("read SESSION GET");
+                read_buf.clear();
+                read_buf.extend_from_slice(&buf[..n]);
+                arg = Some(&read_buf);
+            }
+            JmapSessionGetResult::WantsWrite(bytes) => {
+                stream.write_all(&bytes).expect("write SESSION GET");
+            }
+            JmapSessionGetResult::WantsRedirect { url, .. } => {
+                panic!("unexpected redirect to {url}")
+            }
+            JmapSessionGetResult::Err(err) => panic!("SESSION GET: {err}"),
         }
     };
 
@@ -184,7 +179,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
     {
         let mut coroutine =
             JmapMailboxQuery::new(&session, &token, None, None, None, None, None).unwrap();
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         let mailboxes = loop {
             match coroutine.resume(arg.take()) {
@@ -198,10 +194,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break mailboxes;
                 }
-                JmapMailboxQueryResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapMailboxQueryResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read MAILBOX QUERY");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapMailboxQueryResult::Err { err } => panic!("MAILBOX QUERY: {err}"),
+                JmapMailboxQueryResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write MAILBOX QUERY");
+                }
+                JmapMailboxQueryResult::Err(err) => panic!("MAILBOX QUERY: {err}"),
             }
         };
 
@@ -230,7 +232,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let mut coroutine =
             JmapMailboxSet::new(&session, &token, args).expect("create mailbox set coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         let created = loop {
             match coroutine.resume(arg.take()) {
@@ -249,10 +252,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break created;
                 }
-                JmapMailboxSetResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapMailboxSetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read MAILBOX SET create");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapMailboxSetResult::Err { err } => panic!("MAILBOX SET create: {err}"),
+                JmapMailboxSetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write MAILBOX SET create");
+                }
+                JmapMailboxSetResult::Err(err) => panic!("MAILBOX SET create: {err}"),
             }
         };
 
@@ -270,7 +279,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         let mut coroutine =
             JmapMailboxGet::new(&session, &token, Some(vec![mbox_id.clone()]), None)
                 .expect("create mailbox get coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         let mailboxes = loop {
             match coroutine.resume(arg.take()) {
@@ -289,10 +299,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break mailboxes;
                 }
-                JmapMailboxGetResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapMailboxGetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read MAILBOX GET");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapMailboxGetResult::Err { err } => panic!("MAILBOX GET: {err}"),
+                JmapMailboxGetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write MAILBOX GET");
+                }
+                JmapMailboxGetResult::Err(err) => panic!("MAILBOX GET: {err}"),
             }
         };
 
@@ -328,7 +344,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let mut coroutine =
             JmapMailboxSet::new(&session, &token, args).expect("create mailbox rename coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -346,10 +363,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapMailboxSetResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapMailboxSetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read MAILBOX SET rename");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapMailboxSetResult::Err { err } => panic!("MAILBOX SET rename: {err}"),
+                JmapMailboxSetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write MAILBOX SET rename");
+                }
+                JmapMailboxSetResult::Err(err) => panic!("MAILBOX SET rename: {err}"),
             }
         }
     }
@@ -360,7 +383,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         let mut coroutine =
             JmapMailboxGet::new(&session, &token, Some(vec![mbox_id.clone()]), None)
                 .expect("create mailbox get coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         let mailboxes = loop {
             match coroutine.resume(arg.take()) {
@@ -374,10 +398,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break mailboxes;
                 }
-                JmapMailboxGetResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapMailboxGetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read MAILBOX GET rename");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapMailboxGetResult::Err { err } => panic!("MAILBOX GET after rename: {err}"),
+                JmapMailboxGetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write MAILBOX GET rename");
+                }
+                JmapMailboxGetResult::Err(err) => panic!("MAILBOX GET after rename: {err}"),
             }
         };
 
@@ -394,14 +424,14 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         let upload_url = Url::parse(&session.upload_url.replace("{accountId}", &account_id))
             .expect("parse upload URL");
 
-        // Reconnect to the upload host if it differs from the API host.
         if upload_url.host_str() != api_url.host_str() {
             stream = connect(&upload_url);
         }
 
         let eml = build_eml(email).into_bytes();
         let mut coroutine = JmapBlobUpload::new(&token, &upload_url, "message/rfc822", eml);
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -410,16 +440,21 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     keep_alive,
                     ..
                 } => {
-                    // Reconnect back to the API host after the upload.
                     if !keep_alive || upload_url.host_str() != api_url.host_str() {
                         stream = connect(&api_url);
                     }
                     break blob_id;
                 }
-                JmapBlobUploadResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapBlobUploadResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read BLOB UPLOAD");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapBlobUploadResult::Err { err } => panic!("BLOB UPLOAD: {err}"),
+                JmapBlobUploadResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write BLOB UPLOAD");
+                }
+                JmapBlobUploadResult::Err(err) => panic!("BLOB UPLOAD: {err}"),
             }
         }
     };
@@ -442,7 +477,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let mut coroutine =
             JmapEmailImport::new(&session, &token, emails).expect("create email import coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -460,10 +496,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailImportResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapEmailImportResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read EMAIL IMPORT");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapEmailImportResult::Err { err } => panic!("EMAIL IMPORT: {err}"),
+                JmapEmailImportResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write EMAIL IMPORT");
+                }
+                JmapEmailImportResult::Err(err) => panic!("EMAIL IMPORT: {err}"),
             }
         }
     }
@@ -478,7 +520,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let mut coroutine =
             JmapEmailQuery::new(&session, &token, Some(filter), None, None, None, None).unwrap();
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         let emails = loop {
             match coroutine.resume(arg.take()) {
@@ -490,10 +533,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break emails;
                 }
-                JmapEmailQueryResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapEmailQueryResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read EMAIL QUERY");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapEmailQueryResult::Err { err } => panic!("EMAIL QUERY: {err}"),
+                JmapEmailQueryResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write EMAIL QUERY");
+                }
+                JmapEmailQueryResult::Err(err) => panic!("EMAIL QUERY: {err}"),
             }
         };
 
@@ -516,7 +565,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
             0,
         )
         .expect("create email get coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         let emails = loop {
             match coroutine.resume(arg.take()) {
@@ -532,8 +582,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break emails;
                 }
-                JmapEmailGetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
-                JmapEmailGetResult::Err { err } => panic!("EMAIL GET: {err}"),
+                JmapEmailGetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read EMAIL GET");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
+                }
+                JmapEmailGetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write EMAIL GET");
+                }
+                JmapEmailGetResult::Err(err) => panic!("EMAIL GET: {err}"),
             }
         };
 
@@ -551,7 +609,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         args.set_keyword(&email_id, "$seen");
         let mut coroutine =
             JmapEmailSet::new(&session, &token, args).expect("create email set $seen coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -569,8 +628,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailSetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
-                JmapEmailSetResult::Err { err } => panic!("EMAIL SET $seen: {err}"),
+                JmapEmailSetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read EMAIL SET $seen");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
+                }
+                JmapEmailSetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write EMAIL SET $seen");
+                }
+                JmapEmailSetResult::Err(err) => panic!("EMAIL SET $seen: {err}"),
             }
         }
     }
@@ -582,7 +649,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         args.unset_keyword(&email_id, "$seen");
         let mut coroutine =
             JmapEmailSet::new(&session, &token, args).expect("create email unset $seen coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -600,8 +668,18 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailSetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
-                JmapEmailSetResult::Err { err } => panic!("EMAIL SET remove $seen: {err}"),
+                JmapEmailSetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read EMAIL SET remove $seen");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
+                }
+                JmapEmailSetResult::WantsWrite(bytes) => {
+                    stream
+                        .write_all(&bytes)
+                        .expect("write EMAIL SET remove $seen");
+                }
+                JmapEmailSetResult::Err(err) => panic!("EMAIL SET remove $seen: {err}"),
             }
         }
     }
@@ -611,7 +689,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
     {
         let mut coroutine = JmapThreadGet::new(&session, &token, vec![thread_id.clone()])
             .expect("create thread get coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         let threads = loop {
             match coroutine.resume(arg.take()) {
@@ -630,10 +709,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break threads;
                 }
-                JmapThreadGetResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapThreadGetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read THREAD GET");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapThreadGetResult::Err { err } => panic!("THREAD GET: {err}"),
+                JmapThreadGetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write THREAD GET");
+                }
+                JmapThreadGetResult::Err(err) => panic!("THREAD GET: {err}"),
             }
         };
 
@@ -651,7 +736,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         args.destroy(&email_id);
         let mut coroutine =
             JmapEmailSet::new(&session, &token, args).expect("create email destroy coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -669,8 +755,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailSetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
-                JmapEmailSetResult::Err { err } => panic!("EMAIL destroy: {err}"),
+                JmapEmailSetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read EMAIL destroy");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
+                }
+                JmapEmailSetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write EMAIL destroy");
+                }
+                JmapEmailSetResult::Err(err) => panic!("EMAIL destroy: {err}"),
             }
         }
     }
@@ -682,7 +776,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         };
         let mut coroutine =
             JmapMailboxSet::new(&session, &token, args).expect("create mailbox destroy coroutine");
-        let mut arg = None;
+        let mut arg: Option<&[u8]> = None;
+        let mut read_buf = Vec::<u8>::new();
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -693,10 +788,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     );
                     break;
                 }
-                JmapMailboxSetResult::Io { input } => {
-                    arg = Some(handle(&mut stream, input).unwrap())
+                JmapMailboxSetResult::WantsRead => {
+                    let n = stream.read(&mut buf).expect("read MAILBOX destroy");
+                    read_buf.clear();
+                    read_buf.extend_from_slice(&buf[..n]);
+                    arg = Some(&read_buf);
                 }
-                JmapMailboxSetResult::Err { err } => panic!("MAILBOX destroy: {err}"),
+                JmapMailboxSetResult::WantsWrite(bytes) => {
+                    stream.write_all(&bytes).expect("write MAILBOX destroy");
+                }
+                JmapMailboxSetResult::Err(err) => panic!("MAILBOX destroy: {err}"),
             }
         }
     }

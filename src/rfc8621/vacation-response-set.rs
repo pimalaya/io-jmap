@@ -1,8 +1,7 @@
 //! I/O-free coroutine for the `VacationResponse/set` method (RFC 8621 §8.3).
 
-use alloc::{collections::BTreeMap, string::String, vec};
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use io_socket::io::{SocketInput, SocketOutput};
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -33,17 +32,18 @@ pub enum JmapVacationResponseSetError {
 /// Result returned by the [`JmapVacationResponseSet`] coroutine.
 #[derive(Debug)]
 pub enum JmapVacationResponseSetResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         updated: Option<VacationResponse>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapVacationResponseSetError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapVacationResponseSetError),
 }
 
 #[derive(Deserialize)]
@@ -89,8 +89,6 @@ impl JmapVacationResponseSet {
         .map_err(JmapVacationResponseSetError::SerializeArgs)?;
 
         let mut using = vec![capabilities::CORE.into(), capabilities::MAIL.into()];
-        // Only declare the vacation-response capability if the server
-        // advertises it.
         let has_vacation = session
             .capabilities
             .contains_key(capabilities::VACATION_RESPONSE);
@@ -107,28 +105,29 @@ impl JmapVacationResponseSet {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapVacationResponseSetResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapVacationResponseSetResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapVacationResponseSetResult::Io { input },
-            JmapSendResult::Err { err } => {
-                return JmapVacationResponseSetResult::Err { err: err.into() };
+            JmapSendResult::WantsRead => return JmapVacationResponseSetResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => {
+                return JmapVacationResponseSetResult::WantsWrite(bytes);
             }
+            JmapSendResult::Err(err) => return JmapVacationResponseSetResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapVacationResponseSetResult::Err {
-                err: JmapVacationResponseSetError::MissingResponse,
-            };
+            return JmapVacationResponseSetResult::Err(
+                JmapVacationResponseSetError::MissingResponse,
+            );
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapVacationResponseSetResult::Err { err: err.into() };
+            return JmapVacationResponseSetResult::Err(err.into());
         }
 
         match serde_json::from_value::<VacationResponseSetResponse>(args) {
@@ -137,9 +136,9 @@ impl JmapVacationResponseSet {
                 updated: r.updated.unwrap_or_default().into_values().flatten().next(),
                 keep_alive,
             },
-            Err(err) => JmapVacationResponseSetResult::Err {
-                err: JmapVacationResponseSetError::ParseResponse(err),
-            },
+            Err(err) => {
+                JmapVacationResponseSetResult::Err(JmapVacationResponseSetError::ParseResponse(err))
+            }
         }
     }
 }

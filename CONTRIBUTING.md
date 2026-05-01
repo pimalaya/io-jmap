@@ -38,7 +38,6 @@ If you want to build io-jmap against a locally modified dependency (e.g. `io-htt
 ```toml
 [patch.crates-io]
 io-http.path = "/path/to/io-http"
-io-socket.path = "/path/to/io-socket"
 ```
 
 ## Commit style

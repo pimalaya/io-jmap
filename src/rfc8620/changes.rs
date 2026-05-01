@@ -1,7 +1,7 @@
 //! Generic I/O-free coroutine for the `Foo/changes` method (RFC 8620 §5.2).
 
 use alloc::{string::String, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -28,6 +28,7 @@ pub enum JmapChangesError {
 
 #[derive(Debug)]
 pub enum JmapChangesResult {
+    /// The coroutine has successfully completed.
     Ok {
         new_state: String,
         has_more_changes: bool,
@@ -36,12 +37,12 @@ pub enum JmapChangesResult {
         destroyed: Vec<String>,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapChangesError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapChangesError),
 }
 
 #[derive(Serialize)]
@@ -99,26 +100,25 @@ impl JmapChanges {
         Self { send }
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapChangesResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapChangesResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapChangesResult::Io { input },
-            JmapSendResult::Err { err } => return JmapChangesResult::Err { err: err.into() },
+            JmapSendResult::WantsRead => return JmapChangesResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapChangesResult::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapChangesResult::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapChangesResult::Err {
-                err: JmapChangesError::MissingResponse,
-            };
+            return JmapChangesResult::Err(JmapChangesError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapChangesResult::Err { err: err.into() };
+            return JmapChangesResult::Err(err.into());
         }
 
         match serde_json::from_value::<ChangesResponse>(args) {
@@ -130,9 +130,7 @@ impl JmapChanges {
                 destroyed: r.destroyed,
                 keep_alive,
             },
-            Err(err) => JmapChangesResult::Err {
-                err: JmapChangesError::ParseResponse(err),
-            },
+            Err(err) => JmapChangesResult::Err(JmapChangesError::ParseResponse(err)),
         }
     }
 }

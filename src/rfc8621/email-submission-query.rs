@@ -2,7 +2,7 @@
 //! (RFC 8621 §7.3–7.2).
 
 use alloc::{string::String, vec, vec::Vec};
-use io_socket::io::{SocketInput, SocketOutput};
+
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -42,6 +42,7 @@ pub enum JmapEmailSubmissionQueryError {
 /// Result returned by the [`JmapEmailSubmissionQuery`] coroutine.
 #[derive(Debug)]
 pub enum JmapEmailSubmissionQueryResult {
+    /// The coroutine has successfully completed.
     Ok {
         submissions: Vec<EmailSubmission>,
         total: Option<u64>,
@@ -49,12 +50,12 @@ pub enum JmapEmailSubmissionQueryResult {
         query_state: String,
         keep_alive: bool,
     },
-    Io {
-        input: SocketInput,
-    },
-    Err {
-        err: JmapEmailSubmissionQueryError,
-    },
+    /// The coroutine needs more bytes to be read from the socket.
+    WantsRead,
+    /// The coroutine wants the given bytes to be written to the socket.
+    WantsWrite(Vec<u8>),
+    /// The coroutine encountered an error.
+    Err(JmapEmailSubmissionQueryError),
 }
 
 #[derive(Serialize)]
@@ -159,55 +160,56 @@ impl JmapEmailSubmissionQuery {
         })
     }
 
-    pub fn resume(&mut self, arg: Option<SocketOutput>) -> JmapEmailSubmissionQueryResult {
+    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSubmissionQueryResult {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::Io { input } => return JmapEmailSubmissionQueryResult::Io { input },
-            JmapSendResult::Err { err } => {
-                return JmapEmailSubmissionQueryResult::Err { err: err.into() };
+            JmapSendResult::WantsRead => return JmapEmailSubmissionQueryResult::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => {
+                return JmapEmailSubmissionQueryResult::WantsWrite(bytes);
             }
+            JmapSendResult::Err(err) => return JmapEmailSubmissionQueryResult::Err(err.into()),
         };
 
         let mut responses = response.method_responses.into_iter();
 
         let Some((query_name, query_args, _)) = responses.next() else {
-            return JmapEmailSubmissionQueryResult::Err {
-                err: JmapEmailSubmissionQueryError::MissingQueryResponse,
-            };
+            return JmapEmailSubmissionQueryResult::Err(
+                JmapEmailSubmissionQueryError::MissingQueryResponse,
+            );
         };
 
         if query_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(query_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailSubmissionQueryResult::Err {
-                err: JmapEmailSubmissionQueryError::QueryMethod(err),
-            };
+            return JmapEmailSubmissionQueryResult::Err(
+                JmapEmailSubmissionQueryError::QueryMethod(err),
+            );
         }
 
         let query_response = match serde_json::from_value::<SubmissionQueryResponse>(query_args) {
             Ok(r) => r,
             Err(err) => {
-                return JmapEmailSubmissionQueryResult::Err {
-                    err: JmapEmailSubmissionQueryError::ParseQueryResponse(err),
-                };
+                return JmapEmailSubmissionQueryResult::Err(
+                    JmapEmailSubmissionQueryError::ParseQueryResponse(err),
+                );
             }
         };
 
         let Some((get_name, get_args, _)) = responses.next() else {
-            return JmapEmailSubmissionQueryResult::Err {
-                err: JmapEmailSubmissionQueryError::MissingGetResponse,
-            };
+            return JmapEmailSubmissionQueryResult::Err(
+                JmapEmailSubmissionQueryError::MissingGetResponse,
+            );
         };
 
         if get_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(get_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailSubmissionQueryResult::Err {
-                err: JmapEmailSubmissionQueryError::GetMethod(err),
-            };
+            return JmapEmailSubmissionQueryResult::Err(JmapEmailSubmissionQueryError::GetMethod(
+                err,
+            ));
         }
 
         match serde_json::from_value::<SubmissionGetResponse>(get_args) {
@@ -218,9 +220,9 @@ impl JmapEmailSubmissionQuery {
                 query_state: query_response.query_state,
                 keep_alive,
             },
-            Err(err) => JmapEmailSubmissionQueryResult::Err {
-                err: JmapEmailSubmissionQueryError::ParseGetResponse(err),
-            },
+            Err(err) => JmapEmailSubmissionQueryResult::Err(
+                JmapEmailSubmissionQueryError::ParseGetResponse(err),
+            ),
         }
     }
 }

@@ -30,10 +30,9 @@ This library implements JMAP as I/O-agnostic coroutines — no sockets, no async
 ### Fetch a JMAP session (blocking)
 
 ```rust,ignore
-use std::{net::TcpStream, sync::Arc};
+use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
 
 use io_jmap::rfc8620::session_get::{JmapSessionGet, JmapSessionGetResult};
-use io_socket::runtimes::std_stream::handle;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;
@@ -49,17 +48,25 @@ let tcp = TcpStream::connect((base_url.host_str().unwrap(), 443)).unwrap();
 let mut stream = StreamOwned::new(conn, tcp);
 
 let mut coroutine = JmapSessionGet::new(&http_auth, &base_url);
-let mut arg = None;
+let mut arg: Option<&[u8]> = None;
+let mut buf = [0u8; 8192];
+let mut read_buf = Vec::<u8>::new();
 
 let session = loop {
     match coroutine.resume(arg.take()) {
         JmapSessionGetResult::Ok { session, .. } => break session,
-        JmapSessionGetResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
-        JmapSessionGetResult::Redirect { url, .. } => {
+        JmapSessionGetResult::WantsRead => {
+            let n = stream.read(&mut buf).unwrap();
+            read_buf.clear();
+            read_buf.extend_from_slice(&buf[..n]);
+            arg = Some(&read_buf);
+        }
+        JmapSessionGetResult::WantsWrite(bytes) => stream.write_all(&bytes).unwrap(),
+        JmapSessionGetResult::WantsRedirect { url, .. } => {
             // reconnect to the new URL and retry
             todo!("reconnect to {url}")
         }
-        JmapSessionGetResult::Err { err } => panic!("{err}"),
+        JmapSessionGetResult::Err(err) => panic!("{err}"),
     }
 };
 
@@ -70,10 +77,9 @@ println!("API URL: {}", session.api_url);
 ### List mailboxes (blocking)
 
 ```rust,ignore
-use std::{net::TcpStream, sync::Arc};
+use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
 
 use io_jmap::rfc8621::mailbox_query::{JmapMailboxQuery, JmapMailboxQueryResult};
-use io_socket::runtimes::std_stream::handle;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;
@@ -87,13 +93,21 @@ let tcp = TcpStream::connect((session.api_url.host_str().unwrap(), 443)).unwrap(
 let mut stream = StreamOwned::new(conn, tcp);
 
 let mut coroutine = JmapMailboxQuery::new(&session, &http_auth, None, None, None, None, None).unwrap();
-let mut arg = None;
+let mut arg: Option<&[u8]> = None;
+let mut buf = [0u8; 8192];
+let mut read_buf = Vec::<u8>::new();
 
 let mailboxes = loop {
     match coroutine.resume(arg.take()) {
         JmapMailboxQueryResult::Ok { mailboxes, .. } => break mailboxes,
-        JmapMailboxQueryResult::Io { input } => arg = Some(handle(&mut stream, input).unwrap()),
-        JmapMailboxQueryResult::Err { err } => panic!("{err}"),
+        JmapMailboxQueryResult::WantsRead => {
+            let n = stream.read(&mut buf).unwrap();
+            read_buf.clear();
+            read_buf.extend_from_slice(&buf[..n]);
+            arg = Some(&read_buf);
+        }
+        JmapMailboxQueryResult::WantsWrite(bytes) => stream.write_all(&bytes).unwrap(),
+        JmapMailboxQueryResult::Err(err) => panic!("{err}"),
     }
 };
 
