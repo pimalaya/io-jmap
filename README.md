@@ -32,7 +32,7 @@ This library implements JMAP as I/O-agnostic coroutines — no sockets, no async
 ```rust,ignore
 use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
 
-use io_jmap::rfc8620::session_get::{JmapSessionGet, JmapSessionGetResult};
+use io_jmap::rfc8620::session_get::*;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;
@@ -79,7 +79,7 @@ println!("API URL: {}", session.api_url);
 ```rust,ignore
 use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
 
-use io_jmap::rfc8621::mailbox_query::{JmapMailboxQuery, JmapMailboxQueryResult};
+use io_jmap::rfc8621::mailbox_query::*;
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;

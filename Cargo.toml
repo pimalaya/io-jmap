@@ -16,6 +16,17 @@ repository = "https://github.com/pimalaya/io-jmap"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[features]
+default = ["rustls-ring"]
+std = []
+client = ["std"]
+
+# TLS — implies `client` and pulls pimalaya-stream as the transport.
+rustls-ring = ["client", "dep:anyhow", "dep:pimalaya-stream", "pimalaya-stream?/std", "pimalaya-stream?/rustls-ring"]
+rustls-aws  = ["client", "dep:anyhow", "dep:pimalaya-stream", "pimalaya-stream?/std", "pimalaya-stream?/rustls-aws"]
+native-tls  = ["client", "dep:anyhow", "dep:pimalaya-stream", "pimalaya-stream?/std", "pimalaya-stream?/native-tls"]
+vendored = ["pimalaya-stream?/vendored"]
+
 [dev-dependencies]
 env_logger = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
@@ -25,8 +36,10 @@ serde_json = "1"
 url = { version = "2.5", default-features = false }
 
 [dependencies]
+anyhow = { version = "1", optional = true }
 io-http = { version = "0.0.3", default-features = false }
 log = { version = "0.4", default-features = false }
+pimalaya-stream = { version = "0.0.1", default-features = false, optional = true }
 secrecy = { version = "0.10", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
@@ -34,4 +47,5 @@ thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, features = ["serde"] }
 
 [patch.crates-io]
-io-http.git = "https://github.com/pimalaya/io-http"
+io-http.path = "../io-http"
+pimalaya-stream = { path = "../stream" }
