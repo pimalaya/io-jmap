@@ -6,8 +6,7 @@ use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
-    rfc8620::changes::{JmapChanges, JmapChangesError, JmapChangesResult},
-    rfc8620::session::JmapSession,
+    rfc8620::{changes::*, session::JmapSession},
     rfc8621::capabilities,
 };
 

@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
-use crate::rfc8620::{
-    error::JmapMethodError,
-    send::{JmapBatch, JmapSend, JmapSendError, JmapSendResult},
-};
+use crate::rfc8620::{error::JmapMethodError, send::*};
 
 #[derive(Debug, Error)]
 pub enum JmapChangesError {

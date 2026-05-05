@@ -1,17 +1,15 @@
 //! Generic I/O-free coroutine for the `Foo/get` method (RFC 8620 §5.1).
 
-use alloc::{string::String, vec::Vec};
 use core::marker::PhantomData;
+
+use alloc::{string::String, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use url::Url;
 
-use crate::rfc8620::{
-    error::JmapMethodError,
-    send::{JmapBatch, JmapSend, JmapSendError, JmapSendResult},
-};
+use crate::rfc8620::{error::JmapMethodError, send::*};
 
 /// Errors that can occur during the coroutine progression.
 #[derive(Debug, Error)]

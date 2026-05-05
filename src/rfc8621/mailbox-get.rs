@@ -6,10 +6,11 @@ use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
-    rfc8620::get::{JmapGet, JmapGetError, JmapGetResult},
-    rfc8620::session::JmapSession,
-    rfc8621::capabilities,
-    rfc8621::mailbox::{Mailbox, MailboxProperty},
+    rfc8620::{get::*, session::JmapSession},
+    rfc8621::{
+        capabilities,
+        mailbox::{Mailbox, MailboxProperty},
+    },
 };
 
 /// Errors that can occur during the coroutine progression.

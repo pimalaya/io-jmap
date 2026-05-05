@@ -1,7 +1,9 @@
 //! JMAP error types (RFC 8620 §3.6).
 
-use alloc::{string::String, vec::Vec};
 use core::{error::Error, fmt};
+
+use alloc::{string::String, vec::Vec};
+
 use serde::{Deserialize, Serialize};
 
 /// A JMAP method-level error (RFC 8620 §3.6.1).

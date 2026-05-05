@@ -13,12 +13,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    rfc8620::error::JmapMethodError,
-    rfc8620::result_reference::ResultReference,
-    rfc8620::send::{JmapBatch, JmapSend, JmapSendError, JmapSendResult},
-    rfc8620::session::JmapSession,
-    rfc8621::capabilities,
-    rfc8621::email::{Email, EmailComparator, EmailFilter, EmailProperty},
+    rfc8620::{
+        error::JmapMethodError, result_reference::ResultReference, send::*, session::JmapSession,
+    },
+    rfc8621::{
+        capabilities,
+        email::{Email, EmailComparator, EmailFilter, EmailProperty},
+    },
 };
 
 /// Errors that can occur during the coroutine progression.

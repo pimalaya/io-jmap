@@ -7,11 +7,11 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
-    rfc8620::send::{JmapBatch, JmapSend, JmapSendError},
-    rfc8620::session::JmapSession,
-    rfc8620::set::{JmapSet, JmapSetError, JmapSetResult},
-    rfc8621::capabilities,
-    rfc8621::email::{Email, EmailPatch, EmailPatchOp, EmailSetError},
+    rfc8620::{send::*, session::JmapSession, set::*},
+    rfc8621::{
+        capabilities,
+        email::{Email, EmailPatch, EmailPatchOp, EmailSetError},
+    },
 };
 
 /// Errors that can occur during the coroutine progression.
