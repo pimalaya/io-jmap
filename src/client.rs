@@ -45,7 +45,9 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
-    rfc8620::{blob_download::*, blob_upload::*, session::JmapSession, session_get::*},
+    rfc8620::{
+        blob_download::*, blob_upload::*, send::*, session::JmapSession, session_get::*,
+    },
     rfc8621::{
         email::{
             Email, EmailComparator, EmailCopy, EmailCopyError, EmailFilter, EmailImport,
@@ -95,6 +97,8 @@ impl<T: Read + Write + ?Sized> JmapStream for T {}
 /// Errors returned by [`JmapClient`].
 #[derive(Debug, Error)]
 pub enum JmapClientError {
+    #[error(transparent)]
+    Send(#[from] JmapSendError),
     #[error(transparent)]
     SessionGet(#[from] JmapSessionGetError),
     #[error(transparent)]
@@ -391,6 +395,24 @@ impl JmapClient {
         }
     }
 
+    /// Builds a client from a pre-connected stream, the bearer/basic
+    /// HTTP credential and an already-discovered [`JmapSession`].
+    /// Skips the [`session_get`] step — useful when an external
+    /// driver has already resolved `/.well-known/jmap`.
+    ///
+    /// [`session_get`]: JmapClient::session_get
+    pub fn from_parts<S: Read + Write + 'static>(
+        stream: S,
+        http_auth: SecretString,
+        session: JmapSession,
+    ) -> Self {
+        Self {
+            stream: Box::new(stream),
+            http_auth,
+            session: Some(session),
+        }
+    }
+
     /// Connects to `url` and runs the TLS handshake when the scheme
     /// is `https` or `jmaps`. `http` and `jmap` go through plain TCP.
     /// ALPN is set to `http/1.1`.
@@ -486,6 +508,23 @@ impl JmapClient {
                 JmapSessionGetResult::Err(err) => return Err(err.into()),
             }
         }
+    }
+
+    /// Sends a raw JMAP request and returns the raw [`JmapResponse`].
+    /// Lower level than the per-method helpers — useful for passthrough
+    /// CLIs and ad-hoc requests with custom `using` capabilities.
+    pub fn send_raw(
+        &mut self,
+        request: JmapRequest,
+    ) -> Result<JmapResponse, JmapClientError> {
+        let session = self.session_or_err()?;
+        let coroutine = JmapSend::new(&self.http_auth, &session.api_url, request)?;
+        drive!(
+            self,
+            coroutine,
+            JmapSendResult,
+            { response, .. } => response
+        );
     }
 
     // ---- Blob (RFC 8620 §6) ----------------------------------------------
