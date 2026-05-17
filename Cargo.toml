@@ -1,6 +1,6 @@
 [package]
 name = "io-jmap"
-description = "I/O-free JMAP client library"
+description = "JMAP client library"
 version = "0.0.1"
 authors = ["Clément DOUIN <pimalaya.org@posteo.net>"]
 rust-version = "1.87"

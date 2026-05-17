@@ -1,6 +1,6 @@
 # I/O JMAP [![Documentation](https://img.shields.io/docsrs/io-jmap?style=flat&logo=docs.rs&logoColor=white)](https://docs.rs/io-jmap/latest/io_jmap) [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya)
 
-JMAP client library, written in Rust, built on top of [io-http](https://github.com/pimalaya/io-http)
+JMAP client library, written in Rust
 
 ## Table of contents
 

@@ -1,5 +1,5 @@
 {
-  description = "I/O-free JMAP client library written in Rust";
+  description = "JMAP client library, written in Rust";
 
   inputs = {
     nixpkgs = {

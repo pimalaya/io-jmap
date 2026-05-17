@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initiated basic coroutines.
+- Added basic I/O-free coroutines.
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/root...HEAD
+- Added standard, blocking client.
+
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/root..HEAD
