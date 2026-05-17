@@ -18,6 +18,8 @@
 //! [`connect`]: JmapClientStd::connect
 //! [`session_get`]: JmapClientStd::session_get
 
+use core::fmt;
+
 #[cfg(any(
     feature = "rustls-aws",
     feature = "rustls-ring",
@@ -25,7 +27,7 @@
 ))]
 use alloc::string::ToString;
 use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 
 #[cfg(any(
     feature = "rustls-aws",
@@ -134,7 +136,7 @@ pub enum JmapClientStdError {
     VacationResponseSet(#[from] JmapVacationResponseSetError),
 
     #[error(transparent)]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
 
     #[cfg(any(
         feature = "rustls-aws",
@@ -176,6 +178,15 @@ pub struct JmapClientStd {
     stream: Box<dyn Stream>,
     http_auth: SecretString,
     session: Option<JmapSession>,
+}
+
+impl fmt::Debug for JmapClientStd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JmapClientStd")
+            .field("http_auth", &self.http_auth)
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Run a coroutine against `$self.stream`. The `Ok` pattern
