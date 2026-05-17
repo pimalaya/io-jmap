@@ -11,14 +11,13 @@ mod common;
 /// cargo test --test stalwart -- --include-ignored
 /// ```
 ///
-/// The test uses the credentials created by the setup script:
-/// - username: `test`
-/// - password: `test`
-///
-/// Stalwart listens on port 8080 for JMAP sessions (plain HTTP).
+/// The bootstrap script provisions one domain (`pimalaya.org`) and one
+/// user (`test@pimalaya.org`) with a strong password (Stalwart enforces
+/// a zxcvbn-style strength check). Stalwart listens on port 8080 for
+/// JMAP sessions (plain HTTP).
 #[test]
 #[ignore = "requires a running Stalwart instance on localhost:8080 and --include-ignored"]
 fn stalwart() {
-    let creds = BasicCredentials::new("test", "test").to_authorization();
+    let creds = BasicCredentials::new("test@pimalaya.org", "P!malaya-test-2026").to_authorization();
     common::run_jmap("localhost", 8080, &creds, "test@pimalaya.org");
 }
