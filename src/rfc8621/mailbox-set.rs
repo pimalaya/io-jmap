@@ -149,3 +149,17 @@ impl JmapMailboxSet {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::mailbox_set`] client method.
+///
+/// [`JmapClientStd::mailbox_set`]: crate::client::JmapClientStd::mailbox_set
+#[derive(Clone, Debug)]
+pub struct JmapMailboxSetOutput {
+    pub new_state: String,
+    pub created: BTreeMap<String, Mailbox>,
+    pub updated: BTreeMap<String, Option<Mailbox>>,
+    pub destroyed: Vec<String>,
+    pub not_created: BTreeMap<String, MailboxSetError>,
+    pub not_updated: BTreeMap<String, MailboxSetError>,
+    pub not_destroyed: BTreeMap<String, MailboxSetError>,
+}

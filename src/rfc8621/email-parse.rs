@@ -150,3 +150,13 @@ impl JmapEmailParse {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_parse`] client method.
+///
+/// [`JmapClientStd::email_parse`]: crate::client::JmapClientStd::email_parse
+#[derive(Clone, Debug)]
+pub struct JmapEmailParseOutput {
+    pub parsed: BTreeMap<String, Email>,
+    pub not_parsable: Vec<String>,
+    pub not_found: Vec<String>,
+}

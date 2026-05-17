@@ -145,3 +145,13 @@ impl JmapEmailSubmissionSet {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_submission_set`] client method.
+///
+/// [`JmapClientStd::email_submission_set`]: crate::client::JmapClientStd::email_submission_set
+#[derive(Clone, Debug)]
+pub struct JmapEmailSubmissionSetOutput {
+    pub new_state: String,
+    pub created: BTreeMap<String, EmailSubmission>,
+    pub not_created: BTreeMap<String, EmailSubmissionSetError>,
+}

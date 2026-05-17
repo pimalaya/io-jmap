@@ -134,3 +134,13 @@ impl JmapEmailImport {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_import`] client method.
+///
+/// [`JmapClientStd::email_import`]: crate::client::JmapClientStd::email_import
+#[derive(Clone, Debug)]
+pub struct JmapEmailImportOutput {
+    pub new_state: String,
+    pub created: BTreeMap<String, Email>,
+    pub not_created: BTreeMap<String, EmailImportError>,
+}

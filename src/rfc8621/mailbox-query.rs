@@ -226,3 +226,14 @@ impl JmapMailboxQuery {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::mailbox_query`] client method.
+///
+/// [`JmapClientStd::mailbox_query`]: crate::client::JmapClientStd::mailbox_query
+#[derive(Clone, Debug)]
+pub struct JmapMailboxQueryOutput {
+    pub mailboxes: Vec<Mailbox>,
+    pub total: Option<u64>,
+    pub position: u64,
+    pub query_state: String,
+}

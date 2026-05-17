@@ -93,3 +93,13 @@ impl JmapIdentityGet {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::identity_get`] client method.
+///
+/// [`JmapClientStd::identity_get`]: crate::client::JmapClientStd::identity_get
+#[derive(Clone, Debug)]
+pub struct JmapIdentityGetOutput {
+    pub identities: Vec<Identity>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+}

@@ -131,3 +131,20 @@ impl JmapChanges {
         }
     }
 }
+
+/// Output of `Foo/changes` client methods
+/// ([`JmapClientStd::mailbox_changes`],
+/// [`JmapClientStd::email_changes`],
+/// [`JmapClientStd::thread_changes`]).
+///
+/// [`JmapClientStd::mailbox_changes`]: crate::client::JmapClientStd::mailbox_changes
+/// [`JmapClientStd::email_changes`]: crate::client::JmapClientStd::email_changes
+/// [`JmapClientStd::thread_changes`]: crate::client::JmapClientStd::thread_changes
+#[derive(Clone, Debug)]
+pub struct JmapChangesOutput {
+    pub new_state: String,
+    pub has_more_changes: bool,
+    pub created: Vec<String>,
+    pub updated: Vec<String>,
+    pub destroyed: Vec<String>,
+}

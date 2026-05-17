@@ -125,3 +125,13 @@ impl JmapBlobUpload {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::blob_upload`] client method.
+///
+/// [`JmapClientStd::blob_upload`]: crate::client::JmapClientStd::blob_upload
+#[derive(Clone, Debug)]
+pub struct JmapBlobUploadOutput {
+    pub blob_id: String,
+    pub blob_type: String,
+    pub size: u64,
+}

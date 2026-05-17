@@ -186,3 +186,17 @@ impl JmapIdentitySet {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::identity_set`] client method.
+///
+/// [`JmapClientStd::identity_set`]: crate::client::JmapClientStd::identity_set
+#[derive(Clone, Debug)]
+pub struct JmapIdentitySetOutput {
+    pub new_state: String,
+    pub created: BTreeMap<String, Identity>,
+    pub updated: BTreeMap<String, Option<Identity>>,
+    pub destroyed: Vec<String>,
+    pub not_created: BTreeMap<String, IdentitySetError>,
+    pub not_updated: BTreeMap<String, IdentitySetError>,
+    pub not_destroyed: BTreeMap<String, IdentitySetError>,
+}

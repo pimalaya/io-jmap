@@ -20,12 +20,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["rustls-ring"]
 std = []
 client = ["std"]
-
-# TLS — implies `client` and pulls pimalaya-stream as the transport.
-rustls-ring = ["client", "dep:anyhow", "dep:pimalaya-stream", "pimalaya-stream?/std", "pimalaya-stream?/rustls-ring"]
-rustls-aws  = ["client", "dep:anyhow", "dep:pimalaya-stream", "pimalaya-stream?/std", "pimalaya-stream?/rustls-aws"]
-native-tls  = ["client", "dep:anyhow", "dep:pimalaya-stream", "pimalaya-stream?/std", "pimalaya-stream?/native-tls"]
-vendored = ["pimalaya-stream?/vendored"]
+rustls-ring = ["client", "pimalaya-stream/rustls-ring", "dep:anyhow", "dep:pimalaya-stream"]
+rustls-aws  = ["client", "pimalaya-stream/rustls-aws",  "dep:anyhow", "dep:pimalaya-stream"]
+native-tls  = ["client", "pimalaya-stream/native-tls",  "dep:anyhow", "dep:pimalaya-stream"]
+vendored    = ["pimalaya-stream?/vendored"]
 
 [dev-dependencies]
 env_logger = "0.11"
@@ -47,5 +45,5 @@ thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, features = ["serde"] }
 
 [patch.crates-io]
-io-http.path = "../io-http"
-pimalaya-stream = { path = "../stream" }
+io-http.git = "https://github.com/pimalaya/io-http"
+pimalaya-stream.git = "https://github.com/pimalaya/stream"

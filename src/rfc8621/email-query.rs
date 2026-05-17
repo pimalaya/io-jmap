@@ -229,3 +229,14 @@ impl JmapEmailQuery {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_query`] client method.
+///
+/// [`JmapClientStd::email_query`]: crate::client::JmapClientStd::email_query
+#[derive(Clone, Debug)]
+pub struct JmapEmailQueryOutput {
+    pub emails: Vec<Email>,
+    pub total: Option<u64>,
+    pub position: u64,
+    pub query_state: String,
+}

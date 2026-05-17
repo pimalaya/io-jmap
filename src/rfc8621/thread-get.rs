@@ -90,3 +90,13 @@ impl JmapThreadGet {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::thread_get`] client method.
+///
+/// [`JmapClientStd::thread_get`]: crate::client::JmapClientStd::thread_get
+#[derive(Clone, Debug)]
+pub struct JmapThreadGetOutput {
+    pub threads: Vec<Thread>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+}

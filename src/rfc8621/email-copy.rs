@@ -136,3 +136,13 @@ impl JmapEmailCopy {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_copy`] client method.
+///
+/// [`JmapClientStd::email_copy`]: crate::client::JmapClientStd::email_copy
+#[derive(Clone, Debug)]
+pub struct JmapEmailCopyOutput {
+    pub new_state: String,
+    pub created: BTreeMap<String, Email>,
+    pub not_created: BTreeMap<String, EmailCopyError>,
+}

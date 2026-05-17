@@ -225,3 +225,14 @@ impl JmapEmailSubmissionQuery {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_submission_query`] client method.
+///
+/// [`JmapClientStd::email_submission_query`]: crate::client::JmapClientStd::email_submission_query
+#[derive(Clone, Debug)]
+pub struct JmapEmailSubmissionQueryOutput {
+    pub submissions: Vec<EmailSubmission>,
+    pub total: Option<u64>,
+    pub position: u64,
+    pub query_state: String,
+}

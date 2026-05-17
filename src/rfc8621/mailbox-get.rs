@@ -102,3 +102,13 @@ impl JmapMailboxGet {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::mailbox_get`] client method.
+///
+/// [`JmapClientStd::mailbox_get`]: crate::client::JmapClientStd::mailbox_get
+#[derive(Clone, Debug)]
+pub struct JmapMailboxGetOutput {
+    pub mailboxes: Vec<Mailbox>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+}

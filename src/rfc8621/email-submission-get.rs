@@ -91,3 +91,13 @@ impl JmapEmailSubmissionGet {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_submission_get`] client method.
+///
+/// [`JmapClientStd::email_submission_get`]: crate::client::JmapClientStd::email_submission_get
+#[derive(Clone, Debug)]
+pub struct JmapEmailSubmissionGetOutput {
+    pub submissions: Vec<EmailSubmission>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+}

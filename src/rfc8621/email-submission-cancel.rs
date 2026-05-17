@@ -159,3 +159,13 @@ impl JmapEmailSubmissionCancel {
         }
     }
 }
+
+/// Output of the [`JmapClientStd::email_submission_cancel`] client method.
+///
+/// [`JmapClientStd::email_submission_cancel`]: crate::client::JmapClientStd::email_submission_cancel
+#[derive(Clone, Debug)]
+pub struct JmapEmailSubmissionCancelOutput {
+    pub new_state: String,
+    pub updated: BTreeMap<String, Option<EmailSubmission>>,
+    pub not_updated: BTreeMap<String, EmailSubmissionSetError>,
+}
