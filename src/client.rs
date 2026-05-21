@@ -297,6 +297,14 @@ impl JmapClientStd {
         self.session.as_ref()
     }
 
+    /// Returns the pre-formatted HTTP `Authorization` header value.
+    /// Useful when the caller has to spin up an auxiliary client (e.g.
+    /// against the session's `downloadUrl` when it lives on a
+    /// different authority than the `apiUrl`).
+    pub fn http_auth(&self) -> &SecretString {
+        &self.http_auth
+    }
+
     fn session_or_err(&self) -> Result<&JmapSession, JmapClientStdError> {
         self.session
             .as_ref()
