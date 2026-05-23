@@ -169,9 +169,14 @@ pub enum JmapClientStdError {
 }
 
 /// Marker for everything the client can run against; auto-implemented
-/// for any blocking `Read + Write` impl.
-trait Stream: Read + Write {}
-impl<T: Read + Write + ?Sized> Stream for T {}
+/// for any blocking `Read + Write + Send` impl. The `Send` supertrait
+/// flows the auto-trait through the `Box<dyn Stream>` type erasure so
+/// `JmapClientStd` can travel between threads in worker pools (e.g.
+/// neverest's per-mailbox dispatch). Every concrete stream the
+/// pimalaya stack hands in (`TcpStream`, `UnixStream`, rustls/native-tls
+/// wrappers, `StreamStd`) is already `Send`.
+trait Stream: Read + Write + Send {}
+impl<T: Read + Write + Send + ?Sized> Stream for T {}
 
 /// Std-blocking JMAP client wrapping a single [`Stream`].
 pub struct JmapClientStd {
@@ -221,7 +226,7 @@ impl JmapClientStd {
     /// Builds a client around `stream`. The caller is responsible for
     /// opening the connection (TCP, TLS handshake if needed) and for
     /// the bearer token / authorization header value.
-    pub fn new<S: Read + Write + 'static>(stream: S, http_auth: SecretString) -> Self {
+    pub fn new<S: Read + Write + Send + 'static>(stream: S, http_auth: SecretString) -> Self {
         Self {
             stream: Box::new(stream),
             http_auth,
@@ -235,7 +240,7 @@ impl JmapClientStd {
     /// already resolved `/.well-known/jmap`.
     ///
     /// [`session_get`]: JmapClientStd::session_get
-    pub fn from_parts<S: Read + Write + 'static>(
+    pub fn from_parts<S: Read + Write + Send + 'static>(
         stream: S,
         http_auth: SecretString,
         session: JmapSession,
@@ -286,7 +291,7 @@ impl JmapClientStd {
     /// different host, or when the session's `apiUrl`, `uploadUrl` or
     /// `downloadUrl` lives on a different authority than where the
     /// client first connected.
-    pub fn set_stream<S: Read + Write + 'static>(&mut self, stream: S) {
+    pub fn set_stream<S: Read + Write + Send + 'static>(&mut self, stream: S) {
         self.stream = Box::new(stream);
     }
 
