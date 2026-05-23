@@ -50,6 +50,12 @@ pub enum JmapMethodError {
     UnknownMethod {
         description: Option<String>,
     },
+    /// RFC 8620 §5.2: the server can no longer calculate the changes
+    /// from the given `sinceState`. Callers MUST fall back to a full
+    /// `Foo/get` listing and resume from the returned `state`.
+    CannotCalculateChanges {
+        description: Option<String>,
+    },
     #[serde(other)]
     Unknown,
 }
@@ -139,6 +145,13 @@ impl fmt::Display for JmapMethodError {
             Self::Singleton => write!(f, "JMAP singleton"),
             Self::UnknownMethod { description } => {
                 write!(f, "JMAP unknownMethod")?;
+                if let Some(d) = description {
+                    write!(f, ": {d}")?;
+                }
+                Ok(())
+            }
+            Self::CannotCalculateChanges { description } => {
+                write!(f, "JMAP cannotCalculateChanges")?;
                 if let Some(d) = description {
                     write!(f, ": {d}")?;
                 }

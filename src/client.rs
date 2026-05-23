@@ -496,11 +496,13 @@ impl JmapClientStd {
 
     // ---- Email (RFC 8621 §4) ---------------------------------------------
 
-    /// Runs [`JmapEmailGet`] (`Email/get`).
+    /// Runs [`JmapEmailGet`] (`Email/get`). `properties` accepts the
+    /// typed [`EmailProperty`] enum; serde handles the wire-spelling
+    /// rename per the enum's `rename_all = "camelCase"` annotation.
     pub fn email_get(
         &mut self,
         ids: Vec<String>,
-        properties: Option<Vec<String>>,
+        properties: Option<Vec<EmailProperty>>,
         fetch_text_body_values: bool,
         fetch_html_body_values: bool,
         max_body_value_bytes: u64,

@@ -8,7 +8,10 @@ use thiserror::Error;
 
 use crate::{
     rfc8620::{get::*, send::*, session::JmapSession},
-    rfc8621::{capabilities, email::Email},
+    rfc8621::{
+        capabilities,
+        email::{Email, EmailProperty},
+    },
 };
 
 /// Errors that can occur during the coroutine progression.
@@ -53,8 +56,12 @@ fn is_zero(v: &u64) -> bool {
 struct EmailGetArgs {
     account_id: String,
     ids: Vec<String>,
+    /// `EmailProperty`'s `Serialize` impl carries
+    /// `rename_all = "camelCase"`, so each variant serializes as the
+    /// JMAP wire string (`id`, `mailboxIds`, `sentAt`, ...). Callers
+    /// pass the typed enum and serde handles the encoding.
     #[serde(skip_serializing_if = "Option::is_none")]
-    properties: Option<Vec<String>>,
+    properties: Option<Vec<EmailProperty>>,
     #[serde(skip_serializing_if = "is_false")]
     fetch_text_body_values: bool,
     #[serde(rename = "fetchHTMLBodyValues", skip_serializing_if = "is_false")]
@@ -82,7 +89,7 @@ impl JmapEmailGet {
         session: &JmapSession,
         http_auth: &SecretString,
         ids: Vec<String>,
-        properties: Option<Vec<String>>,
+        properties: Option<Vec<EmailProperty>>,
         fetch_text_body_values: bool,
         fetch_html_body_values: bool,
         max_body_value_bytes: u64,
