@@ -6,6 +6,7 @@ pub mod blob_download;
 pub mod blob_upload;
 pub mod changes;
 pub mod error;
+pub mod event_source;
 pub mod get;
 pub mod query;
 #[path = "query-changes.rs"]

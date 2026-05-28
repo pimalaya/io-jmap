@@ -43,6 +43,10 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, features = ["serde"] }
 
+# [patch.crates-io]
+# io-http.path = "../io-http"
+# pimalaya-stream.path = "../stream"
+
 [patch.crates-io]
 io-http.git = "https://github.com/pimalaya/io-http"
 pimalaya-stream.git = "https://github.com/pimalaya/stream"
