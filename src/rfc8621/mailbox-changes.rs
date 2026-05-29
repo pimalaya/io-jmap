@@ -5,6 +5,7 @@ use alloc::{string::String, vec, vec::Vec};
 use secrecy::SecretString;
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{changes::*, session::JmapSession},
     rfc8621::capabilities,
@@ -17,24 +18,15 @@ pub enum JmapMailboxChangesError {
     Changes(#[from] JmapChangesError),
 }
 
-/// Result returned by the [`JmapMailboxChanges`] coroutine.
-#[derive(Debug)]
-pub enum JmapMailboxChangesResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        has_more_changes: bool,
-        created: Vec<String>,
-        updated: Vec<String>,
-        destroyed: Vec<String>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapMailboxChangesError),
+/// Successful output of [`JmapMailboxChanges`].
+#[derive(Clone, Debug)]
+pub struct JmapMailboxChangesOk {
+    pub new_state: String,
+    pub has_more_changes: bool,
+    pub created: Vec<String>,
+    pub updated: Vec<String>,
+    pub destroyed: Vec<String>,
+    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine for the JMAP `Mailbox/changes` method.
@@ -71,28 +63,32 @@ impl JmapMailboxChanges {
             )?,
         })
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapMailboxChangesResult {
+impl JmapCoroutine for JmapMailboxChanges {
+    type Output = JmapMailboxChangesOk;
+    type Error = JmapMailboxChangesError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         match self.changes.resume(arg) {
-            JmapChangesResult::Ok {
+            JmapCoroutineState::Done(JmapChangesOk {
                 new_state,
                 has_more_changes,
                 created,
                 updated,
                 destroyed,
                 keep_alive,
-            } => JmapMailboxChangesResult::Ok {
+            }) => JmapCoroutineState::Done(JmapMailboxChangesOk {
                 new_state,
                 has_more_changes,
                 created,
                 updated,
                 destroyed,
                 keep_alive,
-            },
-            JmapChangesResult::WantsRead => JmapMailboxChangesResult::WantsRead,
-            JmapChangesResult::WantsWrite(bytes) => JmapMailboxChangesResult::WantsWrite(bytes),
-            JmapChangesResult::Err(err) => JmapMailboxChangesResult::Err(err.into()),
+            }),
+            JmapCoroutineState::WantsRead => JmapCoroutineState::WantsRead,
+            JmapCoroutineState::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
+            JmapCoroutineState::Err(err) => JmapCoroutineState::Err(err.into()),
         }
     }
 }

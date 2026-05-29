@@ -40,6 +40,7 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
+    coroutine::{JmapCoroutine, JmapCoroutineState},
     rfc8620::{
         blob_download::*, blob_upload::*, changes::JmapChangesOutput, send::*,
         session::JmapSession, session_get::*,
@@ -194,35 +195,34 @@ impl fmt::Debug for JmapClientStd {
     }
 }
 
-/// Run a coroutine against `$self.stream`. The `Ok` pattern
-/// destructures whichever fields the caller wants and `$ret` is the
-/// value returned on success. Pass the coroutine constructor
-/// expression (including the trailing `?`) directly: the macro takes
-/// ownership of the resulting coroutine.
-macro_rules! coroutine {
-    ($self:ident, $coroutine:expr, $Result:ident, $ok_pat:tt => $ret:expr) => {{
+impl JmapClientStd {
+    /// Drives any [`JmapCoroutine`] to completion against the
+    /// underlying stream. Returns the coroutine's `Output` on success
+    /// and wraps its `Error` into [`JmapClientStdError`] on failure.
+    pub fn run<C>(&mut self, mut coroutine: C) -> Result<C::Output, JmapClientStdError>
+    where
+        C: JmapCoroutine,
+        JmapClientStdError: From<C::Error>,
+    {
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
-        let mut coroutine = $coroutine;
 
         loop {
             match coroutine.resume(arg) {
-                $Result::Ok $ok_pat => return Ok($ret),
-                $Result::WantsRead => {
-                    let n = $self.stream.read(&mut buf)?;
+                JmapCoroutineState::Done(out) => return Ok(out),
+                JmapCoroutineState::WantsRead => {
+                    let n = self.stream.read(&mut buf)?;
                     arg = Some(&buf[..n]);
                 }
-                $Result::WantsWrite(bytes) => {
-                    $self.stream.write_all(&bytes)?;
+                JmapCoroutineState::WantsWrite(bytes) => {
+                    self.stream.write_all(&bytes)?;
                     arg = None;
                 }
-                $Result::Err(err) => return Err(err.into()),
+                JmapCoroutineState::Err(err) => return Err(err.into()),
             }
         }
-    }};
-}
+    }
 
-impl JmapClientStd {
     /// Builds a client around `stream`. The caller is responsible for
     /// opening the connection (TCP, TLS handshake if needed) and for
     /// the bearer token / authorization header value.
@@ -357,12 +357,24 @@ impl JmapClientStd {
     /// CLIs and ad-hoc requests with custom `using` capabilities.
     pub fn send_raw(&mut self, request: JmapRequest) -> Result<JmapResponse, JmapClientStdError> {
         let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapSend::new(&self.http_auth, &session.api_url, request)?,
-            JmapSendResult,
-            { response, .. } => response
-        );
+        let mut coroutine = JmapSend::new(&self.http_auth, &session.api_url, request)?;
+        let mut buf = [0u8; READ_BUFFER_SIZE];
+        let mut arg: Option<&[u8]> = None;
+
+        loop {
+            match coroutine.resume(arg) {
+                JmapSendResult::Ok { response, .. } => return Ok(response),
+                JmapSendResult::WantsRead => {
+                    let n = self.stream.read(&mut buf)?;
+                    arg = Some(&buf[..n]);
+                }
+                JmapSendResult::WantsWrite(bytes) => {
+                    self.stream.write_all(&bytes)?;
+                    arg = None;
+                }
+                JmapSendResult::Err(err) => return Err(err.into()),
+            }
+        }
     }
 
     // ---- Blob (RFC 8620 §6) ----------------------------------------------
@@ -376,12 +388,35 @@ impl JmapClientStd {
         content_type: &str,
         data: Vec<u8>,
     ) -> Result<JmapBlobUploadOutput, JmapClientStdError> {
-        coroutine!(
-            self,
-            JmapBlobUpload::new(&self.http_auth, upload_url, content_type, data),
-            JmapBlobUploadResult,
-            { blob_id, blob_type, size, .. } => JmapBlobUploadOutput { blob_id, blob_type, size }
-        );
+        let mut coroutine = JmapBlobUpload::new(&self.http_auth, upload_url, content_type, data);
+        let mut buf = [0u8; READ_BUFFER_SIZE];
+        let mut arg: Option<&[u8]> = None;
+
+        loop {
+            match coroutine.resume(arg) {
+                JmapBlobUploadResult::Ok {
+                    blob_id,
+                    blob_type,
+                    size,
+                    ..
+                } => {
+                    return Ok(JmapBlobUploadOutput {
+                        blob_id,
+                        blob_type,
+                        size,
+                    });
+                }
+                JmapBlobUploadResult::WantsRead => {
+                    let n = self.stream.read(&mut buf)?;
+                    arg = Some(&buf[..n]);
+                }
+                JmapBlobUploadResult::WantsWrite(bytes) => {
+                    self.stream.write_all(&bytes)?;
+                    arg = None;
+                }
+                JmapBlobUploadResult::Err(err) => return Err(err.into()),
+            }
+        }
     }
 
     /// Downloads a blob from `download_url` (RFC 8620 §6.2). The
@@ -422,14 +457,14 @@ impl JmapClientStd {
         ids: Option<Vec<String>>,
         properties: Option<Vec<MailboxProperty>>,
     ) -> Result<JmapMailboxGetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapMailboxGet::new(session, &self.http_auth, ids, properties)?,
-            JmapMailboxGetResult,
-            { mailboxes, not_found, new_state, .. } =>
-                JmapMailboxGetOutput { mailboxes, not_found, new_state }
-        );
+        let coroutine =
+            JmapMailboxGet::new(self.session_or_err()?, &self.http_auth, ids, properties)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapMailboxGetOutput {
+            mailboxes: out.mailboxes,
+            not_found: out.not_found,
+            new_state: out.new_state,
+        })
     }
 
     /// Runs [`JmapMailboxQuery`] (batched `Mailbox/query` +
@@ -442,22 +477,22 @@ impl JmapClientStd {
         limit: Option<u64>,
         properties: Option<Vec<MailboxProperty>>,
     ) -> Result<JmapMailboxQueryOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapMailboxQuery::new(
-                session,
-                &self.http_auth,
-                filter,
-                sort,
-                position,
-                limit,
-                properties,
-            )?,
-            JmapMailboxQueryResult,
-            { mailboxes, total, position, query_state, .. } =>
-                JmapMailboxQueryOutput { mailboxes, total, position, query_state }
-        );
+        let coroutine = JmapMailboxQuery::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            filter,
+            sort,
+            position,
+            limit,
+            properties,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapMailboxQueryOutput {
+            mailboxes: out.mailboxes,
+            total: out.total,
+            position: out.position,
+            query_state: out.query_state,
+        })
     }
 
     /// Runs [`JmapMailboxSet`] (`Mailbox/set`).
@@ -465,17 +500,17 @@ impl JmapClientStd {
         &mut self,
         args: JmapMailboxSetArgs,
     ) -> Result<JmapMailboxSetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapMailboxSet::new(session, &self.http_auth, args)?,
-            JmapMailboxSetResult,
-            { new_state, created, updated, destroyed, not_created, not_updated, not_destroyed, .. } =>
-                JmapMailboxSetOutput {
-                    new_state, created, updated, destroyed,
-                    not_created, not_updated, not_destroyed,
-                }
-        );
+        let coroutine = JmapMailboxSet::new(self.session_or_err()?, &self.http_auth, args)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapMailboxSetOutput {
+            new_state: out.new_state,
+            created: out.created,
+            updated: out.updated,
+            destroyed: out.destroyed,
+            not_created: out.not_created,
+            not_updated: out.not_updated,
+            not_destroyed: out.not_destroyed,
+        })
     }
 
     /// Runs [`JmapMailboxChanges`] (`Mailbox/changes`).
@@ -484,14 +519,20 @@ impl JmapClientStd {
         since_state: impl Into<String>,
         max_changes: Option<u64>,
     ) -> Result<JmapChangesOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapMailboxChanges::new(session, &self.http_auth, since_state, max_changes)?,
-            JmapMailboxChangesResult,
-            { new_state, has_more_changes, created, updated, destroyed, .. } =>
-                JmapChangesOutput { new_state, has_more_changes, created, updated, destroyed }
-        );
+        let coroutine = JmapMailboxChanges::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            since_state,
+            max_changes,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapChangesOutput {
+            new_state: out.new_state,
+            has_more_changes: out.has_more_changes,
+            created: out.created,
+            updated: out.updated,
+            destroyed: out.destroyed,
+        })
     }
 
     // ---- Email (RFC 8621 §4) ---------------------------------------------
@@ -507,22 +548,21 @@ impl JmapClientStd {
         fetch_html_body_values: bool,
         max_body_value_bytes: u64,
     ) -> Result<JmapEmailGetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailGet::new(
-                session,
-                &self.http_auth,
-                ids,
-                properties,
-                fetch_text_body_values,
-                fetch_html_body_values,
-                max_body_value_bytes,
-            )?,
-            JmapEmailGetResult,
-            { emails, not_found, new_state, .. } =>
-                JmapEmailGetOutput { emails, not_found, new_state }
-        );
+        let coroutine = JmapEmailGet::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            ids,
+            properties,
+            fetch_text_body_values,
+            fetch_html_body_values,
+            max_body_value_bytes,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailGetOutput {
+            emails: out.emails,
+            not_found: out.not_found,
+            new_state: out.new_state,
+        })
     }
 
     /// Runs [`JmapEmailQuery`] (batched `Email/query` + `Email/get`).
@@ -534,22 +574,22 @@ impl JmapClientStd {
         limit: Option<u64>,
         properties: Option<Vec<EmailProperty>>,
     ) -> Result<JmapEmailQueryOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailQuery::new(
-                session,
-                &self.http_auth,
-                filter,
-                sort,
-                position,
-                limit,
-                properties,
-            )?,
-            JmapEmailQueryResult,
-            { emails, total, position, query_state, .. } =>
-                JmapEmailQueryOutput { emails, total, position, query_state }
-        );
+        let coroutine = JmapEmailQuery::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            filter,
+            sort,
+            position,
+            limit,
+            properties,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailQueryOutput {
+            emails: out.emails,
+            total: out.total,
+            position: out.position,
+            query_state: out.query_state,
+        })
     }
 
     /// Runs [`JmapEmailSet`] (`Email/set`).
@@ -557,17 +597,17 @@ impl JmapClientStd {
         &mut self,
         args: JmapEmailSetArgs,
     ) -> Result<JmapEmailSetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailSet::new(session, &self.http_auth, args)?,
-            JmapEmailSetResult,
-            { new_state, created, updated, destroyed, not_created, not_updated, not_destroyed, .. } =>
-                JmapEmailSetOutput {
-                    new_state, created, updated, destroyed,
-                    not_created, not_updated, not_destroyed,
-                }
-        );
+        let coroutine = JmapEmailSet::new(self.session_or_err()?, &self.http_auth, args)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailSetOutput {
+            new_state: out.new_state,
+            created: out.created,
+            updated: out.updated,
+            destroyed: out.destroyed,
+            not_created: out.not_created,
+            not_updated: out.not_updated,
+            not_destroyed: out.not_destroyed,
+        })
     }
 
     /// Runs [`JmapEmailChanges`] (`Email/changes`).
@@ -576,14 +616,20 @@ impl JmapClientStd {
         since_state: impl Into<String>,
         max_changes: Option<u64>,
     ) -> Result<JmapChangesOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailChanges::new(session, &self.http_auth, since_state, max_changes)?,
-            JmapEmailChangesResult,
-            { new_state, has_more_changes, created, updated, destroyed, .. } =>
-                JmapChangesOutput { new_state, has_more_changes, created, updated, destroyed }
-        );
+        let coroutine = JmapEmailChanges::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            since_state,
+            max_changes,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapChangesOutput {
+            new_state: out.new_state,
+            has_more_changes: out.has_more_changes,
+            created: out.created,
+            updated: out.updated,
+            destroyed: out.destroyed,
+        })
     }
 
     /// Runs [`JmapEmailCopy`] (`Email/copy`).
@@ -592,14 +638,18 @@ impl JmapClientStd {
         from_account_id: impl Into<String>,
         emails: BTreeMap<String, EmailCopy>,
     ) -> Result<JmapEmailCopyOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailCopy::new(session, &self.http_auth, from_account_id, emails)?,
-            JmapEmailCopyResult,
-            { new_state, created, not_created, .. } =>
-                JmapEmailCopyOutput { new_state, created, not_created }
-        );
+        let coroutine = JmapEmailCopy::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            from_account_id,
+            emails,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailCopyOutput {
+            new_state: out.new_state,
+            created: out.created,
+            not_created: out.not_created,
+        })
     }
 
     /// Runs [`JmapEmailImport`] (`Email/import`).
@@ -607,14 +657,13 @@ impl JmapClientStd {
         &mut self,
         emails: BTreeMap<String, EmailImport>,
     ) -> Result<JmapEmailImportOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailImport::new(session, &self.http_auth, emails)?,
-            JmapEmailImportResult,
-            { new_state, created, not_created, .. } =>
-                JmapEmailImportOutput { new_state, created, not_created }
-        );
+        let coroutine = JmapEmailImport::new(self.session_or_err()?, &self.http_auth, emails)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailImportOutput {
+            new_state: out.new_state,
+            created: out.created,
+            not_created: out.not_created,
+        })
     }
 
     /// Runs [`JmapEmailParse`] (`Email/parse`).
@@ -623,14 +672,18 @@ impl JmapClientStd {
         blob_ids: Vec<String>,
         properties: Option<Vec<EmailProperty>>,
     ) -> Result<JmapEmailParseOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailParse::new(session, &self.http_auth, blob_ids, properties)?,
-            JmapEmailParseResult,
-            { parsed, not_parsable, not_found, .. } =>
-                JmapEmailParseOutput { parsed, not_parsable, not_found }
-        );
+        let coroutine = JmapEmailParse::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            blob_ids,
+            properties,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailParseOutput {
+            parsed: out.parsed,
+            not_parsable: out.not_parsable,
+            not_found: out.not_found,
+        })
     }
 
     // ---- Thread (RFC 8621 §3) --------------------------------------------
@@ -640,14 +693,13 @@ impl JmapClientStd {
         &mut self,
         ids: Vec<String>,
     ) -> Result<JmapThreadGetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapThreadGet::new(session, &self.http_auth, ids)?,
-            JmapThreadGetResult,
-            { threads, not_found, new_state, .. } =>
-                JmapThreadGetOutput { threads, not_found, new_state }
-        );
+        let coroutine = JmapThreadGet::new(self.session_or_err()?, &self.http_auth, ids)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapThreadGetOutput {
+            threads: out.threads,
+            not_found: out.not_found,
+            new_state: out.new_state,
+        })
     }
 
     /// Runs [`JmapThreadChanges`] (`Thread/changes`).
@@ -656,14 +708,20 @@ impl JmapClientStd {
         since_state: impl Into<String>,
         max_changes: Option<u64>,
     ) -> Result<JmapChangesOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapThreadChanges::new(session, &self.http_auth, since_state, max_changes)?,
-            JmapThreadChangesResult,
-            { new_state, has_more_changes, created, updated, destroyed, .. } =>
-                JmapChangesOutput { new_state, has_more_changes, created, updated, destroyed }
-        );
+        let coroutine = JmapThreadChanges::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            since_state,
+            max_changes,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapChangesOutput {
+            new_state: out.new_state,
+            has_more_changes: out.has_more_changes,
+            created: out.created,
+            updated: out.updated,
+            destroyed: out.destroyed,
+        })
     }
 
     // ---- Identity (RFC 8621 §6) ------------------------------------------
@@ -674,14 +732,13 @@ impl JmapClientStd {
         &mut self,
         ids: Option<Vec<String>>,
     ) -> Result<JmapIdentityGetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapIdentityGet::new(session, &self.http_auth, ids)?,
-            JmapIdentityGetResult,
-            { identities, not_found, new_state, .. } =>
-                JmapIdentityGetOutput { identities, not_found, new_state }
-        );
+        let coroutine = JmapIdentityGet::new(self.session_or_err()?, &self.http_auth, ids)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapIdentityGetOutput {
+            identities: out.identities,
+            not_found: out.not_found,
+            new_state: out.new_state,
+        })
     }
 
     /// Runs [`JmapIdentitySet`] (`Identity/set`).
@@ -689,17 +746,17 @@ impl JmapClientStd {
         &mut self,
         args: JmapIdentitySetArgs,
     ) -> Result<JmapIdentitySetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapIdentitySet::new(session, &self.http_auth, args)?,
-            JmapIdentitySetResult,
-            { new_state, created, updated, destroyed, not_created, not_updated, not_destroyed, .. } =>
-                JmapIdentitySetOutput {
-                    new_state, created, updated, destroyed,
-                    not_created, not_updated, not_destroyed,
-                }
-        );
+        let coroutine = JmapIdentitySet::new(self.session_or_err()?, &self.http_auth, args)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapIdentitySetOutput {
+            new_state: out.new_state,
+            created: out.created,
+            updated: out.updated,
+            destroyed: out.destroyed,
+            not_created: out.not_created,
+            not_updated: out.not_updated,
+            not_destroyed: out.not_destroyed,
+        })
     }
 
     // ---- EmailSubmission (RFC 8621 §7) -----------------------------------
@@ -709,14 +766,13 @@ impl JmapClientStd {
         &mut self,
         ids: Option<Vec<String>>,
     ) -> Result<JmapEmailSubmissionGetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailSubmissionGet::new(session, &self.http_auth, ids)?,
-            JmapEmailSubmissionGetResult,
-            { submissions, not_found, new_state, .. } =>
-                JmapEmailSubmissionGetOutput { submissions, not_found, new_state }
-        );
+        let coroutine = JmapEmailSubmissionGet::new(self.session_or_err()?, &self.http_auth, ids)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailSubmissionGetOutput {
+            submissions: out.submissions,
+            not_found: out.not_found,
+            new_state: out.new_state,
+        })
     }
 
     /// Runs [`JmapEmailSubmissionQuery`] (batched
@@ -728,14 +784,21 @@ impl JmapClientStd {
         position: Option<u64>,
         limit: Option<u64>,
     ) -> Result<JmapEmailSubmissionQueryOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailSubmissionQuery::new(session, &self.http_auth, filter, sort, position, limit)?,
-            JmapEmailSubmissionQueryResult,
-            { submissions, total, position, query_state, .. } =>
-                JmapEmailSubmissionQueryOutput { submissions, total, position, query_state }
-        );
+        let coroutine = JmapEmailSubmissionQuery::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            filter,
+            sort,
+            position,
+            limit,
+        )?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailSubmissionQueryOutput {
+            submissions: out.submissions,
+            total: out.total,
+            position: out.position,
+            query_state: out.query_state,
+        })
     }
 
     /// Runs [`JmapEmailSubmissionSet`] (`EmailSubmission/set`).
@@ -743,14 +806,14 @@ impl JmapClientStd {
         &mut self,
         submissions: BTreeMap<String, EmailSubmissionCreate>,
     ) -> Result<JmapEmailSubmissionSetOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailSubmissionSet::new(session, &self.http_auth, submissions)?,
-            JmapEmailSubmissionSetResult,
-            { new_state, created, not_created, .. } =>
-                JmapEmailSubmissionSetOutput { new_state, created, not_created }
-        );
+        let coroutine =
+            JmapEmailSubmissionSet::new(self.session_or_err()?, &self.http_auth, submissions)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailSubmissionSetOutput {
+            new_state: out.new_state,
+            created: out.created,
+            not_created: out.not_created,
+        })
     }
 
     /// Runs [`JmapEmailSubmissionCancel`] (`EmailSubmission/set` with
@@ -759,14 +822,14 @@ impl JmapClientStd {
         &mut self,
         ids: Vec<String>,
     ) -> Result<JmapEmailSubmissionCancelOutput, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapEmailSubmissionCancel::new(session, &self.http_auth, ids)?,
-            JmapEmailSubmissionCancelResult,
-            { new_state, updated, not_updated, .. } =>
-                JmapEmailSubmissionCancelOutput { new_state, updated, not_updated }
-        );
+        let coroutine =
+            JmapEmailSubmissionCancel::new(self.session_or_err()?, &self.http_auth, ids)?;
+        let out = self.run(coroutine)?;
+        Ok(JmapEmailSubmissionCancelOutput {
+            new_state: out.new_state,
+            updated: out.updated,
+            not_updated: out.not_updated,
+        })
     }
 
     // ---- VacationResponse (RFC 8621 §8) ----------------------------------
@@ -776,13 +839,8 @@ impl JmapClientStd {
     pub fn vacation_response_get(
         &mut self,
     ) -> Result<Option<VacationResponse>, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapVacationResponseGet::new(session, &self.http_auth)?,
-            JmapVacationResponseGetResult,
-            { vacation_response, .. } => vacation_response
-        );
+        let coroutine = JmapVacationResponseGet::new(self.session_or_err()?, &self.http_auth)?;
+        Ok(self.run(coroutine)?.vacation_response)
     }
 
     /// Runs [`JmapVacationResponseSet`] (`VacationResponse/set`).
@@ -791,12 +849,8 @@ impl JmapClientStd {
         &mut self,
         patch: VacationResponseUpdate,
     ) -> Result<Option<VacationResponse>, JmapClientStdError> {
-        let session = self.session_or_err()?;
-        coroutine!(
-            self,
-            JmapVacationResponseSet::new(session, &self.http_auth, patch)?,
-            JmapVacationResponseSetResult,
-            { updated, .. } => updated
-        );
+        let coroutine =
+            JmapVacationResponseSet::new(self.session_or_err()?, &self.http_auth, patch)?;
+        Ok(self.run(coroutine)?.updated)
     }
 }

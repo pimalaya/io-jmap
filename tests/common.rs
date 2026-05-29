@@ -33,21 +33,22 @@ use std::{
 };
 
 use io_jmap::{
+    coroutine::*,
     rfc8620::{
         blob_upload::{JmapBlobUpload, JmapBlobUploadResult},
         session_get::{JmapSessionGet, JmapSessionGetResult},
     },
     rfc8621::{
         email::{EmailFilter, EmailImport},
-        email_get::{JmapEmailGet, JmapEmailGetResult},
-        email_import::{JmapEmailImport, JmapEmailImportResult},
-        email_query::{JmapEmailQuery, JmapEmailQueryResult},
-        email_set::{JmapEmailSet, JmapEmailSetArgs, JmapEmailSetResult},
+        email_get::{JmapEmailGet, JmapEmailGetOk},
+        email_import::{JmapEmailImport, JmapEmailImportOk},
+        email_query::{JmapEmailQuery, JmapEmailQueryOk},
+        email_set::{JmapEmailSet, JmapEmailSetArgs, JmapEmailSetOk},
         mailbox::{MailboxCreate, MailboxUpdate},
-        mailbox_get::{JmapMailboxGet, JmapMailboxGetResult},
-        mailbox_query::{JmapMailboxQuery, JmapMailboxQueryResult},
-        mailbox_set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetResult},
-        thread_get::{JmapThreadGet, JmapThreadGetResult},
+        mailbox_get::{JmapMailboxGet, JmapMailboxGetOk},
+        mailbox_query::{JmapMailboxQuery, JmapMailboxQueryOk},
+        mailbox_set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetOk},
+        thread_get::{JmapThreadGet, JmapThreadGetOk},
     },
 };
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};
@@ -184,26 +185,26 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let mailboxes = loop {
             match coroutine.resume(arg.take()) {
-                JmapMailboxQueryResult::Ok {
+                JmapCoroutineState::Done(JmapMailboxQueryOk {
                     mailboxes,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     if !keep_alive {
                         stream = connect(&api_url);
                     }
                     break mailboxes;
                 }
-                JmapMailboxQueryResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read MAILBOX QUERY");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapMailboxQueryResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write MAILBOX QUERY");
                 }
-                JmapMailboxQueryResult::Err(err) => panic!("MAILBOX QUERY: {err}"),
+                JmapCoroutineState::Err(err) => panic!("MAILBOX QUERY: {err}"),
             }
         };
 
@@ -237,12 +238,12 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let created = loop {
             match coroutine.resume(arg.take()) {
-                JmapMailboxSetResult::Ok {
+                JmapCoroutineState::Done(JmapMailboxSetOk {
                     created,
                     not_created,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_created.is_empty(),
                         "MAILBOX SET create: not_created = {not_created:?}"
@@ -252,16 +253,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break created;
                 }
-                JmapMailboxSetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read MAILBOX SET create");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapMailboxSetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write MAILBOX SET create");
                 }
-                JmapMailboxSetResult::Err(err) => panic!("MAILBOX SET create: {err}"),
+                JmapCoroutineState::Err(err) => panic!("MAILBOX SET create: {err}"),
             }
         };
 
@@ -284,12 +285,12 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let mailboxes = loop {
             match coroutine.resume(arg.take()) {
-                JmapMailboxGetResult::Ok {
+                JmapCoroutineState::Done(JmapMailboxGetOk {
                     mailboxes,
                     not_found,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_found.is_empty(),
                         "MAILBOX GET: not_found = {not_found:?}"
@@ -299,16 +300,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break mailboxes;
                 }
-                JmapMailboxGetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read MAILBOX GET");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapMailboxGetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write MAILBOX GET");
                 }
-                JmapMailboxGetResult::Err(err) => panic!("MAILBOX GET: {err}"),
+                JmapCoroutineState::Err(err) => panic!("MAILBOX GET: {err}"),
             }
         };
 
@@ -349,11 +350,11 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         loop {
             match coroutine.resume(arg.take()) {
-                JmapMailboxSetResult::Ok {
+                JmapCoroutineState::Done(JmapMailboxSetOk {
                     not_updated,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_updated.is_empty(),
                         "MAILBOX SET rename: not_updated = {not_updated:?}"
@@ -363,16 +364,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapMailboxSetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read MAILBOX SET rename");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapMailboxSetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write MAILBOX SET rename");
                 }
-                JmapMailboxSetResult::Err(err) => panic!("MAILBOX SET rename: {err}"),
+                JmapCoroutineState::Err(err) => panic!("MAILBOX SET rename: {err}"),
             }
         }
     }
@@ -388,26 +389,26 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let mailboxes = loop {
             match coroutine.resume(arg.take()) {
-                JmapMailboxGetResult::Ok {
+                JmapCoroutineState::Done(JmapMailboxGetOk {
                     mailboxes,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     if !keep_alive {
                         stream = connect(&api_url);
                     }
                     break mailboxes;
                 }
-                JmapMailboxGetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read MAILBOX GET rename");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapMailboxGetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write MAILBOX GET rename");
                 }
-                JmapMailboxGetResult::Err(err) => panic!("MAILBOX GET after rename: {err}"),
+                JmapCoroutineState::Err(err) => panic!("MAILBOX GET after rename: {err}"),
             }
         };
 
@@ -482,11 +483,11 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         loop {
             match coroutine.resume(arg.take()) {
-                JmapEmailImportResult::Ok {
+                JmapCoroutineState::Done(JmapEmailImportOk {
                     not_created,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_created.is_empty(),
                         "EMAIL IMPORT: not_created = {not_created:?}"
@@ -496,16 +497,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailImportResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read EMAIL IMPORT");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapEmailImportResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write EMAIL IMPORT");
                 }
-                JmapEmailImportResult::Err(err) => panic!("EMAIL IMPORT: {err}"),
+                JmapCoroutineState::Err(err) => panic!("EMAIL IMPORT: {err}"),
             }
         }
     }
@@ -525,24 +526,24 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let emails = loop {
             match coroutine.resume(arg.take()) {
-                JmapEmailQueryResult::Ok {
+                JmapCoroutineState::Done(JmapEmailQueryOk {
                     emails, keep_alive, ..
-                } => {
+                }) => {
                     if !keep_alive {
                         stream = connect(&api_url);
                     }
                     break emails;
                 }
-                JmapEmailQueryResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read EMAIL QUERY");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapEmailQueryResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write EMAIL QUERY");
                 }
-                JmapEmailQueryResult::Err(err) => panic!("EMAIL QUERY: {err}"),
+                JmapCoroutineState::Err(err) => panic!("EMAIL QUERY: {err}"),
             }
         };
 
@@ -570,28 +571,28 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let emails = loop {
             match coroutine.resume(arg.take()) {
-                JmapEmailGetResult::Ok {
+                JmapCoroutineState::Done(JmapEmailGetOk {
                     emails,
                     not_found,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(not_found.is_empty(), "EMAIL GET: not_found = {not_found:?}");
                     if !keep_alive {
                         stream = connect(&api_url);
                     }
                     break emails;
                 }
-                JmapEmailGetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read EMAIL GET");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapEmailGetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write EMAIL GET");
                 }
-                JmapEmailGetResult::Err(err) => panic!("EMAIL GET: {err}"),
+                JmapCoroutineState::Err(err) => panic!("EMAIL GET: {err}"),
             }
         };
 
@@ -614,11 +615,11 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         loop {
             match coroutine.resume(arg.take()) {
-                JmapEmailSetResult::Ok {
+                JmapCoroutineState::Done(JmapEmailSetOk {
                     not_updated,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_updated.is_empty(),
                         "EMAIL SET $seen: not_updated = {not_updated:?}"
@@ -628,16 +629,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailSetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read EMAIL SET $seen");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapEmailSetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write EMAIL SET $seen");
                 }
-                JmapEmailSetResult::Err(err) => panic!("EMAIL SET $seen: {err}"),
+                JmapCoroutineState::Err(err) => panic!("EMAIL SET $seen: {err}"),
             }
         }
     }
@@ -654,11 +655,11 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         loop {
             match coroutine.resume(arg.take()) {
-                JmapEmailSetResult::Ok {
+                JmapCoroutineState::Done(JmapEmailSetOk {
                     not_updated,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_updated.is_empty(),
                         "EMAIL SET remove $seen: not_updated = {not_updated:?}"
@@ -668,18 +669,18 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailSetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read EMAIL SET remove $seen");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapEmailSetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream
                         .write_all(&bytes)
                         .expect("write EMAIL SET remove $seen");
                 }
-                JmapEmailSetResult::Err(err) => panic!("EMAIL SET remove $seen: {err}"),
+                JmapCoroutineState::Err(err) => panic!("EMAIL SET remove $seen: {err}"),
             }
         }
     }
@@ -694,12 +695,12 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         let threads = loop {
             match coroutine.resume(arg.take()) {
-                JmapThreadGetResult::Ok {
+                JmapCoroutineState::Done(JmapThreadGetOk {
                     threads,
                     not_found,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_found.is_empty(),
                         "THREAD GET: not_found = {not_found:?}"
@@ -709,16 +710,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break threads;
                 }
-                JmapThreadGetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read THREAD GET");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapThreadGetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write THREAD GET");
                 }
-                JmapThreadGetResult::Err(err) => panic!("THREAD GET: {err}"),
+                JmapCoroutineState::Err(err) => panic!("THREAD GET: {err}"),
             }
         };
 
@@ -741,11 +742,11 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         loop {
             match coroutine.resume(arg.take()) {
-                JmapEmailSetResult::Ok {
+                JmapCoroutineState::Done(JmapEmailSetOk {
                     not_destroyed,
                     keep_alive,
                     ..
-                } => {
+                }) => {
                     assert!(
                         not_destroyed.is_empty(),
                         "EMAIL destroy: not_destroyed = {not_destroyed:?}"
@@ -755,16 +756,16 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
                     }
                     break;
                 }
-                JmapEmailSetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read EMAIL destroy");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapEmailSetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write EMAIL destroy");
                 }
-                JmapEmailSetResult::Err(err) => panic!("EMAIL destroy: {err}"),
+                JmapCoroutineState::Err(err) => panic!("EMAIL destroy: {err}"),
             }
         }
     }
@@ -781,23 +782,23 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
         loop {
             match coroutine.resume(arg.take()) {
-                JmapMailboxSetResult::Ok { not_destroyed, .. } => {
+                JmapCoroutineState::Done(JmapMailboxSetOk { not_destroyed, .. }) => {
                     assert!(
                         not_destroyed.is_empty(),
                         "MAILBOX destroy: not_destroyed = {not_destroyed:?}"
                     );
                     break;
                 }
-                JmapMailboxSetResult::WantsRead => {
+                JmapCoroutineState::WantsRead => {
                     let n = stream.read(&mut buf).expect("read MAILBOX destroy");
                     read_buf.clear();
                     read_buf.extend_from_slice(&buf[..n]);
                     arg = Some(&read_buf);
                 }
-                JmapMailboxSetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::WantsWrite(bytes) => {
                     stream.write_all(&bytes).expect("write MAILBOX destroy");
                 }
-                JmapMailboxSetResult::Err(err) => panic!("MAILBOX destroy: {err}"),
+                JmapCoroutineState::Err(err) => panic!("MAILBOX destroy: {err}"),
             }
         }
     }

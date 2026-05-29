@@ -10,6 +10,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{
         error::JmapMethodError, result_reference::ResultReference, send::*, session::JmapSession,
@@ -41,23 +42,14 @@ pub enum JmapMailboxQueryError {
     GetMethod(JmapMethodError),
 }
 
-/// Result returned by the [`JmapMailboxQuery`] coroutine.
-#[derive(Debug)]
-pub enum JmapMailboxQueryResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        mailboxes: Vec<Mailbox>,
-        total: Option<u64>,
-        position: u64,
-        query_state: String,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapMailboxQueryError),
+/// Successful output of [`JmapMailboxQuery`].
+#[derive(Clone, Debug)]
+pub struct JmapMailboxQueryOk {
+    pub mailboxes: Vec<Mailbox>,
+    pub total: Option<u64>,
+    pub position: u64,
+    pub query_state: String,
+    pub keep_alive: bool,
 }
 
 #[derive(Serialize)]
@@ -172,57 +164,61 @@ impl JmapMailboxQuery {
             send: JmapSend::new(http_auth, api_url, request)?,
         })
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapMailboxQueryResult {
+impl JmapCoroutine for JmapMailboxQuery {
+    type Output = JmapMailboxQueryOk;
+    type Error = JmapMailboxQueryError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapMailboxQueryResult::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapMailboxQueryResult::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapMailboxQueryResult::Err(err.into()),
+            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
         };
 
         let mut responses = response.method_responses.into_iter();
 
         let Some((query_name, query_args, _)) = responses.next() else {
-            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::MissingQueryResponse);
+            return JmapCoroutineState::Err(JmapMailboxQueryError::MissingQueryResponse);
         };
 
         if query_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(query_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::QueryMethod(err));
+            return JmapCoroutineState::Err(JmapMailboxQueryError::QueryMethod(err));
         }
 
         let query_response = match serde_json::from_value::<MailboxQueryResponse>(query_args) {
             Ok(r) => r,
             Err(err) => {
-                return JmapMailboxQueryResult::Err(JmapMailboxQueryError::ParseQueryResponse(err));
+                return JmapCoroutineState::Err(JmapMailboxQueryError::ParseQueryResponse(err));
             }
         };
 
         let Some((get_name, get_args, _)) = responses.next() else {
-            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::MissingGetResponse);
+            return JmapCoroutineState::Err(JmapMailboxQueryError::MissingGetResponse);
         };
 
         if get_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(get_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapMailboxQueryResult::Err(JmapMailboxQueryError::GetMethod(err));
+            return JmapCoroutineState::Err(JmapMailboxQueryError::GetMethod(err));
         }
 
         match serde_json::from_value::<MailboxGetResponse>(get_args) {
-            Ok(r) => JmapMailboxQueryResult::Ok {
+            Ok(r) => JmapCoroutineState::Done(JmapMailboxQueryOk {
                 mailboxes: r.list,
                 total: query_response.total,
                 position: query_response.position,
                 query_state: query_response.query_state,
                 keep_alive,
-            },
-            Err(err) => JmapMailboxQueryResult::Err(JmapMailboxQueryError::ParseGetResponse(err)),
+            }),
+            Err(err) => JmapCoroutineState::Err(JmapMailboxQueryError::ParseGetResponse(err)),
         }
     }
 }

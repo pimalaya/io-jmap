@@ -5,6 +5,7 @@ use alloc::{string::String, vec, vec::Vec};
 use secrecy::SecretString;
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{get::*, session::JmapSession},
     rfc8621::{capabilities, thread::Thread},
@@ -17,22 +18,13 @@ pub enum JmapThreadGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Result returned by the [`JmapThreadGet`] coroutine.
-#[derive(Debug)]
-pub enum JmapThreadGetResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        threads: Vec<Thread>,
-        not_found: Vec<String>,
-        new_state: String,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapThreadGetError),
+/// Successful output of [`JmapThreadGet`].
+#[derive(Clone, Debug)]
+pub struct JmapThreadGetOk {
+    pub threads: Vec<Thread>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine for the JMAP `Thread/get` method.
@@ -69,24 +61,28 @@ impl JmapThreadGet {
             )?,
         })
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapThreadGetResult {
+impl JmapCoroutine for JmapThreadGet {
+    type Output = JmapThreadGetOk;
+    type Error = JmapThreadGetError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
                 not_found,
                 state,
                 keep_alive,
-            } => JmapThreadGetResult::Ok {
+            } => JmapCoroutineState::Done(JmapThreadGetOk {
                 threads: list,
                 not_found,
                 new_state: state,
                 keep_alive,
-            },
-            JmapGetResult::WantsRead => JmapThreadGetResult::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapThreadGetResult::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapThreadGetResult::Err(err.into()),
+            }),
+            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
         }
     }
 }

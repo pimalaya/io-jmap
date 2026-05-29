@@ -6,6 +6,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{error::JmapMethodError, send::*, session::JmapSession},
     rfc8621::{
@@ -29,26 +30,17 @@ pub enum JmapIdentitySetError {
     Method(#[from] JmapMethodError),
 }
 
-/// Result returned by the [`JmapIdentitySet`] coroutine.
-#[derive(Debug)]
-pub enum JmapIdentitySetResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        created: BTreeMap<String, Identity>,
-        updated: BTreeMap<String, Option<Identity>>,
-        destroyed: Vec<String>,
-        not_created: BTreeMap<String, IdentitySetError>,
-        not_updated: BTreeMap<String, IdentitySetError>,
-        not_destroyed: BTreeMap<String, IdentitySetError>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapIdentitySetError),
+/// Successful output of [`JmapIdentitySet`].
+#[derive(Clone, Debug)]
+pub struct JmapIdentitySetOk {
+    pub new_state: String,
+    pub created: BTreeMap<String, Identity>,
+    pub updated: BTreeMap<String, Option<Identity>>,
+    pub destroyed: Vec<String>,
+    pub not_created: BTreeMap<String, IdentitySetError>,
+    pub not_updated: BTreeMap<String, IdentitySetError>,
+    pub not_destroyed: BTreeMap<String, IdentitySetError>,
+    pub keep_alive: bool,
 }
 
 /// Arguments for an `Identity/set` request.
@@ -149,30 +141,35 @@ impl JmapIdentitySet {
             send: JmapSend::new(http_auth, api_url, request)?,
         })
     }
+}
 
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapIdentitySetResult {
+impl JmapCoroutine for JmapIdentitySet {
+    type Output = JmapIdentitySetOk;
+    type Error = JmapIdentitySetError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapIdentitySetResult::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapIdentitySetResult::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapIdentitySetResult::Err(err.into()),
+            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapIdentitySetResult::Err(JmapIdentitySetError::MissingResponse);
+            return JmapCoroutineState::Err(JmapIdentitySetError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapIdentitySetResult::Err(err.into());
+            return JmapCoroutineState::Err(err.into());
         }
 
         match serde_json::from_value::<IdentitySetResponse>(args) {
-            Ok(r) => JmapIdentitySetResult::Ok {
+            Ok(r) => JmapCoroutineState::Done(JmapIdentitySetOk {
                 new_state: r.new_state.unwrap_or_default(),
                 created: BTreeMap::new(),
                 updated: BTreeMap::new(),
@@ -181,8 +178,8 @@ impl JmapIdentitySet {
                 not_updated: r.not_updated.unwrap_or_default(),
                 not_destroyed: r.not_destroyed.unwrap_or_default(),
                 keep_alive,
-            },
-            Err(err) => JmapIdentitySetResult::Err(JmapIdentitySetError::ParseResponse(err)),
+            }),
+            Err(err) => JmapCoroutineState::Err(JmapIdentitySetError::ParseResponse(err)),
         }
     }
 }

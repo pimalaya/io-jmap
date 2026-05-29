@@ -4,14 +4,15 @@
 //! response buffers. No network connection is made.
 
 use io_jmap::{
+    coroutine::*,
     rfc8620::session::JmapSession,
     rfc8621::{
-        email_get::{JmapEmailGet, JmapEmailGetResult},
-        email_query::{JmapEmailQuery, JmapEmailQueryResult},
+        email_get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOk},
+        email_query::{JmapEmailQuery, JmapEmailQueryError, JmapEmailQueryOk},
         mailbox::MailboxCreate,
-        mailbox_get::{JmapMailboxGet, JmapMailboxGetResult},
-        mailbox_query::{JmapMailboxQuery, JmapMailboxQueryResult},
-        mailbox_set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetResult},
+        mailbox_get::{JmapMailboxGet, JmapMailboxGetError, JmapMailboxGetOk},
+        mailbox_query::{JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOk},
+        mailbox_set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError, JmapMailboxSetOk},
     },
 };
 use secrecy::SecretString;
@@ -64,7 +65,9 @@ fn http_ok(body: &[u8]) -> Vec<u8> {
     http_response("200 OK", body)
 }
 
-fn run_mailbox_query(http_response_bytes: &[u8]) -> JmapMailboxQueryResult {
+fn run_mailbox_query(
+    http_response_bytes: &[u8],
+) -> JmapCoroutineState<JmapMailboxQueryOk, JmapMailboxQueryError> {
     let session = make_session();
     let token = make_token();
     let mut coroutine =
@@ -73,14 +76,17 @@ fn run_mailbox_query(http_response_bytes: &[u8]) -> JmapMailboxQueryResult {
 
     loop {
         match coroutine.resume(arg.take()) {
-            JmapMailboxQueryResult::WantsWrite(_) => arg = None,
-            JmapMailboxQueryResult::WantsRead => arg = Some(http_response_bytes),
+            JmapCoroutineState::WantsWrite(_) => arg = None,
+            JmapCoroutineState::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
 }
 
-fn run_mailbox_get(http_response_bytes: &[u8], ids: Option<Vec<String>>) -> JmapMailboxGetResult {
+fn run_mailbox_get(
+    http_response_bytes: &[u8],
+    ids: Option<Vec<String>>,
+) -> JmapCoroutineState<JmapMailboxGetOk, JmapMailboxGetError> {
     let session = make_session();
     let token = make_token();
     let mut coroutine = JmapMailboxGet::new(&session, &token, ids, None).unwrap();
@@ -88,14 +94,17 @@ fn run_mailbox_get(http_response_bytes: &[u8], ids: Option<Vec<String>>) -> Jmap
 
     loop {
         match coroutine.resume(arg.take()) {
-            JmapMailboxGetResult::WantsWrite(_) => arg = None,
-            JmapMailboxGetResult::WantsRead => arg = Some(http_response_bytes),
+            JmapCoroutineState::WantsWrite(_) => arg = None,
+            JmapCoroutineState::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
 }
 
-fn run_mailbox_set(http_response_bytes: &[u8], args: JmapMailboxSetArgs) -> JmapMailboxSetResult {
+fn run_mailbox_set(
+    http_response_bytes: &[u8],
+    args: JmapMailboxSetArgs,
+) -> JmapCoroutineState<JmapMailboxSetOk, JmapMailboxSetError> {
     let session = make_session();
     let token = make_token();
     let mut coroutine = JmapMailboxSet::new(&session, &token, args).unwrap();
@@ -103,14 +112,16 @@ fn run_mailbox_set(http_response_bytes: &[u8], args: JmapMailboxSetArgs) -> Jmap
 
     loop {
         match coroutine.resume(arg.take()) {
-            JmapMailboxSetResult::WantsWrite(_) => arg = None,
-            JmapMailboxSetResult::WantsRead => arg = Some(http_response_bytes),
+            JmapCoroutineState::WantsWrite(_) => arg = None,
+            JmapCoroutineState::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
 }
 
-fn run_email_query(http_response_bytes: &[u8]) -> JmapEmailQueryResult {
+fn run_email_query(
+    http_response_bytes: &[u8],
+) -> JmapCoroutineState<JmapEmailQueryOk, JmapEmailQueryError> {
     let session = make_session();
     let token = make_token();
     let mut coroutine =
@@ -119,14 +130,17 @@ fn run_email_query(http_response_bytes: &[u8]) -> JmapEmailQueryResult {
 
     loop {
         match coroutine.resume(arg.take()) {
-            JmapEmailQueryResult::WantsWrite(_) => arg = None,
-            JmapEmailQueryResult::WantsRead => arg = Some(http_response_bytes),
+            JmapCoroutineState::WantsWrite(_) => arg = None,
+            JmapCoroutineState::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
 }
 
-fn run_email_get(http_response_bytes: &[u8], ids: Vec<String>) -> JmapEmailGetResult {
+fn run_email_get(
+    http_response_bytes: &[u8],
+    ids: Vec<String>,
+) -> JmapCoroutineState<JmapEmailGetOk, JmapEmailGetError> {
     let session = make_session();
     let token = make_token();
     let mut coroutine = JmapEmailGet::new(&session, &token, ids, None, false, false, 0).unwrap();
@@ -134,8 +148,8 @@ fn run_email_get(http_response_bytes: &[u8], ids: Vec<String>) -> JmapEmailGetRe
 
     loop {
         match coroutine.resume(arg.take()) {
-            JmapEmailGetResult::WantsWrite(_) => arg = None,
-            JmapEmailGetResult::WantsRead => arg = Some(http_response_bytes),
+            JmapCoroutineState::WantsWrite(_) => arg = None,
+            JmapCoroutineState::WantsRead => arg = Some(http_response_bytes),
             any => return any,
         }
     }
@@ -159,7 +173,7 @@ fn mailbox_query_ok() {
     }"#;
 
     match run_mailbox_query(&http_ok(body)) {
-        JmapMailboxQueryResult::Ok { mailboxes, .. } => {
+        JmapCoroutineState::Done(JmapMailboxQueryOk { mailboxes, .. }) => {
             assert_eq!(mailboxes.len(), 2, "expected 2 mailboxes");
             assert_eq!(mailboxes[0].id.as_deref(), Some("mbox1"));
             assert_eq!(mailboxes[0].name.as_deref(), Some("Inbox"));
@@ -181,9 +195,9 @@ fn mailbox_query_empty() {
     }"#;
 
     match run_mailbox_query(&http_ok(body)) {
-        JmapMailboxQueryResult::Ok {
+        JmapCoroutineState::Done(JmapMailboxQueryOk {
             mailboxes, total, ..
-        } => {
+        }) => {
             assert!(mailboxes.is_empty(), "expected no mailboxes");
             assert_eq!(total, None, "no total expected");
         }
@@ -206,12 +220,12 @@ fn mailbox_query_with_total() {
     }"#;
 
     match run_mailbox_query(&http_ok(body)) {
-        JmapMailboxQueryResult::Ok {
+        JmapCoroutineState::Done(JmapMailboxQueryOk {
             mailboxes,
             total,
             position,
             ..
-        } => {
+        }) => {
             assert_eq!(mailboxes.len(), 1);
             assert_eq!(total, Some(3), "total should be 3");
             assert_eq!(position, 0, "position should be 0");
@@ -230,7 +244,7 @@ fn mailbox_query_method_error() {
     }"#;
 
     match run_mailbox_query(&http_ok(body)) {
-        JmapMailboxQueryResult::Err(err) => {
+        JmapCoroutineState::Err(err) => {
             assert!(
                 err.to_string().contains("unknownMethod"),
                 "expected unknownMethod error, got: {err}"
@@ -250,7 +264,7 @@ fn mailbox_query_missing_get_response() {
     }"#;
 
     match run_mailbox_query(&http_ok(body)) {
-        JmapMailboxQueryResult::Err(err) => {
+        JmapCoroutineState::Err(err) => {
             assert!(
                 err.to_string().contains("Missing"),
                 "expected missing response error, got: {err}"
@@ -265,7 +279,7 @@ fn mailbox_query_http_error() {
     let response = http_response("401 Unauthorized", b"{}");
 
     match run_mailbox_query(&response) {
-        JmapMailboxQueryResult::Err(err) => {
+        JmapCoroutineState::Err(err) => {
             assert!(
                 err.to_string().contains("401"),
                 "expected 401 error, got: {err}"
@@ -289,12 +303,12 @@ fn mailbox_get_ok() {
     }"#;
 
     match run_mailbox_get(&http_ok(body), Some(vec!["mbox1".to_owned()])) {
-        JmapMailboxGetResult::Ok {
+        JmapCoroutineState::Done(JmapMailboxGetOk {
             mailboxes,
             not_found,
             new_state,
             ..
-        } => {
+        }) => {
             assert!(not_found.is_empty(), "expected no not_found");
             assert_eq!(new_state, "s1");
             assert_eq!(mailboxes.len(), 1);
@@ -322,11 +336,11 @@ fn mailbox_get_not_found() {
         &http_ok(body),
         Some(vec!["mbox1".to_owned(), "mbox-missing".to_owned()]),
     ) {
-        JmapMailboxGetResult::Ok {
+        JmapCoroutineState::Done(JmapMailboxGetOk {
             mailboxes,
             not_found,
             ..
-        } => {
+        }) => {
             assert_eq!(mailboxes.len(), 1, "expected 1 found mailbox");
             assert_eq!(not_found, vec!["mbox-missing"], "expected not_found");
         }
@@ -352,7 +366,7 @@ fn mailbox_get_all() {
     }"#;
 
     match run_mailbox_get(&http_ok(body), None) {
-        JmapMailboxGetResult::Ok { mailboxes, .. } => {
+        JmapCoroutineState::Done(JmapMailboxGetOk { mailboxes, .. }) => {
             assert_eq!(mailboxes.len(), 3, "expected 3 mailboxes");
         }
         other => panic!("unexpected result: {other:?}"),
@@ -387,12 +401,12 @@ fn mailbox_set_create_ok() {
     };
 
     match run_mailbox_set(&http_ok(body), args) {
-        JmapMailboxSetResult::Ok {
+        JmapCoroutineState::Done(JmapMailboxSetOk {
             created,
             new_state,
             not_created,
             ..
-        } => {
+        }) => {
             assert_eq!(new_state, "s2");
             assert!(not_created.is_empty(), "expected no not_created");
             let mbox = created
@@ -426,12 +440,12 @@ fn mailbox_set_destroy_ok() {
     };
 
     match run_mailbox_set(&http_ok(body), args) {
-        JmapMailboxSetResult::Ok {
+        JmapCoroutineState::Done(JmapMailboxSetOk {
             destroyed,
             new_state,
             not_destroyed,
             ..
-        } => {
+        }) => {
             assert_eq!(new_state, "s3");
             assert!(not_destroyed.is_empty(), "expected no not_destroyed");
             assert_eq!(destroyed, vec!["mbox1".to_owned()]);
@@ -458,7 +472,7 @@ fn email_query_ok() {
     }"#;
 
     match run_email_query(&http_ok(body)) {
-        JmapEmailQueryResult::Ok { emails, .. } => {
+        JmapCoroutineState::Done(JmapEmailQueryOk { emails, .. }) => {
             assert_eq!(emails.len(), 2, "expected 2 emails");
             assert_eq!(emails[0].id.as_deref(), Some("email1"));
             assert_eq!(emails[0].thread_id.as_deref(), Some("thread1"));
@@ -480,7 +494,7 @@ fn email_query_empty() {
     }"#;
 
     match run_email_query(&http_ok(body)) {
-        JmapEmailQueryResult::Ok { emails, .. } => {
+        JmapCoroutineState::Done(JmapEmailQueryOk { emails, .. }) => {
             assert!(emails.is_empty(), "expected no emails");
         }
         other => panic!("unexpected result: {other:?}"),
@@ -497,7 +511,7 @@ fn email_query_method_error() {
     }"#;
 
     match run_email_query(&http_ok(body)) {
-        JmapEmailQueryResult::Err(err) => {
+        JmapCoroutineState::Err(err) => {
             assert!(
                 err.to_string().contains("invalidArguments"),
                 "expected invalidArguments error, got: {err}"
@@ -521,12 +535,12 @@ fn email_get_ok() {
     }"#;
 
     match run_email_get(&http_ok(body), vec!["email1".to_owned()]) {
-        JmapEmailGetResult::Ok {
+        JmapCoroutineState::Done(JmapEmailGetOk {
             emails,
             not_found,
             new_state,
             ..
-        } => {
+        }) => {
             assert!(not_found.is_empty(), "expected no not_found");
             assert_eq!(new_state, "s1");
             assert_eq!(emails.len(), 1);
@@ -551,9 +565,9 @@ fn email_get_not_found() {
     }"#;
 
     match run_email_get(&http_ok(body), vec!["email-missing".to_owned()]) {
-        JmapEmailGetResult::Ok {
+        JmapCoroutineState::Done(JmapEmailGetOk {
             emails, not_found, ..
-        } => {
+        }) => {
             assert!(emails.is_empty(), "expected no emails in list");
             assert_eq!(not_found, vec!["email-missing"]);
         }

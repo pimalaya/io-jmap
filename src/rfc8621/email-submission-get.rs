@@ -5,6 +5,7 @@ use alloc::{string::String, vec, vec::Vec};
 use secrecy::SecretString;
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{get::*, session::JmapSession},
     rfc8621::{capabilities, email_submission::EmailSubmission},
@@ -17,22 +18,13 @@ pub enum JmapEmailSubmissionGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Result returned by the [`JmapEmailSubmissionGet`] coroutine.
-#[derive(Debug)]
-pub enum JmapEmailSubmissionGetResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        submissions: Vec<EmailSubmission>,
-        not_found: Vec<String>,
-        new_state: String,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapEmailSubmissionGetError),
+/// Successful output of [`JmapEmailSubmissionGet`].
+#[derive(Clone, Debug)]
+pub struct JmapEmailSubmissionGetOk {
+    pub submissions: Vec<EmailSubmission>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine for the JMAP `EmailSubmission/get` method.
@@ -71,23 +63,28 @@ impl JmapEmailSubmissionGet {
             )?,
         })
     }
+}
 
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSubmissionGetResult {
+impl JmapCoroutine for JmapEmailSubmissionGet {
+    type Output = JmapEmailSubmissionGetOk;
+    type Error = JmapEmailSubmissionGetError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
                 not_found,
                 state,
                 keep_alive,
-            } => JmapEmailSubmissionGetResult::Ok {
+            } => JmapCoroutineState::Done(JmapEmailSubmissionGetOk {
                 submissions: list,
                 not_found,
                 new_state: state,
                 keep_alive,
-            },
-            JmapGetResult::WantsRead => JmapEmailSubmissionGetResult::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapEmailSubmissionGetResult::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapEmailSubmissionGetResult::Err(err.into()),
+            }),
+            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
         }
     }
 }

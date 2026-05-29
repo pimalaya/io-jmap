@@ -1,57 +1,64 @@
 # I/O JMAP [![Documentation](https://img.shields.io/docsrs/io-jmap?style=flat&logo=docs.rs&logoColor=white)](https://docs.rs/io-jmap/latest/io_jmap) [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya)
 
-JMAP client library, written in Rust
+JMAP client library, written in Rust.
+
+This library is composed of 3 feature-gated layers:
+
+- Low-level **I/O-free** coroutines: these `no_std`-compatible state machines contain the whole IMAP logic and can be used anywhere
+- Mid-level **light client**: a standard, blocking IMAP client using a `Stream: Read + Write`
+- High-level **full client**: light client + TCP connections and TLS negotiations handled for you
 
 ## Table of contents
 
 - [Features](#features)
 - [RFC coverage](#rfc-coverage)
+- [Usage](#usage)
+  - [I/O-free coroutines](#io-free-coroutines)
+  - [Light client](#light-client)
+  - [Full client](#full-client)
 - [Examples](#examples)
-  - [As a no-std coroutine library](#as-a-no-std-coroutine-library)
-  - [As a light std client (BYO stream)](#as-a-light-std-client-byo-stream)
-  - [As a full std client (TCP + TLS)](#as-a-full-std-client-tcp--tls)
-- [More examples](#more-examples)
+- [AI disclosure](#ai-disclosure)
 - [License](#license)
 - [Social](#social)
 - [Sponsoring](#sponsoring)
 
 ## Features
 
-- **I/O-free** coroutines: every JMAP method (`Foo/get`, `Foo/set`, `Foo/query`, `Foo/changes`, blob upload / download, session discovery) is exposed as a `resume(arg: Option<&[u8]>)` state machine. No sockets, no async runtime, no `std` required. Run against any blocking, async, or fuzz harness.
-- **Standard, blocking client**:
-  - Light client (requires `client` feature): `JmapClientStd::new(stream, http_auth)` wraps a connected `Read + Write` stream and exposes one method per coroutine, with the discovered `JmapSession` managed for you. You still own TCP / TLS.
-  - Full std client (requires `rustls-ring`, `rustls-aws`, or `native-tls` feature): `JmapClientStd::connect(url, tls, http_auth)` opens `http://` / `https://` (or `jmap://` / `jmaps://`) URLs via [pimalaya/stream](https://github.com/pimalaya/stream), returning a ready-to-use client.
-- **Authentication**: pass any HTTP authorization header value via [`SecretString`] (Bearer, Basic, …). The credential is held opaquely and never logged.
+- **I/O-free** coroutines: `no_std` state machines; no sockets, no async runtime, no `std` required, drive against any blocking, async, or fuzz harness.
+- Light standard, blocking client (requires `client` feature)
+- Full standard, blocking client with **TLS** support:
+  - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature)
+  - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
+  - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
+- **HTTP Auth mechanisms**: `BASIC`, `BEARER`
 
-*The `io-jmap` library is written in [Rust](https://www.rust-lang.org/), and relies on [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to enable or disable functionalities. Default features can be found in the `features` section of the [`Cargo.toml`](https://github.com/pimalaya/io-jmap/blob/master/Cargo.toml), or on [docs.rs](https://docs.rs/crate/io-jmap/latest/features).*
-
-[`SecretString`]: https://docs.rs/secrecy/latest/secrecy/type.SecretString.html
+> [!TIP]
+> I/O JMAP is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml) or on [docs.rs](https://docs.rs/crate/io-jmap/latest/features).
 
 ## RFC coverage
 
-This library implements JMAP as I/O-agnostic coroutines: no sockets, no async runtime, no `std` required by the protocol layer.
-
-| Module   | What it covers                                                                                       |
-|----------|------------------------------------------------------------------------------------------------------|
+| Module   | What it covers                                                                                      |
+|----------|-----------------------------------------------------------------------------------------------------|
 | [8620]   | JMAP core: session discovery, API requests, `Foo/get`, `Foo/set`, `Foo/query`, `Foo/changes`, blobs |
-| [8621]   | JMAP for Mail: Mailbox, Email, Thread, Identity, EmailSubmission, VacationResponse                   |
+| [8621]   | JMAP for Mail: Mailbox, Email, Thread, Identity, EmailSubmission, VacationResponse                  |
 
 [8620]: https://www.rfc-editor.org/rfc/rfc8620
 [8621]: https://www.rfc-editor.org/rfc/rfc8621
 
 ## Examples
 
-`io-jmap` can be consumed three ways, depending on how much of the I/O stack you want to own. Each mode is gated by cargo features.
+I/O JMAP can be consumed three ways, depending on how much of the I/O stack you want to own. Each mode is gated by cargo features.
 
-Whichever mode you pick, every coroutine exposes `resume(arg: Option<&[u8]>)` returning a result enum with four (or five) shapes:
+Whichever mode you pick, every standard-shape coroutine implements `JmapCoroutine` and `resume(arg: Option<&[u8]>)` returns `JmapCoroutineState` with four shapes:
 
 - `WantsRead`: caller reads more bytes from the socket and feeds them back on the next call. Pass `Some(&[])` to signal EOF.
 - `WantsWrite(Vec<u8>)`: caller writes these bytes to the socket. The next call typically passes `None`.
-- `WantsRedirect { url, .. }` *(session / blob download only)*: server returned a 3xx; the caller should open a new connection to `url` and retry.
-- `Ok { … }`: terminal success.
-- `Err(_)`: terminal failure.
+- `Done(Output)`: terminal success with the coroutine's `Output` payload.
+- `Err(Error)`: terminal failure.
 
-### As a no-std coroutine library
+Three coroutines stay outside the trait because they emit a fifth `WantsRedirect { url, .. }` variant (server returned 3xx; the caller should open a new connection to `url` and retry): `JmapSessionGet`, `JmapBlobDownload`, `JmapBlobUpload`. They keep their own per-coroutine result enums.
+
+### I/O-free coroutines
 
 No features required: works in `#![no_std]`, no sockets, no async runtime. You own the loop and the bytes; the library only produces request bytes and consumes server responses.
 
@@ -99,7 +106,7 @@ println!("Logged in as: {}", session.username);
 println!("API URL: {}", session.api_url);
 ```
 
-### As a light std client (BYO stream)
+### Light client
 
 Enable the `client` feature. `JmapClientStd::new(stream, http_auth)` wraps any blocking `Read + Write` and exposes one method per JMAP coroutine. You still open the TCP socket and run TLS yourself, and hand over a ready-to-talk stream; the client takes it from there.
 
@@ -136,7 +143,7 @@ for mailbox in &mailboxes.mailboxes {
 }
 ```
 
-### As a full std client (TCP + TLS)
+### Full client
 
 Enable one of the TLS feature flags: `rustls-ring` (default), `rustls-aws`, or `native-tls`. `JmapClientStd::connect(url, tls, http_auth)` opens `http://` / `https://` (or `jmap://` / `jmaps://`) URLs via [pimalaya/stream](https://github.com/pimalaya/stream).
 
@@ -165,15 +172,38 @@ for mailbox in &mailboxes.mailboxes {
 }
 ```
 
-JMAP typically reuses a single connection for the entire session, so the client wraps one stream. When the `apiUrl`, `uploadUrl` or `downloadUrl` resolves to a different authority than where you first connected, use [`JmapClientStd::set_stream`] to swap in a new transport.
+JMAP typically reuses a single connection for the entire session, so the client wraps one stream. When the `apiUrl`, `uploadUrl` or `downloadUrl` resolves to a different authority than where you first connected, use `JmapClientStd::set_stream` to swap in a new transport.
 
-[`JmapClientStd::set_stream`]: https://docs.rs/io-jmap/latest/io_jmap/client/struct.JmapClientStd.html#method.set_stream
+## Examples
 
-## More examples
+See complete examples at [./examples](https://github.com/pimalaya/io-jmap/blob/master/examples).
 
-Have a look at projects built on top of this library:
+Have also a look at real-world projects built on top of this library:
 
-- [himalaya](https://github.com/pimalaya/himalaya): CLI to manage emails
+- [Himalaya CLI](https://github.com/pimalaya/himalaya): CLI to manage emails
+- [Himalaya TUI](https://github.com/pimalaya/himalaya-tui): TUI to manage emails
+- [Neverest](https://github.com/pimalaya/neverest): CLI to synchronize emails
+- [Mirador](https://github.com/pimalaya/mirador): CLI to watch mailbox changes and fire hooks on every event
+
+## AI disclosure
+
+This project is developed with AI assistance. This section documents how, so users and downstream packagers can make informed decisions.
+
+- **Tools**: Claude Code (Anthropic), Opus 4.7, invoked locally with a persistent project-scoped memory and a small set of repo-specific rules.
+
+- **Used for**: Refactors, mechanical multi-file edits, boilerplate (feature gates, error enums, derive macros, trait impls), test scaffolding, doc polish, exploratory design conversations.
+
+- **Not used for**: Engineering, critical code, git manipulation (commit, merge, rebase…), real-world tests.
+
+- **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit (`nix develop --command cargo check / cargo test / cargo
+fmt`). Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit
+AI-generated code; the code is adjusted to fit correct behaviour.
+
+- **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong: off-by-one errors, missed edge cases, plausible
+but nonexistent APIs, stale RFC references. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken
+seriously.
+
+- **Last reviewed**: 29/05/2026
 
 ## License
 

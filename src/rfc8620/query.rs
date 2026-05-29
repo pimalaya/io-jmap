@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
+use crate::coroutine::*;
 use crate::rfc8620::{error::JmapMethodError, send::*};
 
 #[derive(Debug, Error)]
@@ -23,24 +24,16 @@ pub enum JmapQueryError {
     Method(#[from] JmapMethodError),
 }
 
-#[derive(Debug)]
-pub enum JmapQueryResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        query_state: String,
-        can_calculate_changes: bool,
-        position: u64,
-        ids: Vec<String>,
-        total: Option<u64>,
-        limit: Option<u64>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapQueryError),
+/// Successful output of [`JmapQuery`].
+#[derive(Clone, Debug)]
+pub struct JmapQueryOk {
+    pub query_state: String,
+    pub can_calculate_changes: bool,
+    pub position: u64,
+    pub ids: Vec<String>,
+    pub total: Option<u64>,
+    pub limit: Option<u64>,
+    pub keep_alive: bool,
 }
 
 #[derive(Serialize)]
@@ -121,30 +114,35 @@ impl JmapQuery {
     pub fn from_send(send: JmapSend) -> Self {
         Self { send }
     }
+}
 
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapQueryResult {
+impl JmapCoroutine for JmapQuery {
+    type Output = JmapQueryOk;
+    type Error = JmapQueryError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapQueryResult::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapQueryResult::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapQueryResult::Err(err.into()),
+            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapQueryResult::Err(JmapQueryError::MissingResponse);
+            return JmapCoroutineState::Err(JmapQueryError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapQueryResult::Err(err.into());
+            return JmapCoroutineState::Err(err.into());
         }
 
         match serde_json::from_value::<QueryResponse>(args) {
-            Ok(r) => JmapQueryResult::Ok {
+            Ok(r) => JmapCoroutineState::Done(JmapQueryOk {
                 query_state: r.query_state,
                 can_calculate_changes: r.can_calculate_changes,
                 position: r.position,
@@ -152,8 +150,8 @@ impl JmapQuery {
                 total: r.total,
                 limit: r.limit,
                 keep_alive,
-            },
-            Err(err) => JmapQueryResult::Err(JmapQueryError::ParseResponse(err)),
+            }),
+            Err(err) => JmapCoroutineState::Err(JmapQueryError::ParseResponse(err)),
         }
     }
 }

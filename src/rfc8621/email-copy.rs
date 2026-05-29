@@ -1,11 +1,12 @@
 //! I/O-free coroutine for the `Email/copy` method (RFC 8621 §4.10).
 
-use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{error::JmapMethodError, send::*, session::JmapSession},
     rfc8621::{
@@ -29,22 +30,13 @@ pub enum JmapEmailCopyError {
     Method(#[from] JmapMethodError),
 }
 
-/// Result returned by the [`JmapEmailCopy`] coroutine.
-#[derive(Debug)]
-pub enum JmapEmailCopyResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        created: BTreeMap<String, Email>,
-        not_created: BTreeMap<String, EmailCopyError>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapEmailCopyError),
+/// Successful output of [`JmapEmailCopy`].
+#[derive(Clone, Debug)]
+pub struct JmapEmailCopyOk {
+    pub new_state: String,
+    pub created: BTreeMap<String, Email>,
+    pub not_created: BTreeMap<String, EmailCopyError>,
+    pub keep_alive: bool,
 }
 
 #[derive(Deserialize)]
@@ -103,36 +95,41 @@ impl JmapEmailCopy {
             send: JmapSend::new(http_auth, api_url, request)?,
         })
     }
+}
 
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailCopyResult {
+impl JmapCoroutine for JmapEmailCopy {
+    type Output = JmapEmailCopyOk;
+    type Error = JmapEmailCopyError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapEmailCopyResult::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapEmailCopyResult::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapEmailCopyResult::Err(err.into()),
+            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapEmailCopyResult::Err(JmapEmailCopyError::MissingResponse);
+            return JmapCoroutineState::Err(JmapEmailCopyError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailCopyResult::Err(err.into());
+            return JmapCoroutineState::Err(err.into());
         }
 
         match serde_json::from_value::<EmailCopyResponse>(args) {
-            Ok(r) => JmapEmailCopyResult::Ok {
+            Ok(r) => JmapCoroutineState::Done(JmapEmailCopyOk {
                 new_state: r.new_state,
                 created: r.created,
                 not_created: r.not_created,
                 keep_alive,
-            },
-            Err(err) => JmapEmailCopyResult::Err(JmapEmailCopyError::ParseResponse(err)),
+            }),
+            Err(err) => JmapCoroutineState::Err(JmapEmailCopyError::ParseResponse(err)),
         }
     }
 }

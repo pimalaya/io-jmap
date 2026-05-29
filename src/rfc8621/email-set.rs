@@ -6,6 +6,7 @@ use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{send::*, session::JmapSession, set::*},
     rfc8621::{
@@ -25,26 +26,17 @@ pub enum JmapEmailSetError {
     Set(#[from] JmapSetError),
 }
 
-/// Result returned by the [`JmapEmailSet`] coroutine.
-#[derive(Debug)]
-pub enum JmapEmailSetResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        created: BTreeMap<String, Email>,
-        updated: BTreeMap<String, Option<Email>>,
-        destroyed: Vec<String>,
-        not_created: BTreeMap<String, EmailSetError>,
-        not_updated: BTreeMap<String, EmailSetError>,
-        not_destroyed: BTreeMap<String, EmailSetError>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapEmailSetError),
+/// Successful output of [`JmapEmailSet`].
+#[derive(Clone, Debug)]
+pub struct JmapEmailSetOk {
+    pub new_state: String,
+    pub created: BTreeMap<String, Email>,
+    pub updated: BTreeMap<String, Option<Email>>,
+    pub destroyed: Vec<String>,
+    pub not_created: BTreeMap<String, EmailSetError>,
+    pub not_updated: BTreeMap<String, EmailSetError>,
+    pub not_destroyed: BTreeMap<String, EmailSetError>,
+    pub keep_alive: bool,
 }
 
 /// Arguments for an `Email/set` request.
@@ -191,9 +183,13 @@ impl JmapEmailSet {
             set: JmapSet::from_send(send),
         })
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSetResult {
+impl JmapCoroutine for JmapEmailSet {
+    type Output = JmapEmailSetOk;
+    type Error = JmapEmailSetError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         match self.set.resume(arg) {
             JmapSetResult::Ok {
                 new_state,
@@ -213,7 +209,7 @@ impl JmapEmailSet {
                         })
                         .collect()
                 };
-                JmapEmailSetResult::Ok {
+                JmapCoroutineState::Done(JmapEmailSetOk {
                     new_state,
                     created,
                     updated,
@@ -222,11 +218,11 @@ impl JmapEmailSet {
                     not_updated: parse(not_updated),
                     not_destroyed: parse(not_destroyed),
                     keep_alive,
-                }
+                })
             }
-            JmapSetResult::WantsRead => JmapEmailSetResult::WantsRead,
-            JmapSetResult::WantsWrite(bytes) => JmapEmailSetResult::WantsWrite(bytes),
-            JmapSetResult::Err(err) => JmapEmailSetResult::Err(err.into()),
+            JmapSetResult::WantsRead => JmapCoroutineState::WantsRead,
+            JmapSetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
+            JmapSetResult::Err(err) => JmapCoroutineState::Err(err.into()),
         }
     }
 }

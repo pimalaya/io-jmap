@@ -5,6 +5,7 @@ use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
 use secrecy::SecretString;
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{get::*, session::JmapSession},
     rfc8621::{
@@ -20,22 +21,13 @@ pub enum JmapMailboxGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Result returned by the [`JmapMailboxGet`] coroutine.
-#[derive(Debug)]
-pub enum JmapMailboxGetResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        mailboxes: Vec<Mailbox>,
-        not_found: Vec<String>,
-        new_state: String,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapMailboxGetError),
+/// Successful output of [`JmapMailboxGet`].
+#[derive(Clone, Debug)]
+pub struct JmapMailboxGetOk {
+    pub mailboxes: Vec<Mailbox>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine for the JMAP `Mailbox/get` method.
@@ -82,23 +74,28 @@ impl JmapMailboxGet {
             )?,
         })
     }
+}
 
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapMailboxGetResult {
+impl JmapCoroutine for JmapMailboxGet {
+    type Output = JmapMailboxGetOk;
+    type Error = JmapMailboxGetError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
                 not_found,
                 state,
                 keep_alive,
-            } => JmapMailboxGetResult::Ok {
+            } => JmapCoroutineState::Done(JmapMailboxGetOk {
                 mailboxes: list,
                 not_found,
                 new_state: state,
                 keep_alive,
-            },
-            JmapGetResult::WantsRead => JmapMailboxGetResult::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapMailboxGetResult::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapMailboxGetResult::Err(err.into()),
+            }),
+            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
         }
     }
 }

@@ -5,6 +5,7 @@ use alloc::{string::String, vec, vec::Vec};
 use secrecy::SecretString;
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{get::*, session::JmapSession},
     rfc8621::{capabilities, identity::Identity},
@@ -17,22 +18,13 @@ pub enum JmapIdentityGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Result returned by the [`JmapIdentityGet`] coroutine.
-#[derive(Debug)]
-pub enum JmapIdentityGetResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        identities: Vec<Identity>,
-        not_found: Vec<String>,
-        new_state: String,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapIdentityGetError),
+/// Successful output of [`JmapIdentityGet`].
+#[derive(Clone, Debug)]
+pub struct JmapIdentityGetOk {
+    pub identities: Vec<Identity>,
+    pub not_found: Vec<String>,
+    pub new_state: String,
+    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine for the JMAP `Identity/get` method.
@@ -72,24 +64,28 @@ impl JmapIdentityGet {
             )?,
         })
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapIdentityGetResult {
+impl JmapCoroutine for JmapIdentityGet {
+    type Output = JmapIdentityGetOk;
+    type Error = JmapIdentityGetError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         match self.get.resume(arg) {
             JmapGetResult::Ok {
                 list,
                 not_found,
                 state,
                 keep_alive,
-            } => JmapIdentityGetResult::Ok {
+            } => JmapCoroutineState::Done(JmapIdentityGetOk {
                 identities: list,
                 not_found,
                 new_state: state,
                 keep_alive,
-            },
-            JmapGetResult::WantsRead => JmapIdentityGetResult::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapIdentityGetResult::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapIdentityGetResult::Err(err.into()),
+            }),
+            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
+            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
+            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
         }
     }
 }

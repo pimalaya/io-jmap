@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
+use crate::coroutine::*;
 use crate::rfc8620::{error::JmapMethodError, send::*};
 
 #[derive(Debug, Error)]
@@ -23,23 +24,15 @@ pub enum JmapChangesError {
     Method(#[from] JmapMethodError),
 }
 
-#[derive(Debug)]
-pub enum JmapChangesResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        has_more_changes: bool,
-        created: Vec<String>,
-        updated: Vec<String>,
-        destroyed: Vec<String>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapChangesError),
+/// Successful output of [`JmapChanges`].
+#[derive(Clone, Debug)]
+pub struct JmapChangesOk {
+    pub new_state: String,
+    pub has_more_changes: bool,
+    pub created: Vec<String>,
+    pub updated: Vec<String>,
+    pub destroyed: Vec<String>,
+    pub keep_alive: bool,
 }
 
 #[derive(Serialize)]
@@ -96,38 +89,43 @@ impl JmapChanges {
     pub fn from_send(send: JmapSend) -> Self {
         Self { send }
     }
+}
 
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapChangesResult {
+impl JmapCoroutine for JmapChanges {
+    type Output = JmapChangesOk;
+    type Error = JmapChangesError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapChangesResult::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapChangesResult::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapChangesResult::Err(err.into()),
+            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
+            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
+            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapChangesResult::Err(JmapChangesError::MissingResponse);
+            return JmapCoroutineState::Err(JmapChangesError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapChangesResult::Err(err.into());
+            return JmapCoroutineState::Err(err.into());
         }
 
         match serde_json::from_value::<ChangesResponse>(args) {
-            Ok(r) => JmapChangesResult::Ok {
+            Ok(r) => JmapCoroutineState::Done(JmapChangesOk {
                 new_state: r.new_state,
                 has_more_changes: r.has_more_changes,
                 created: r.created,
                 updated: r.updated,
                 destroyed: r.destroyed,
                 keep_alive,
-            },
-            Err(err) => JmapChangesResult::Err(JmapChangesError::ParseResponse(err)),
+            }),
+            Err(err) => JmapCoroutineState::Err(JmapChangesError::ParseResponse(err)),
         }
     }
 }

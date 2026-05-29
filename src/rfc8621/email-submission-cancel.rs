@@ -6,6 +6,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{error::JmapMethodError, send::*, session::JmapSession},
     rfc8621::{
@@ -31,22 +32,13 @@ pub enum JmapEmailSubmissionCancelError {
     Method(#[from] JmapMethodError),
 }
 
-/// Result returned by the [`JmapEmailSubmissionCancel`] coroutine.
-#[derive(Debug)]
-pub enum JmapEmailSubmissionCancelResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        updated: BTreeMap<String, Option<EmailSubmission>>,
-        not_updated: BTreeMap<String, EmailSubmissionSetError>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapEmailSubmissionCancelError),
+/// Successful output of [`JmapEmailSubmissionCancel`].
+#[derive(Clone, Debug)]
+pub struct JmapEmailSubmissionCancelOk {
+    pub new_state: String,
+    pub updated: BTreeMap<String, Option<EmailSubmission>>,
+    pub not_updated: BTreeMap<String, EmailSubmissionSetError>,
+    pub keep_alive: bool,
 }
 
 #[derive(Deserialize)]
@@ -119,43 +111,43 @@ impl JmapEmailSubmissionCancel {
             send: JmapSend::new(http_auth, api_url, request)?,
         })
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSubmissionCancelResult {
+impl JmapCoroutine for JmapEmailSubmissionCancel {
+    type Output = JmapEmailSubmissionCancelOk;
+    type Error = JmapEmailSubmissionCancelError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapEmailSubmissionCancelResult::WantsRead,
+            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
             JmapSendResult::WantsWrite(bytes) => {
-                return JmapEmailSubmissionCancelResult::WantsWrite(bytes);
+                return JmapCoroutineState::WantsWrite(bytes);
             }
-            JmapSendResult::Err(err) => return JmapEmailSubmissionCancelResult::Err(err.into()),
+            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapEmailSubmissionCancelResult::Err(
-                JmapEmailSubmissionCancelError::MissingResponse,
-            );
+            return JmapCoroutineState::Err(JmapEmailSubmissionCancelError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailSubmissionCancelResult::Err(err.into());
+            return JmapCoroutineState::Err(err.into());
         }
 
         match serde_json::from_value::<EmailSubmissionCancelResponse>(args) {
-            Ok(r) => JmapEmailSubmissionCancelResult::Ok {
+            Ok(r) => JmapCoroutineState::Done(JmapEmailSubmissionCancelOk {
                 new_state: r.new_state,
                 updated: r.updated.unwrap_or_default(),
                 not_updated: r.not_updated.unwrap_or_default(),
                 keep_alive,
-            },
-            Err(err) => JmapEmailSubmissionCancelResult::Err(
-                JmapEmailSubmissionCancelError::ParseResponse(err),
-            ),
+            }),
+            Err(err) => JmapCoroutineState::Err(JmapEmailSubmissionCancelError::ParseResponse(err)),
         }
     }
 }

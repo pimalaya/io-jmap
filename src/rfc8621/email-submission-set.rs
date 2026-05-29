@@ -1,11 +1,12 @@
 //! I/O-free coroutine for `EmailSubmission/set` (RFC 8621 §7.5).
 
-use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::coroutine::*;
 use crate::{
     rfc8620::{error::JmapMethodError, send::*, session::JmapSession},
     rfc8621::{
@@ -29,22 +30,13 @@ pub enum JmapEmailSubmissionSetError {
     Method(#[from] JmapMethodError),
 }
 
-/// Result returned by the [`JmapEmailSubmissionSet`] coroutine.
-#[derive(Debug)]
-pub enum JmapEmailSubmissionSetResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        created: BTreeMap<String, EmailSubmission>,
-        not_created: BTreeMap<String, EmailSubmissionSetError>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapEmailSubmissionSetError),
+/// Successful output of [`JmapEmailSubmissionSet`].
+#[derive(Clone, Debug)]
+pub struct JmapEmailSubmissionSetOk {
+    pub new_state: String,
+    pub created: BTreeMap<String, EmailSubmission>,
+    pub not_created: BTreeMap<String, EmailSubmissionSetError>,
+    pub keep_alive: bool,
 }
 
 #[derive(Deserialize)]
@@ -107,41 +99,43 @@ impl JmapEmailSubmissionSet {
             send: JmapSend::new(http_auth, api_url, request)?,
         })
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapEmailSubmissionSetResult {
+impl JmapCoroutine for JmapEmailSubmissionSet {
+    type Output = JmapEmailSubmissionSetOk;
+    type Error = JmapEmailSubmissionSetError;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
         let (response, keep_alive) = match self.send.resume(arg) {
             JmapSendResult::Ok {
                 response,
                 keep_alive,
             } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapEmailSubmissionSetResult::WantsRead,
+            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
             JmapSendResult::WantsWrite(bytes) => {
-                return JmapEmailSubmissionSetResult::WantsWrite(bytes);
+                return JmapCoroutineState::WantsWrite(bytes);
             }
-            JmapSendResult::Err(err) => return JmapEmailSubmissionSetResult::Err(err.into()),
+            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapEmailSubmissionSetResult::Err(JmapEmailSubmissionSetError::MissingResponse);
+            return JmapCoroutineState::Err(JmapEmailSubmissionSetError::MissingResponse);
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapEmailSubmissionSetResult::Err(err.into());
+            return JmapCoroutineState::Err(err.into());
         }
 
         match serde_json::from_value::<EmailSubmissionSetResponse>(args) {
-            Ok(r) => JmapEmailSubmissionSetResult::Ok {
+            Ok(r) => JmapCoroutineState::Done(JmapEmailSubmissionSetOk {
                 new_state: r.new_state,
                 created: r.created.unwrap_or_default(),
                 not_created: r.not_created.unwrap_or_default(),
                 keep_alive,
-            },
-            Err(err) => {
-                JmapEmailSubmissionSetResult::Err(JmapEmailSubmissionSetError::ParseResponse(err))
-            }
+            }),
+            Err(err) => JmapCoroutineState::Err(JmapEmailSubmissionSetError::ParseResponse(err)),
         }
     }
 }
