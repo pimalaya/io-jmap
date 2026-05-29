@@ -3,14 +3,20 @@
 use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 
 use io_http::{
-    rfc9110::request::HttpRequest,
-    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
+    coroutine::*,
+    rfc9110::{
+        request::HttpRequest,
+        send::{HttpSendOutput, HttpSendYield},
+    },
+    rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
+
+use crate::coroutine::*;
 
 /// The JMAP Request object (RFC 8620 §3.3).
 #[derive(Clone, Debug, Serialize)]
@@ -62,20 +68,13 @@ pub enum JmapSendError {
     UnexpectedRedirect,
 }
 
-/// Result returned by the [`JmapSend`] coroutine.
-#[derive(Debug)]
-pub enum JmapSendResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        response: JmapResponse,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapSendError),
+/// Successful terminal output of the [`JmapSend`] coroutine.
+#[derive(Clone, Debug)]
+pub struct JmapSendOutput {
+    /// The parsed JMAP response.
+    pub response: JmapResponse,
+    /// Whether the server indicated the connection can be reused.
+    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine to send a JMAP API request and receive the response.
@@ -84,10 +83,13 @@ pub enum JmapSendResult {
 /// delegate to. It wraps [`Http11Send`] and adds JSON serialization of
 /// the request body and deserialization of the response body.
 ///
-/// The caller drives the coroutine by calling [`resume`] in a loop
-/// and handling the returned [`JmapSendResult`].
-///
-/// [`resume`]: JmapSend::resume
+/// A 3xx response surfaces as
+/// [`JmapSendError::UnexpectedRedirect`]; redirect-aware coroutines
+/// ([`JmapSessionGet`](crate::rfc8620::session_get::JmapSessionGet),
+/// [`JmapBlobDownload`](crate::rfc8620::blob_download::JmapBlobDownload),
+/// [`JmapBlobUpload`](crate::rfc8620::blob_upload::JmapBlobUpload))
+/// drive [`Http11Send`] directly and forward the redirect to the
+/// caller.
 pub struct JmapSend {
     send: Http11Send,
 }
@@ -121,39 +123,44 @@ impl JmapSend {
             send: Http11Send::new(http_request),
         })
     }
+}
 
-    /// Advances the coroutine.
-    ///
-    /// Pass [`None`] when there is no data to provide (initial call,
-    /// after a write). Pass `Some(data)` with bytes read from the
-    /// socket after a [`JmapSendResult::WantsRead`]. Pass `Some(&[])`
-    /// to signal EOF.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapSendResult {
+impl JmapCoroutine for JmapSend {
+    type Yield = JmapYield;
+    type Return = Result<JmapSendOutput, JmapSendError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.send.resume(arg) {
-            Http11SendResult::Ok {
+            HttpCoroutineState::Complete(Ok(HttpSendOutput {
                 response,
                 keep_alive,
                 ..
-            } => {
+            })) => {
                 if !response.status.is_success() {
                     let err = JmapSendError::HttpStatus(*response.status);
-                    return JmapSendResult::Err(err);
+                    return JmapCoroutineState::Complete(Err(err));
                 }
 
                 match serde_json::from_slice::<JmapResponse>(&response.body) {
-                    Ok(jmap_response) => JmapSendResult::Ok {
-                        response: jmap_response,
+                    Ok(response) => JmapCoroutineState::Complete(Ok(JmapSendOutput {
+                        response,
                         keep_alive,
-                    },
-                    Err(err) => JmapSendResult::Err(JmapSendError::ParseResponse(err)),
+                    })),
+                    Err(err) => {
+                        JmapCoroutineState::Complete(Err(JmapSendError::ParseResponse(err)))
+                    }
                 }
             }
-            Http11SendResult::WantsRead => JmapSendResult::WantsRead,
-            Http11SendResult::WantsWrite(bytes) => JmapSendResult::WantsWrite(bytes),
-            Http11SendResult::WantsRedirect { .. } => {
-                JmapSendResult::Err(JmapSendError::UnexpectedRedirect)
+            HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
+                JmapCoroutineState::Yielded(JmapYield::WantsRead)
             }
-            Http11SendResult::Err(err) => JmapSendResult::Err(err.into()),
+            HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
+                JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes))
+            }
+            HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect { .. }) => {
+                JmapCoroutineState::Complete(Err(JmapSendError::UnexpectedRedirect))
+            }
+            HttpCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
         }
     }
 }

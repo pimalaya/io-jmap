@@ -3,7 +3,13 @@
 //! All tests drive JMAP coroutines against pre-crafted in-memory HTTP
 //! response buffers. No network connection is made.
 
-use io_jmap::rfc8620::session_get::{JmapSessionGet, JmapSessionGetResult};
+use io_jmap::{
+    coroutine::*,
+    rfc8620::{
+        redirect::JmapRedirectYield,
+        session_get::{JmapSessionGet, JmapSessionGetError, JmapSessionGetOutput},
+    },
+};
 use secrecy::SecretString;
 use url::Url;
 
@@ -41,7 +47,9 @@ fn http_response(status: &str, body: &[u8]) -> Vec<u8> {
     response
 }
 
-fn run_session_get(http_response_bytes: &[u8]) -> JmapSessionGetResult {
+fn run_session_get(
+    http_response_bytes: &[u8],
+) -> JmapCoroutineState<JmapRedirectYield, Result<JmapSessionGetOutput, JmapSessionGetError>> {
     let token = SecretString::from("Bearer test-token");
     let url = Url::parse("http://example.com/jmap/session/").unwrap();
     let mut coroutine = JmapSessionGet::new(&token, &url);
@@ -49,8 +57,10 @@ fn run_session_get(http_response_bytes: &[u8]) -> JmapSessionGetResult {
 
     loop {
         match coroutine.resume(arg.take()) {
-            JmapSessionGetResult::WantsWrite(_) => arg = None,
-            JmapSessionGetResult::WantsRead => arg = Some(http_response_bytes),
+            JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(_)) => arg = None,
+            JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead) => {
+                arg = Some(http_response_bytes)
+            }
             any => return any,
         }
     }
@@ -61,7 +71,7 @@ fn session_get_200() {
     let response = http_response("200 OK", SESSION_JSON);
 
     match run_session_get(&response) {
-        JmapSessionGetResult::Ok { session, .. } => {
+        JmapCoroutineState::Complete(Ok(JmapSessionGetOutput { session, .. })) => {
             assert_eq!(session.username, "user@example.com");
             assert_eq!(
                 session.primary_account_id_for("urn:ietf:params:jmap:mail"),
@@ -77,7 +87,7 @@ fn session_get_401() {
     let response = http_response("401 Unauthorized", b"{}");
 
     match run_session_get(&response) {
-        JmapSessionGetResult::Err(err) => {
+        JmapCoroutineState::Complete(Err(err)) => {
             assert!(err.to_string().contains("401"));
         }
         other => panic!("unexpected result: {other:?}"),
@@ -89,7 +99,7 @@ fn session_get_invalid_json() {
     let response = http_response("200 OK", b"not-json");
 
     match run_session_get(&response) {
-        JmapSessionGetResult::Err(_) => {}
+        JmapCoroutineState::Complete(Err(_)) => {}
         other => panic!("expected parse error, got: {other:?}"),
     }
 }
@@ -106,7 +116,7 @@ fn session_get_redirect() {
     full.extend_from_slice(body);
 
     match run_session_get(&full) {
-        JmapSessionGetResult::WantsRedirect { url, .. } => {
+        JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect { url, .. }) => {
             assert_eq!(url.as_str(), location);
         }
         other => panic!("unexpected result: {other:?}"),

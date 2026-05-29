@@ -3,14 +3,21 @@
 use alloc::{string::String, vec::Vec};
 
 use io_http::{
-    rfc9110::request::HttpRequest,
-    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
+    coroutine::*,
+    rfc9110::{
+        request::HttpRequest,
+        send::{HttpSendOutput, HttpSendYield},
+    },
+    rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use thiserror::Error;
 use url::Url;
+
+use crate::coroutine::*;
+use crate::rfc8620::redirect::JmapRedirectYield;
 
 /// Errors that can occur during the coroutine progression.
 #[derive(Debug, Error)]
@@ -21,26 +28,15 @@ pub enum JmapBlobUploadError {
     ParseResponse(#[source] serde_json::Error),
     #[error("JMAP blob upload returned HTTP {0}")]
     HttpStatus(u16),
-    #[error("JMAP blob upload returned unexpected redirect")]
-    UnexpectedRedirect,
 }
 
-/// Result returned by the [`JmapBlobUpload`] coroutine.
-#[derive(Debug)]
-pub enum JmapBlobUploadResult {
-    /// The coroutine has successfully completed.
-    Ok {
-        blob_id: String,
-        blob_type: String,
-        size: u64,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapBlobUploadError),
+/// Successful terminal output of [`JmapBlobUpload`].
+#[derive(Clone, Debug)]
+pub struct JmapBlobUploadOutput {
+    pub blob_id: String,
+    pub blob_type: String,
+    pub size: u64,
+    pub keep_alive: bool,
 }
 
 #[derive(Deserialize)]
@@ -53,9 +49,13 @@ struct BlobUploadResponse {
 
 /// I/O-free coroutine for uploading a blob to a JMAP server.
 ///
-/// POSTs raw bytes to `upload_url` (RFC 8620 §6.1).
-/// The caller is responsible for resolving the URL template and opening
-/// a stream to the correct host before driving this coroutine.
+/// POSTs raw bytes to `upload_url` (RFC 8620 §6.1). The caller is
+/// responsible for resolving the URL template and opening a stream to
+/// the correct host before driving this coroutine.
+///
+/// A 3xx response yields [`JmapRedirectYield::WantsRedirect`]; the
+/// caller must open a new connection to the redirect target and build a
+/// fresh coroutine.
 pub struct JmapBlobUpload {
     send: Http11Send,
 }
@@ -87,51 +87,56 @@ impl JmapBlobUpload {
             send: Http11Send::new(http_request),
         }
     }
+}
 
-    /// Advances the coroutine.
-    ///
-    /// Pass [`None`] when there is no data to provide (initial call,
-    /// after a write). Pass `Some(data)` with bytes read from the
-    /// socket after a [`JmapBlobUploadResult::WantsRead`]. Pass
-    /// `Some(&[])` to signal EOF.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapBlobUploadResult {
+impl JmapCoroutine for JmapBlobUpload {
+    type Yield = JmapRedirectYield;
+    type Return = Result<JmapBlobUploadOutput, JmapBlobUploadError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.send.resume(arg) {
-            Http11SendResult::Ok {
+            HttpCoroutineState::Complete(Ok(HttpSendOutput {
                 response,
                 keep_alive,
                 ..
-            } => {
+            })) => {
                 if !response.status.is_success() {
                     let err = JmapBlobUploadError::HttpStatus(*response.status);
-                    return JmapBlobUploadResult::Err(err);
+                    return JmapCoroutineState::Complete(Err(err));
                 }
 
                 match serde_json::from_slice::<BlobUploadResponse>(&response.body) {
-                    Ok(r) => JmapBlobUploadResult::Ok {
+                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapBlobUploadOutput {
                         blob_id: r.blob_id,
                         blob_type: r.r#type,
                         size: r.size,
                         keep_alive,
-                    },
-                    Err(err) => JmapBlobUploadResult::Err(JmapBlobUploadError::ParseResponse(err)),
+                    })),
+                    Err(err) => {
+                        JmapCoroutineState::Complete(Err(JmapBlobUploadError::ParseResponse(err)))
+                    }
                 }
             }
-            Http11SendResult::WantsRead => JmapBlobUploadResult::WantsRead,
-            Http11SendResult::WantsWrite(bytes) => JmapBlobUploadResult::WantsWrite(bytes),
-            Http11SendResult::WantsRedirect { .. } => {
-                JmapBlobUploadResult::Err(JmapBlobUploadError::UnexpectedRedirect)
+            HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead)
             }
-            Http11SendResult::Err(err) => JmapBlobUploadResult::Err(err.into()),
+            HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(bytes))
+            }
+            HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect {
+                url,
+                keep_alive,
+                same_origin,
+                ..
+            }) => {
+                trace!("blob upload redirect to {url}; caller must reconnect");
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect {
+                    url,
+                    keep_alive,
+                    same_origin,
+                })
+            }
+            HttpCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::blob_upload`] client method.
-///
-/// [`JmapClientStd::blob_upload`]: crate::client::JmapClientStd::blob_upload
-#[derive(Clone, Debug)]
-pub struct JmapBlobUploadOutput {
-    pub blob_id: String,
-    pub blob_type: String,
-    pub size: u64,
 }

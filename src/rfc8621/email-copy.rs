@@ -30,9 +30,9 @@ pub enum JmapEmailCopyError {
     Method(#[from] JmapMethodError),
 }
 
-/// Successful output of [`JmapEmailCopy`].
+/// Successful terminal output of [`JmapEmailCopy`].
 #[derive(Clone, Debug)]
-pub struct JmapEmailCopyOk {
+pub struct JmapEmailCopyOutput {
     pub new_state: String,
     pub created: BTreeMap<String, Email>,
     pub not_created: BTreeMap<String, EmailCopyError>,
@@ -98,48 +98,39 @@ impl JmapEmailCopy {
 }
 
 impl JmapCoroutine for JmapEmailCopy {
-    type Output = JmapEmailCopyOk;
-    type Error = JmapEmailCopyError;
+    type Yield = JmapYield;
+    type Return = Result<JmapEmailCopyOutput, JmapEmailCopyError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
+            }
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapCoroutineState::Err(JmapEmailCopyError::MissingResponse);
+            return JmapCoroutineState::Complete(Err(JmapEmailCopyError::MissingResponse));
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(err.into());
+            return JmapCoroutineState::Complete(Err(err.into()));
         }
 
         match serde_json::from_value::<EmailCopyResponse>(args) {
-            Ok(r) => JmapCoroutineState::Done(JmapEmailCopyOk {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailCopyOutput {
                 new_state: r.new_state,
                 created: r.created,
                 not_created: r.not_created,
                 keep_alive,
-            }),
-            Err(err) => JmapCoroutineState::Err(JmapEmailCopyError::ParseResponse(err)),
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(JmapEmailCopyError::ParseResponse(err))),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::email_copy`] client method.
-///
-/// [`JmapClientStd::email_copy`]: crate::client::JmapClientStd::email_copy
-#[derive(Clone, Debug)]
-pub struct JmapEmailCopyOutput {
-    pub new_state: String,
-    pub created: BTreeMap<String, Email>,
-    pub not_created: BTreeMap<String, EmailCopyError>,
 }

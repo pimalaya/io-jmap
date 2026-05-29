@@ -27,9 +27,9 @@ pub enum JmapVacationResponseGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Successful output of [`JmapVacationResponseGet`].
+/// Successful terminal output of [`JmapVacationResponseGet`].
 #[derive(Clone, Debug)]
-pub struct JmapVacationResponseGetOk {
+pub struct JmapVacationResponseGetOutput {
     pub vacation_response: Option<VacationResponse>,
     pub new_state: String,
     pub keep_alive: bool,
@@ -89,24 +89,23 @@ impl JmapVacationResponseGet {
 }
 
 impl JmapCoroutine for JmapVacationResponseGet {
-    type Output = JmapVacationResponseGetOk;
-    type Error = JmapVacationResponseGetError;
+    type Yield = JmapYield;
+    type Return = Result<JmapVacationResponseGetOutput, JmapVacationResponseGetError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.get.resume(arg) {
-            JmapGetResult::Ok {
+            JmapCoroutineState::Complete(Ok(JmapGetOutput {
                 list,
                 state,
                 keep_alive,
                 ..
-            } => JmapCoroutineState::Done(JmapVacationResponseGetOk {
+            })) => JmapCoroutineState::Complete(Ok(JmapVacationResponseGetOutput {
                 vacation_response: list.into_iter().next(),
                 new_state: state,
                 keep_alive,
-            }),
-            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
+            })),
+            JmapCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
+            JmapCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y),
         }
     }
 }

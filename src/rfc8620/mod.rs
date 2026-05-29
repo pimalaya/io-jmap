@@ -7,10 +7,12 @@ pub mod blob_upload;
 pub mod changes;
 pub mod error;
 pub mod event_source;
+pub mod filter;
 pub mod get;
 pub mod query;
 #[path = "query-changes.rs"]
 pub mod query_changes;
+pub mod redirect;
 pub(crate) mod result_reference;
 pub mod send;
 pub mod session;

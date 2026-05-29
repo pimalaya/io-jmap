@@ -21,9 +21,9 @@ pub enum JmapMailboxGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Successful output of [`JmapMailboxGet`].
+/// Successful terminal output of [`JmapMailboxGet`].
 #[derive(Clone, Debug)]
-pub struct JmapMailboxGetOk {
+pub struct JmapMailboxGetOutput {
     pub mailboxes: Vec<Mailbox>,
     pub not_found: Vec<String>,
     pub new_state: String,
@@ -77,35 +77,24 @@ impl JmapMailboxGet {
 }
 
 impl JmapCoroutine for JmapMailboxGet {
-    type Output = JmapMailboxGetOk;
-    type Error = JmapMailboxGetError;
+    type Yield = JmapYield;
+    type Return = Result<JmapMailboxGetOutput, JmapMailboxGetError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.get.resume(arg) {
-            JmapGetResult::Ok {
+            JmapCoroutineState::Complete(Ok(JmapGetOutput {
                 list,
                 not_found,
                 state,
                 keep_alive,
-            } => JmapCoroutineState::Done(JmapMailboxGetOk {
+            })) => JmapCoroutineState::Complete(Ok(JmapMailboxGetOutput {
                 mailboxes: list,
                 not_found,
                 new_state: state,
                 keep_alive,
-            }),
-            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
+            })),
+            JmapCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
+            JmapCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::mailbox_get`] client method.
-///
-/// [`JmapClientStd::mailbox_get`]: crate::client::JmapClientStd::mailbox_get
-#[derive(Clone, Debug)]
-pub struct JmapMailboxGetOutput {
-    pub mailboxes: Vec<Mailbox>,
-    pub not_found: Vec<String>,
-    pub new_state: String,
 }

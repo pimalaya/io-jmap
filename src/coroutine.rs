@@ -1,58 +1,70 @@
-//! # Generic coroutine driver
+//! # Generator-shape coroutine driver
 //!
-//! Every standard-shape coroutine in this crate exposes the same loop
-//! contract: produce some bytes to write, ask for some bytes to read,
-//! or terminate with success or failure. The [`JmapCoroutine`] trait
-//! unifies that contract behind a single method so a generic driver
-//! ([`JmapClientStd::run`]) can advance any coroutine without macros.
+//! Mirrors the shape of `core::ops::Coroutine`: a `Yield` associated
+//! type for intermediate progress, a `Return` associated type for
+//! terminal output, and a two-variant [`JmapCoroutineState`]
+//! (`Yielded` / `Complete`).
 //!
-//! Coroutines whose progression yields a redirect intermediate variant
-//! ([`JmapSessionGet`](crate::rfc8620::session_get::JmapSessionGet),
-//! [`JmapBlobDownload`](crate::rfc8620::blob_download::JmapBlobDownload),
-//! [`JmapBlobUpload`](crate::rfc8620::blob_upload::JmapBlobUpload)) stay
-//! outside this trait and keep their own per-coroutine `Result` enum.
+//! Each coroutine declares its own `Yield` enum mixing socket I/O step
+//! requests with any extra intermediate variants (e.g.
+//! [`JmapRedirectYield::WantsRedirect`]). Most JMAP coroutines pick
+//! the standard [`JmapYield`] directly; only coroutines that need
+//! extra variants declare their own.
+//!
+//! [`JmapClientStd::run`] drives any standard-Yield coroutine to
+//! completion against a blocking stream; coroutines that need extra
+//! Yield variants get their own per-method client loops.
 //!
 //! [`JmapClientStd::run`]: crate::client::JmapClientStd::run
+//! [`JmapRedirectYield::WantsRedirect`]: crate::rfc8620::redirect::JmapRedirectYield::WantsRedirect
 
 use alloc::vec::Vec;
 
-/// State yielded by a [`JmapCoroutine`] resume.
+/// State yielded by a [`JmapCoroutine::resume`] step.
 ///
-/// Single generic enum so a generic driver can pattern match on
-/// progression without naming a per-coroutine `Result` type.
+/// Two-variant by design (matches std's `core::ops::CoroutineState`):
+/// any further variation lives inside the per-coroutine `Yield` type.
 #[derive(Debug)]
-pub enum JmapCoroutineState<T, E> {
-    /// Coroutine terminated successfully with this payload.
-    Done(T),
-    /// Caller should read more bytes from the socket and feed them
-    /// back on the next resume.
-    WantsRead,
-    /// Caller should write these bytes to the socket; the next resume
-    /// typically takes `None`.
-    WantsWrite(Vec<u8>),
-    /// Coroutine terminated with this error.
-    Err(E),
+pub enum JmapCoroutineState<Y, R> {
+    /// Intermediate yield. The driver reacts to `Y` (do I/O, follow a
+    /// redirect, …) and resumes the coroutine again.
+    Yielded(Y),
+    /// Terminal yield. By convention `R = Result<Output, Error>`.
+    Complete(R),
 }
 
-/// Standard-shape JMAP coroutine: anything whose progression maps onto
-/// [`JmapCoroutineState`].
+/// Standard-shape JMAP coroutine.
 ///
-/// `resume` is the single source of truth: each implementor's body
-/// returns [`JmapCoroutineState::Done`] / [`WantsRead`] /
-/// [`WantsWrite`] / [`Err`] directly. [`JmapClientStd::run`] drives
-/// any [`JmapCoroutine`] to completion against a blocking stream;
-/// downstream code can write its own driver against the same trait.
-///
-/// [`JmapClientStd::run`]: crate::client::JmapClientStd::run
-/// [`WantsRead`]: JmapCoroutineState::WantsRead
-/// [`WantsWrite`]: JmapCoroutineState::WantsWrite
-/// [`Err`]: JmapCoroutineState::Err
+/// Implementors own their internal state machine and declare their
+/// per-step `Yield` plus a terminal `Return`. The driver pumps I/O
+/// based on the `Yield` variant and resumes until `Complete`.
 pub trait JmapCoroutine {
-    /// Payload yielded on terminal success.
-    type Output;
-    /// Error yielded on terminal failure.
-    type Error;
+    /// Intermediate value handed back on every step. Per-coroutine:
+    /// each implementor picks exactly the variants it needs (socket
+    /// I/O, redirects, …).
+    type Yield;
+    /// Terminal value. By convention `Result<Output, Error>`; the "ok"
+    /// arm carries the operation's final output, the "error" arm
+    /// carries the cause.
+    type Return;
 
     /// Advances the coroutine one step.
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error>;
+    ///
+    /// Pass [`None`] when there is no data to provide (initial call or
+    /// after the previous yield was [`JmapYield::WantsWrite`]). Pass
+    /// `Some(data)` with bytes read from the socket after a
+    /// [`JmapYield::WantsRead`]. Pass `Some(&[])` to signal EOF.
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return>;
+}
+
+/// Standard I/O-only Yield. Pick `type Yield = JmapYield` for any
+/// coroutine that only needs to read or write socket bytes.
+#[derive(Debug)]
+pub enum JmapYield {
+    /// Driver should read more bytes from the socket and feed them
+    /// back on the next resume.
+    WantsRead,
+    /// Driver should write these bytes to the socket; the next resume
+    /// typically takes `None`.
+    WantsWrite(Vec<u8>),
 }

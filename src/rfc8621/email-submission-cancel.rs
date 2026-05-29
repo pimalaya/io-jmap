@@ -32,9 +32,9 @@ pub enum JmapEmailSubmissionCancelError {
     Method(#[from] JmapMethodError),
 }
 
-/// Successful output of [`JmapEmailSubmissionCancel`].
+/// Successful terminal output of [`JmapEmailSubmissionCancel`].
 #[derive(Clone, Debug)]
-pub struct JmapEmailSubmissionCancelOk {
+pub struct JmapEmailSubmissionCancelOutput {
     pub new_state: String,
     pub updated: BTreeMap<String, Option<EmailSubmission>>,
     pub not_updated: BTreeMap<String, EmailSubmissionSetError>,
@@ -114,50 +114,43 @@ impl JmapEmailSubmissionCancel {
 }
 
 impl JmapCoroutine for JmapEmailSubmissionCancel {
-    type Output = JmapEmailSubmissionCancelOk;
-    type Error = JmapEmailSubmissionCancelError;
+    type Yield = JmapYield;
+    type Return = Result<JmapEmailSubmissionCancelOutput, JmapEmailSubmissionCancelError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => {
-                return JmapCoroutineState::WantsWrite(bytes);
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
             }
-            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapCoroutineState::Err(JmapEmailSubmissionCancelError::MissingResponse);
+            return JmapCoroutineState::Complete(Err(
+                JmapEmailSubmissionCancelError::MissingResponse,
+            ));
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(err.into());
+            return JmapCoroutineState::Complete(Err(err.into()));
         }
 
         match serde_json::from_value::<EmailSubmissionCancelResponse>(args) {
-            Ok(r) => JmapCoroutineState::Done(JmapEmailSubmissionCancelOk {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailSubmissionCancelOutput {
                 new_state: r.new_state,
                 updated: r.updated.unwrap_or_default(),
                 not_updated: r.not_updated.unwrap_or_default(),
                 keep_alive,
-            }),
-            Err(err) => JmapCoroutineState::Err(JmapEmailSubmissionCancelError::ParseResponse(err)),
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(
+                JmapEmailSubmissionCancelError::ParseResponse(err),
+            )),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::email_submission_cancel`] client method.
-///
-/// [`JmapClientStd::email_submission_cancel`]: crate::client::JmapClientStd::email_submission_cancel
-#[derive(Clone, Debug)]
-pub struct JmapEmailSubmissionCancelOutput {
-    pub new_state: String,
-    pub updated: BTreeMap<String, Option<EmailSubmission>>,
-    pub not_updated: BTreeMap<String, EmailSubmissionSetError>,
 }

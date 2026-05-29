@@ -2,22 +2,48 @@
 //!
 //! Servers advertise an SSE endpoint via [`JmapSession::event_source_url`].
 //! A streaming GET against that URL yields a sequence of W3C SSE
-//! frames; this module defines the JSON shape of the frame payloads
-//! and provides [`parse_state_change`] to decode them.
+//! frames; this module defines:
 //!
-//! Transport (HTTP/1.1 streaming + SSE frame parsing) lives in
-//! `io-http`'s `sse` module. JMAP push consumers compose
-//! `io-http`'s `HttpClientStd::send_streaming` with the parser here.
+//! 1. The JSON shape of the frame payloads ([`StateChange`]) and
+//!    [`parse_state_change`] to decode them;
+//! 2. [`JmapEventSource`], an I/O-free streaming coroutine that
+//!    composes io-http's HTTP/1.1 streaming primitives with the
+//!    decoder above to yield one [`StateChange`] per push frame.
+//!
+//! [`JmapEventSource`] declares its own [`JmapEventSourceYield`]
+//! (with an intermediate `Frame(StateChange)` variant) because the
+//! streaming shape doesn't fit the I/O-only [`JmapYield`].
 
 use alloc::{
     collections::BTreeMap,
     format,
     string::{String, ToString},
+    sync::Arc,
+    vec::Vec,
+};
+use core::{
+    mem,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
+use io_http::{
+    coroutine::*,
+    rfc9110::{headers::TRANSFER_ENCODING, request::HttpRequest},
+    rfc9112::{
+        chunk_stream::{
+            Http11ReadChunksStream, Http11ReadChunksStreamError, Http11ReadChunksStreamYield,
+        },
+        read_headers::{Http11ReadHeaders, Http11ReadHeadersError, Http11ReadHeadersOutput},
+    },
+    sse::frame::{SseFrameParser, SseFrameParserYield},
+};
+use log::trace;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use url::Url;
 
+use crate::coroutine::*;
 use crate::rfc8620::session::JmapSession;
 
 /// Type-state map for one JMAP account, keyed by JMAP type name
@@ -72,18 +98,306 @@ pub fn parse_state_change(data: &str) -> Result<StateChange, EventSourceError> {
     Ok(change)
 }
 
+/// JMAP EventSource `closeafter` query value (RFC 8620 §7.2).
+///
+/// Controls when the server closes the streaming response:
+/// - [`Self::No`] never; the connection stays open across
+///   notifications. Lets the client receive many [`StateChange`]
+///   frames over one TCP socket, but the socket is then unavailable
+///   for parallel JMAP API calls (HTTP/1.1 is half-duplex while a
+///   streaming response is in flight).
+/// - [`Self::State`] after the first [`StateChange`] frame. Mimics
+///   the IMAP IDLE pattern over HTTP/1.1: subscribe, receive one
+///   state change, server closes the chunked response, the TCP
+///   socket is then free for follow-up `Email/changes` +
+///   `Email/get` POSTs on the same connection, then resubscribe.
+///   Recommended for the unified [`JmapEventSource`] driver.
+#[derive(Clone, Copy, Debug)]
+pub enum CloseAfter {
+    No,
+    State,
+}
+
+impl CloseAfter {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::No => "no",
+            Self::State => "state",
+        }
+    }
+}
+
 /// Builds the JMAP push subscription URL from the session.
 ///
 /// The returned URL points at the server's SSE endpoint with the
 /// requested `types` filter (comma-separated JMAP type names),
-/// `closeafter=no` (keep the connection open across notifications),
-/// and `ping=<seconds>` to ask the server for keep-alive comment
-/// frames at that cadence. `types` may be empty for "all types".
-pub fn subscribe_url(session: &JmapSession, types: &[&str], ping_seconds: u64) -> String {
+/// `closeafter=<close_after>` (see [`CloseAfter`]), and
+/// `ping=<seconds>` to ask the server for keep-alive comment frames
+/// at that cadence. `types` may be empty for "all types".
+pub fn subscribe_url(
+    session: &JmapSession,
+    types: &[&str],
+    ping_seconds: u64,
+    close_after: CloseAfter,
+) -> String {
     let base = &session.event_source_url;
     let types = types.join(",");
     let sep = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{sep}types={types}&closeafter=no&ping={ping_seconds}")
+    let close_after = close_after.as_str();
+    format!("{base}{sep}types={types}&closeafter={close_after}&ping={ping_seconds}")
+}
+
+/// Errors raised by [`JmapEventSource::resume`].
+///
+/// Layered: HTTP transport errors (head parse / chunked body),
+/// SSE-payload decode errors ([`EventSourceError`] via
+/// [`parse_state_change`]), plus a small set of stream-shape errors
+/// (`HttpStatus`, `NotChunked`, `InvalidUrl`).
+#[derive(Debug, Error)]
+pub enum JmapEventSourceError {
+    #[error(transparent)]
+    ReadHeaders(#[from] Http11ReadHeadersError),
+    #[error(transparent)]
+    ReadChunks(#[from] Http11ReadChunksStreamError),
+    #[error(transparent)]
+    DecodeFrame(#[from] EventSourceError),
+    #[error("event source returned HTTP status `{0}`")]
+    HttpStatus(u16),
+    #[error("event source response must be `Transfer-Encoding: chunked`")]
+    NotChunked,
+    #[error("event source URL `{0}` is not parseable")]
+    InvalidUrl(String),
+}
+
+/// Per-step yield emitted by [`JmapEventSource::resume`].
+///
+/// Extends the standard [`JmapYield`] with [`Self::Frame`], the
+/// streaming intermediate value. Terminal success is
+/// [`JmapCoroutineState::Complete`] with `Ok(())`.
+#[derive(Debug)]
+pub enum JmapEventSourceYield {
+    /// One decoded push notification, ready to be diffed against the
+    /// caller's per-type state cache. Empty-data SSE frames (pings,
+    /// comment-only frames) surface as the default [`StateChange`]
+    /// with an empty `changed` map; callers can use that as a
+    /// keep-alive signal.
+    Frame(StateChange),
+    /// The driver should read more bytes from the socket and feed
+    /// them back via `arg` on the next resume.
+    WantsRead,
+    /// The driver should write these bytes to the socket; the next
+    /// resume typically takes `arg = None`.
+    WantsWrite(Vec<u8>),
+}
+
+/// I/O-free streaming coroutine for the JMAP `EventSource` push
+/// channel.
+///
+/// Composes [`Http11ReadHeaders`] (response head) + [`Http11ReadChunksStream`]
+/// (chunked body framing) + [`SseFrameParser`] (W3C SSE line protocol)
+/// + [`parse_state_change`] (RFC 8620 §7.2.1 payload decode) into a
+/// single state machine that yields one [`StateChange`] per push
+/// notification.
+///
+/// Cooperative shutdown: callers share a [`AtomicBool`] flag with
+/// [`Self::new`]. The coroutine polls it at the top of every
+/// [`Self::resume`] and transitions to terminal `Complete(Ok(()))`
+/// when set. The caller's I/O driver has to honour the flag too if
+/// it wants to interrupt an in-progress blocking socket read.
+pub struct JmapEventSource {
+    state: EventSourceState,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl JmapEventSource {
+    /// Builds the subscription URL from the session, prepares the
+    /// initial `GET` request bytes (with `Authorization` and `Accept:
+    /// text/event-stream`), and returns a coroutine ready to be
+    /// driven.
+    ///
+    /// `types` filters by JMAP data type (`["Email", "Mailbox"]`,
+    /// …); empty for "all types". `ping_seconds` asks the server to
+    /// emit synthetic comment frames at that cadence so the channel
+    /// has a heartbeat. `close_after` controls the subscription
+    /// lifecycle:
+    ///
+    /// - [`CloseAfter::No`]: long-lived stream, many frames per
+    ///   coroutine instance. Terminal `Complete(Ok(()))` only fires
+    ///   on shutdown or transport EOF.
+    /// - [`CloseAfter::State`]: one-shot cycle, server closes after
+    ///   the first frame. Terminal `Complete(Ok(()))` fires after
+    ///   that close, and the caller is expected to construct a fresh
+    ///   [`JmapEventSource`] for the next cycle once any follow-up
+    ///   `Email/changes` + `Email/get` POSTs on the freed socket
+    ///   have completed. This is the IMAP-IDLE analog (subscribe →
+    ///   wait → unsubscribe → query → resubscribe) and is the right
+    ///   choice when the caller needs to multiplex the connection.
+    ///
+    /// `shutdown` is shared with the caller; flip it to ask the
+    /// coroutine to wind down at the next resume.
+    pub fn new(
+        session: &JmapSession,
+        http_auth: &SecretString,
+        types: &[&str],
+        ping_seconds: u64,
+        close_after: CloseAfter,
+        shutdown: Arc<AtomicBool>,
+    ) -> Result<Self, JmapEventSourceError> {
+        let url_str = subscribe_url(session, types, ping_seconds, close_after);
+        let url = Url::parse(&url_str).map_err(|_| JmapEventSourceError::InvalidUrl(url_str))?;
+
+        let host = url.host_str().unwrap_or("localhost");
+        let request = HttpRequest::get(url.clone())
+            .header("Host", host)
+            .header("Accept", "text/event-stream")
+            .header("Authorization", http_auth.expose_secret());
+
+        trace!("prepare JMAP event source subscription to {url}");
+
+        Ok(Self {
+            state: EventSourceState::SendingRequest(request.to_http_11_vec()),
+            shutdown,
+        })
+    }
+}
+
+impl JmapCoroutine for JmapEventSource {
+    type Yield = JmapEventSourceYield;
+    type Return = Result<(), JmapEventSourceError>;
+
+    /// Advances the coroutine.
+    ///
+    /// Pass [`None`] on the initial call. Pass `Some(data)` with
+    /// bytes read from the socket after a
+    /// [`JmapEventSourceYield::WantsRead`]. Pass `Some(&[])` to
+    /// signal EOF; on the head stage this surfaces as an error, on
+    /// the streaming stage it surfaces as terminal `Complete(Ok(()))`.
+    fn resume(&mut self, mut arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        if self.shutdown.load(Ordering::SeqCst) {
+            self.state = EventSourceState::Done;
+            return JmapCoroutineState::Complete(Ok(()));
+        }
+
+        loop {
+            match &mut self.state {
+                EventSourceState::SendingRequest(_) => {
+                    let EventSourceState::SendingRequest(bytes) = mem::replace(
+                        &mut self.state,
+                        EventSourceState::ReadingHead(Http11ReadHeaders::default()),
+                    ) else {
+                        unreachable!()
+                    };
+                    return JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes));
+                }
+                EventSourceState::ReadingHead(head) => match head.resume(arg.take()) {
+                    HttpCoroutineState::Yielded(HttpYield::WantsRead) => {
+                        return JmapCoroutineState::Yielded(JmapEventSourceYield::WantsRead);
+                    }
+                    HttpCoroutineState::Yielded(HttpYield::WantsWrite(_)) => {
+                        unreachable!("Http11ReadHeaders never writes");
+                    }
+                    HttpCoroutineState::Complete(Err(err)) => {
+                        return JmapCoroutineState::Complete(Err(err.into()));
+                    }
+                    HttpCoroutineState::Complete(Ok(Http11ReadHeadersOutput {
+                        response,
+                        remaining,
+                        keep_alive: _,
+                    })) => {
+                        if !response.status.is_success() {
+                            return JmapCoroutineState::Complete(Err(
+                                JmapEventSourceError::HttpStatus(*response.status),
+                            ));
+                        }
+                        let chunked = response
+                            .header(TRANSFER_ENCODING)
+                            .is_some_and(|enc| enc.eq_ignore_ascii_case("chunked"));
+                        if !chunked {
+                            return JmapCoroutineState::Complete(Err(
+                                JmapEventSourceError::NotChunked,
+                            ));
+                        }
+                        let pending = if remaining.is_empty() {
+                            None
+                        } else {
+                            Some(remaining)
+                        };
+                        self.state = EventSourceState::Streaming {
+                            chunks: Http11ReadChunksStream::default(),
+                            parser: SseFrameParser::default(),
+                            pending,
+                        };
+                        // Loop into the streaming arm with the same
+                        // `arg`; the chunk stream consumes socket
+                        // bytes, the pending buffer feeds the parser.
+                    }
+                },
+                EventSourceState::Streaming {
+                    chunks,
+                    parser,
+                    pending,
+                } => {
+                    let parser_input = pending.take();
+                    match parser.resume(parser_input.as_deref()) {
+                        HttpCoroutineState::Yielded(SseFrameParserYield::Frame(frame)) => {
+                            return match parse_state_change(&frame.data) {
+                                Ok(change) => {
+                                    JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(change))
+                                }
+                                Err(err) => JmapCoroutineState::Complete(Err(err.into())),
+                            };
+                        }
+                        HttpCoroutineState::Yielded(SseFrameParserYield::WantsBytes) => {
+                            match chunks.resume(arg.take()) {
+                                HttpCoroutineState::Yielded(
+                                    Http11ReadChunksStreamYield::Frame { body },
+                                ) => {
+                                    *pending = Some(body);
+                                    // Loop to feed the parser.
+                                }
+                                HttpCoroutineState::Complete(Ok(_)) => {
+                                    self.state = EventSourceState::Done;
+                                    return JmapCoroutineState::Complete(Ok(()));
+                                }
+                                HttpCoroutineState::Yielded(
+                                    Http11ReadChunksStreamYield::WantsRead,
+                                ) => {
+                                    return JmapCoroutineState::Yielded(
+                                        JmapEventSourceYield::WantsRead,
+                                    );
+                                }
+                                HttpCoroutineState::Complete(Err(err)) => {
+                                    return JmapCoroutineState::Complete(Err(err.into()));
+                                }
+                            }
+                        }
+                        HttpCoroutineState::Complete(never) => match never {},
+                    }
+                }
+                EventSourceState::Done => return JmapCoroutineState::Complete(Ok(())),
+            }
+        }
+    }
+}
+
+/// Internal progression state of [`JmapEventSource`].
+enum EventSourceState {
+    /// Initial: yield the GET request bytes once, transition to
+    /// reading the response head.
+    SendingRequest(Vec<u8>),
+    /// Driving [`Http11ReadHeaders`] on the response.
+    ReadingHead(Http11ReadHeaders),
+    /// Streaming: pump [`Http11ReadChunksStream`] for body chunks,
+    /// feed them into [`SseFrameParser`] one at a time, decode each
+    /// dispatched frame into a [`StateChange`].
+    Streaming {
+        chunks: Http11ReadChunksStream,
+        parser: SseFrameParser,
+        /// Decoded chunk body waiting to be fed to the SSE parser.
+        pending: Option<Vec<u8>>,
+    },
+    /// Terminal (shutdown or chunked-transfer stream-over).
+    Done,
 }
 
 #[cfg(test)]
@@ -153,7 +467,7 @@ mod tests {
             event_source_url: "https://jmap.example.org/events".into(),
             ..synthetic_session()
         };
-        let url = subscribe_url(&session, &["Email", "EmailDelivery"], 30);
+        let url = subscribe_url(&session, &["Email", "EmailDelivery"], 30, CloseAfter::No);
         assert_eq!(
             url,
             "https://jmap.example.org/events?types=Email,EmailDelivery&closeafter=no&ping=30"
@@ -166,10 +480,10 @@ mod tests {
             event_source_url: "https://jmap.example.org/events?token=abc".into(),
             ..synthetic_session()
         };
-        let url = subscribe_url(&session, &[], 15);
+        let url = subscribe_url(&session, &[], 15, CloseAfter::State);
         assert_eq!(
             url,
-            "https://jmap.example.org/events?token=abc&types=&closeafter=no&ping=15"
+            "https://jmap.example.org/events?token=abc&types=&closeafter=state&ping=15"
         );
     }
 

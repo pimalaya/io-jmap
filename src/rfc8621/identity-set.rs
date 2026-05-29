@@ -30,9 +30,9 @@ pub enum JmapIdentitySetError {
     Method(#[from] JmapMethodError),
 }
 
-/// Successful output of [`JmapIdentitySet`].
+/// Successful terminal output of [`JmapIdentitySet`].
 #[derive(Clone, Debug)]
-pub struct JmapIdentitySetOk {
+pub struct JmapIdentitySetOutput {
     pub new_state: String,
     pub created: BTreeMap<String, Identity>,
     pub updated: BTreeMap<String, Option<Identity>>,
@@ -144,32 +144,33 @@ impl JmapIdentitySet {
 }
 
 impl JmapCoroutine for JmapIdentitySet {
-    type Output = JmapIdentitySetOk;
-    type Error = JmapIdentitySetError;
+    type Yield = JmapYield;
+    type Return = Result<JmapIdentitySetOutput, JmapIdentitySetError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
+            }
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapCoroutineState::Err(JmapIdentitySetError::MissingResponse);
+            return JmapCoroutineState::Complete(Err(JmapIdentitySetError::MissingResponse));
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(err.into());
+            return JmapCoroutineState::Complete(Err(err.into()));
         }
 
         match serde_json::from_value::<IdentitySetResponse>(args) {
-            Ok(r) => JmapCoroutineState::Done(JmapIdentitySetOk {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapIdentitySetOutput {
                 new_state: r.new_state.unwrap_or_default(),
                 created: BTreeMap::new(),
                 updated: BTreeMap::new(),
@@ -178,22 +179,8 @@ impl JmapCoroutine for JmapIdentitySet {
                 not_updated: r.not_updated.unwrap_or_default(),
                 not_destroyed: r.not_destroyed.unwrap_or_default(),
                 keep_alive,
-            }),
-            Err(err) => JmapCoroutineState::Err(JmapIdentitySetError::ParseResponse(err)),
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(JmapIdentitySetError::ParseResponse(err))),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::identity_set`] client method.
-///
-/// [`JmapClientStd::identity_set`]: crate::client::JmapClientStd::identity_set
-#[derive(Clone, Debug)]
-pub struct JmapIdentitySetOutput {
-    pub new_state: String,
-    pub created: BTreeMap<String, Identity>,
-    pub updated: BTreeMap<String, Option<Identity>>,
-    pub destroyed: Vec<String>,
-    pub not_created: BTreeMap<String, IdentitySetError>,
-    pub not_updated: BTreeMap<String, IdentitySetError>,
-    pub not_destroyed: BTreeMap<String, IdentitySetError>,
 }

@@ -45,18 +45,16 @@ This library is composed of 3 feature-gated layers:
 [8620]: https://www.rfc-editor.org/rfc/rfc8620
 [8621]: https://www.rfc-editor.org/rfc/rfc8621
 
-## Examples
+## Usage
 
 I/O JMAP can be consumed three ways, depending on how much of the I/O stack you want to own. Each mode is gated by cargo features.
 
-Whichever mode you pick, every standard-shape coroutine implements `JmapCoroutine` and `resume(arg: Option<&[u8]>)` returns `JmapCoroutineState` with four shapes:
+Whichever mode you pick, every standard-shape coroutine implements the `JmapCoroutine` trait with two associated types: `Yield` (intermediate progress) and `Return` (terminal value, by convention `Result<Output, Error>`). Its `resume(arg: Option<&[u8]>)` method returns a `JmapCoroutineState<Yield, Return>` with two variants:
 
-- `WantsRead`: caller reads more bytes from the socket and feeds them back on the next call. Pass `Some(&[])` to signal EOF.
-- `WantsWrite(Vec<u8>)`: caller writes these bytes to the socket. The next call typically passes `None`.
-- `Done(Output)`: terminal success with the coroutine's `Output` payload.
-- `Err(Error)`: terminal failure.
+- `Yielded(Yield)`: intermediate yield. Most coroutines pick the standard `JmapYield` with `WantsRead` / `WantsWrite(Vec<u8>)`. Pass `Some(&[])` after `WantsRead` to signal EOF.
+- `Complete(Return)`: terminal yield, carrying `Ok(Output)` on success or `Err(Error)` on failure.
 
-Three coroutines stay outside the trait because they emit a fifth `WantsRedirect { url, .. }` variant (server returned 3xx; the caller should open a new connection to `url` and retry): `JmapSessionGet`, `JmapBlobDownload`, `JmapBlobUpload`. They keep their own per-coroutine result enums.
+Three coroutines (`JmapSessionGet`, `JmapBlobDownload`, `JmapBlobUpload`) declare their own `JmapRedirectYield` which extends the standard variants with `WantsRedirect { url, keep_alive, same_origin }`: the server responded with a 3xx and the caller chooses whether to open a new connection to `url` and retry, or surface the redirect as an error.
 
 ### I/O-free coroutines
 
@@ -67,7 +65,7 @@ Fetch a JMAP session against a blocking rustls socket:
 ```rust,ignore
 use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
 
-use io_jmap::rfc8620::session_get::*;
+use io_jmap::{coroutine::*, rfc8620::{redirect::JmapRedirectYield, session_get::*}};
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;
@@ -89,16 +87,20 @@ let mut read_buf = Vec::<u8>::new();
 
 let session = loop {
     match coroutine.resume(arg.take()) {
-        JmapSessionGetResult::Ok { session, .. } => break session,
-        JmapSessionGetResult::WantsRead => {
+        JmapCoroutineState::Complete(Ok(JmapSessionGetOutput { session, .. })) => break session,
+        JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead) => {
             let n = stream.read(&mut buf).unwrap();
             read_buf.clear();
             read_buf.extend_from_slice(&buf[..n]);
             arg = Some(&read_buf);
         }
-        JmapSessionGetResult::WantsWrite(bytes) => stream.write_all(&bytes).unwrap(),
-        JmapSessionGetResult::WantsRedirect { url, .. } => todo!("reconnect to {url}"),
-        JmapSessionGetResult::Err(err) => panic!("{err}"),
+        JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(bytes)) => {
+            stream.write_all(&bytes).unwrap();
+        }
+        JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect { url, .. }) => {
+            todo!("reconnect to {url}");
+        }
+        JmapCoroutineState::Complete(Err(err)) => panic!("{err}"),
     }
 };
 
@@ -139,7 +141,7 @@ println!("Logged in as: {}", session.username);
 
 let mailboxes = client.mailbox_query(None, None, None, None, None)?;
 for mailbox in &mailboxes.mailboxes {
-    println!("{:?} — {:?}", mailbox.role, mailbox.name);
+    println!("{:?}: {:?}", mailbox.role, mailbox.name);
 }
 ```
 
@@ -168,7 +170,7 @@ println!("Logged in as: {}", session.username);
 
 let mailboxes = client.mailbox_query(None, None, None, None, None)?;
 for mailbox in &mailboxes.mailboxes {
-    println!("{:?} — {:?}", mailbox.role, mailbox.name);
+    println!("{:?}: {:?}", mailbox.role, mailbox.name);
 }
 ```
 
@@ -203,7 +205,7 @@ AI-generated code; the code is adjusted to fit correct behaviour.
 but nonexistent APIs, stale RFC references. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken
 seriously.
 
-- **Last reviewed**: 29/05/2026
+- **Last reviewed**: 30/05/2026
 
 ## License
 

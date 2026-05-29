@@ -30,9 +30,9 @@ pub enum JmapEmailParseError {
     Method(#[from] JmapMethodError),
 }
 
-/// Successful output of [`JmapEmailParse`].
+/// Successful terminal output of [`JmapEmailParse`].
 #[derive(Clone, Debug)]
-pub struct JmapEmailParseOk {
+pub struct JmapEmailParseOutput {
     pub parsed: BTreeMap<String, Email>,
     pub not_parsable: Vec<String>,
     pub not_found: Vec<String>,
@@ -112,48 +112,39 @@ impl JmapEmailParse {
 }
 
 impl JmapCoroutine for JmapEmailParse {
-    type Output = JmapEmailParseOk;
-    type Error = JmapEmailParseError;
+    type Yield = JmapYield;
+    type Return = Result<JmapEmailParseOutput, JmapEmailParseError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
+            }
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapCoroutineState::Err(JmapEmailParseError::MissingResponse);
+            return JmapCoroutineState::Complete(Err(JmapEmailParseError::MissingResponse));
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(err.into());
+            return JmapCoroutineState::Complete(Err(err.into()));
         }
 
         match serde_json::from_value::<EmailParseResponse>(args) {
-            Ok(r) => JmapCoroutineState::Done(JmapEmailParseOk {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailParseOutput {
                 parsed: r.parsed,
                 not_parsable: r.not_parsable.unwrap_or_default(),
                 not_found: r.not_found.unwrap_or_default(),
                 keep_alive,
-            }),
-            Err(err) => JmapCoroutineState::Err(JmapEmailParseError::ParseResponse(err)),
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(JmapEmailParseError::ParseResponse(err))),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::email_parse`] client method.
-///
-/// [`JmapClientStd::email_parse`]: crate::client::JmapClientStd::email_parse
-#[derive(Clone, Debug)]
-pub struct JmapEmailParseOutput {
-    pub parsed: BTreeMap<String, Email>,
-    pub not_parsable: Vec<String>,
-    pub not_found: Vec<String>,
 }

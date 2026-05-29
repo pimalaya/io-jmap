@@ -24,9 +24,13 @@ pub enum JmapChangesError {
     Method(#[from] JmapMethodError),
 }
 
-/// Successful output of [`JmapChanges`].
+/// Successful terminal output of [`JmapChanges`] (and of the per-type
+/// wrappers
+/// [`JmapMailboxChanges`](crate::rfc8621::mailbox_changes::JmapMailboxChanges),
+/// [`JmapEmailChanges`](crate::rfc8621::email_changes::JmapEmailChanges),
+/// [`JmapThreadChanges`](crate::rfc8621::thread_changes::JmapThreadChanges)).
 #[derive(Clone, Debug)]
-pub struct JmapChangesOk {
+pub struct JmapChangesOutput {
     pub new_state: String,
     pub has_more_changes: bool,
     pub created: Vec<String>,
@@ -92,57 +96,41 @@ impl JmapChanges {
 }
 
 impl JmapCoroutine for JmapChanges {
-    type Output = JmapChangesOk;
-    type Error = JmapChangesError;
+    type Yield = JmapYield;
+    type Return = Result<JmapChangesOutput, JmapChangesError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
+            }
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapCoroutineState::Err(JmapChangesError::MissingResponse);
+            return JmapCoroutineState::Complete(Err(JmapChangesError::MissingResponse));
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(err.into());
+            return JmapCoroutineState::Complete(Err(err.into()));
         }
 
         match serde_json::from_value::<ChangesResponse>(args) {
-            Ok(r) => JmapCoroutineState::Done(JmapChangesOk {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapChangesOutput {
                 new_state: r.new_state,
                 has_more_changes: r.has_more_changes,
                 created: r.created,
                 updated: r.updated,
                 destroyed: r.destroyed,
                 keep_alive,
-            }),
-            Err(err) => JmapCoroutineState::Err(JmapChangesError::ParseResponse(err)),
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(JmapChangesError::ParseResponse(err))),
         }
     }
-}
-
-/// Output of `Foo/changes` client methods
-/// ([`JmapClientStd::mailbox_changes`],
-/// [`JmapClientStd::email_changes`],
-/// [`JmapClientStd::thread_changes`]).
-///
-/// [`JmapClientStd::mailbox_changes`]: crate::client::JmapClientStd::mailbox_changes
-/// [`JmapClientStd::email_changes`]: crate::client::JmapClientStd::email_changes
-/// [`JmapClientStd::thread_changes`]: crate::client::JmapClientStd::thread_changes
-#[derive(Clone, Debug)]
-pub struct JmapChangesOutput {
-    pub new_state: String,
-    pub has_more_changes: bool,
-    pub created: Vec<String>,
-    pub updated: Vec<String>,
-    pub destroyed: Vec<String>,
 }

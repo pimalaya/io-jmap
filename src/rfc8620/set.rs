@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use url::Url;
 
+use crate::coroutine::*;
 use crate::rfc8620::{error::JmapMethodError, send::*};
 
 /// Errors that can occur during the coroutine progression.
@@ -26,26 +27,17 @@ pub enum JmapSetError {
     Method(#[from] JmapMethodError),
 }
 
-/// Result returned by the [`JmapSet`] coroutine.
-#[derive(Debug)]
-pub enum JmapSetResult<T> {
-    /// The coroutine has successfully completed.
-    Ok {
-        new_state: String,
-        created: BTreeMap<String, T>,
-        updated: BTreeMap<String, Option<T>>,
-        destroyed: Vec<String>,
-        not_created: BTreeMap<String, serde_json::Value>,
-        not_updated: BTreeMap<String, serde_json::Value>,
-        not_destroyed: BTreeMap<String, serde_json::Value>,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapSetError),
+/// Successful terminal output of the [`JmapSet`] coroutine.
+#[derive(Clone, Debug)]
+pub struct JmapSetOutput<T> {
+    pub new_state: String,
+    pub created: BTreeMap<String, T>,
+    pub updated: BTreeMap<String, Option<T>>,
+    pub destroyed: Vec<String>,
+    pub not_created: BTreeMap<String, serde_json::Value>,
+    pub not_updated: BTreeMap<String, serde_json::Value>,
+    pub not_destroyed: BTreeMap<String, serde_json::Value>,
+    pub keep_alive: bool,
 }
 
 #[derive(Serialize)]
@@ -121,31 +113,36 @@ impl<T: DeserializeOwned> JmapSet<T> {
             _phantom: PhantomData,
         }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapSetResult<T> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapSetResult::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapSetResult::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapSetResult::Err(err.into()),
+impl<T: DeserializeOwned> JmapCoroutine for JmapSet<T> {
+    type Yield = JmapYield;
+    type Return = Result<JmapSetOutput<T>, JmapSetError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
+            }
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapSetResult::Err(JmapSetError::MissingResponse);
+            return JmapCoroutineState::Complete(Err(JmapSetError::MissingResponse));
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapSetResult::Err(err.into());
+            return JmapCoroutineState::Complete(Err(err.into()));
         }
 
         match serde_json::from_value::<SetResponse<T>>(args) {
-            Ok(r) => JmapSetResult::Ok {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapSetOutput {
                 new_state: r.new_state,
                 created: r.created.unwrap_or_default(),
                 updated: r.updated.unwrap_or_default(),
@@ -154,8 +151,8 @@ impl<T: DeserializeOwned> JmapSet<T> {
                 not_updated: r.not_updated.unwrap_or_default(),
                 not_destroyed: r.not_destroyed.unwrap_or_default(),
                 keep_alive,
-            },
-            Err(err) => JmapSetResult::Err(JmapSetError::ParseResponse(err)),
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(JmapSetError::ParseResponse(err))),
         }
     }
 }

@@ -15,7 +15,8 @@ use thiserror::Error;
 use crate::coroutine::*;
 use crate::{
     rfc8620::{
-        error::JmapMethodError, result_reference::ResultReference, send::*, session::JmapSession,
+        error::JmapMethodError, filter::Filter, result_reference::ResultReference, send::*,
+        session::JmapSession,
     },
     rfc8621::{
         capabilities,
@@ -42,9 +43,9 @@ pub enum JmapEmailQueryError {
     GetMethod(JmapMethodError),
 }
 
-/// Successful output of [`JmapEmailQuery`].
+/// Successful terminal output of [`JmapEmailQuery`].
 #[derive(Clone, Debug)]
-pub struct JmapEmailQueryOk {
+pub struct JmapEmailQueryOutput {
     pub emails: Vec<Email>,
     pub total: Option<u64>,
     pub position: u64,
@@ -57,7 +58,7 @@ pub struct JmapEmailQueryOk {
 struct EmailQueryArgs<'a> {
     account_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    filter: Option<&'a EmailFilter>,
+    filter: Option<&'a Filter<EmailFilter>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sort: Option<&'a [EmailComparator]>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,8 +97,8 @@ struct EmailGetResponse {
 /// I/O-free coroutine for the combined `Email/query` + `Email/get` operation.
 ///
 /// This coroutine sends a single batched JMAP request containing:
-/// 1. `Email/query` — finds email IDs matching the filter
-/// 2. `Email/get` — fetches the specified properties for those IDs
+/// 1. `Email/query` finds email IDs matching the filter
+/// 2. `Email/get` fetches the specified properties for those IDs
 ///    using a JMAP Result Reference (back-reference from the query)
 ///
 /// This is equivalent to IMAP's `SELECT` + `SEARCH` + `FETCH` but
@@ -117,7 +118,7 @@ impl JmapEmailQuery {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        filter: Option<EmailFilter>,
+        filter: Option<Filter<EmailFilter>>,
         sort: Option<Vec<EmailComparator>>,
         position: Option<u64>,
         limit: Option<u64>,
@@ -170,69 +171,63 @@ impl JmapEmailQuery {
 }
 
 impl JmapCoroutine for JmapEmailQuery {
-    type Output = JmapEmailQueryOk;
-    type Error = JmapEmailQueryError;
+    type Yield = JmapYield;
+    type Return = Result<JmapEmailQueryOutput, JmapEmailQueryError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapCoroutineState::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
+            }
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let mut responses = response.method_responses.into_iter();
 
         let Some((query_name, query_args, _)) = responses.next() else {
-            return JmapCoroutineState::Err(JmapEmailQueryError::MissingQueryResponse);
+            return JmapCoroutineState::Complete(Err(JmapEmailQueryError::MissingQueryResponse));
         };
 
         if query_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(query_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(JmapEmailQueryError::QueryMethod(err));
+            return JmapCoroutineState::Complete(Err(JmapEmailQueryError::QueryMethod(err)));
         }
 
         let query_response = match serde_json::from_value::<EmailQueryResponse>(query_args) {
             Ok(r) => r,
             Err(err) => {
-                return JmapCoroutineState::Err(JmapEmailQueryError::ParseQueryResponse(err));
+                return JmapCoroutineState::Complete(Err(JmapEmailQueryError::ParseQueryResponse(
+                    err,
+                )));
             }
         };
 
         let Some((get_name, get_args, _)) = responses.next() else {
-            return JmapCoroutineState::Err(JmapEmailQueryError::MissingGetResponse);
+            return JmapCoroutineState::Complete(Err(JmapEmailQueryError::MissingGetResponse));
         };
 
         if get_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(get_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(JmapEmailQueryError::GetMethod(err));
+            return JmapCoroutineState::Complete(Err(JmapEmailQueryError::GetMethod(err)));
         }
 
         match serde_json::from_value::<EmailGetResponse>(get_args) {
-            Ok(r) => JmapCoroutineState::Done(JmapEmailQueryOk {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailQueryOutput {
                 emails: r.list,
                 total: query_response.total,
                 position: query_response.position,
                 query_state: query_response.query_state,
                 keep_alive,
-            }),
-            Err(err) => JmapCoroutineState::Err(JmapEmailQueryError::ParseGetResponse(err)),
+            })),
+            Err(err) => {
+                JmapCoroutineState::Complete(Err(JmapEmailQueryError::ParseGetResponse(err)))
+            }
         }
     }
-}
-
-/// Output of the [`JmapClientStd::email_query`] client method.
-///
-/// [`JmapClientStd::email_query`]: crate::client::JmapClientStd::email_query
-#[derive(Clone, Debug)]
-pub struct JmapEmailQueryOutput {
-    pub emails: Vec<Email>,
-    pub total: Option<u64>,
-    pub position: u64,
-    pub query_state: String,
 }

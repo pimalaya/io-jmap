@@ -18,9 +18,9 @@ pub enum JmapIdentityGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Successful output of [`JmapIdentityGet`].
+/// Successful terminal output of [`JmapIdentityGet`].
 #[derive(Clone, Debug)]
-pub struct JmapIdentityGetOk {
+pub struct JmapIdentityGetOutput {
     pub identities: Vec<Identity>,
     pub not_found: Vec<String>,
     pub new_state: String,
@@ -67,35 +67,24 @@ impl JmapIdentityGet {
 }
 
 impl JmapCoroutine for JmapIdentityGet {
-    type Output = JmapIdentityGetOk;
-    type Error = JmapIdentityGetError;
+    type Yield = JmapYield;
+    type Return = Result<JmapIdentityGetOutput, JmapIdentityGetError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.get.resume(arg) {
-            JmapGetResult::Ok {
+            JmapCoroutineState::Complete(Ok(JmapGetOutput {
                 list,
                 not_found,
                 state,
                 keep_alive,
-            } => JmapCoroutineState::Done(JmapIdentityGetOk {
+            })) => JmapCoroutineState::Complete(Ok(JmapIdentityGetOutput {
                 identities: list,
                 not_found,
                 new_state: state,
                 keep_alive,
-            }),
-            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
+            })),
+            JmapCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
+            JmapCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::identity_get`] client method.
-///
-/// [`JmapClientStd::identity_get`]: crate::client::JmapClientStd::identity_get
-#[derive(Clone, Debug)]
-pub struct JmapIdentityGetOutput {
-    pub identities: Vec<Identity>,
-    pub not_found: Vec<String>,
-    pub new_state: String,
 }

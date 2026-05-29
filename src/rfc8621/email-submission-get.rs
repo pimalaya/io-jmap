@@ -18,9 +18,9 @@ pub enum JmapEmailSubmissionGetError {
     Get(#[from] JmapGetError),
 }
 
-/// Successful output of [`JmapEmailSubmissionGet`].
+/// Successful terminal output of [`JmapEmailSubmissionGet`].
 #[derive(Clone, Debug)]
-pub struct JmapEmailSubmissionGetOk {
+pub struct JmapEmailSubmissionGetOutput {
     pub submissions: Vec<EmailSubmission>,
     pub not_found: Vec<String>,
     pub new_state: String,
@@ -66,35 +66,24 @@ impl JmapEmailSubmissionGet {
 }
 
 impl JmapCoroutine for JmapEmailSubmissionGet {
-    type Output = JmapEmailSubmissionGetOk;
-    type Error = JmapEmailSubmissionGetError;
+    type Yield = JmapYield;
+    type Return = Result<JmapEmailSubmissionGetOutput, JmapEmailSubmissionGetError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.get.resume(arg) {
-            JmapGetResult::Ok {
+            JmapCoroutineState::Complete(Ok(JmapGetOutput {
                 list,
                 not_found,
                 state,
                 keep_alive,
-            } => JmapCoroutineState::Done(JmapEmailSubmissionGetOk {
+            })) => JmapCoroutineState::Complete(Ok(JmapEmailSubmissionGetOutput {
                 submissions: list,
                 not_found,
                 new_state: state,
                 keep_alive,
-            }),
-            JmapGetResult::WantsRead => JmapCoroutineState::WantsRead,
-            JmapGetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
-            JmapGetResult::Err(err) => JmapCoroutineState::Err(err.into()),
+            })),
+            JmapCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
+            JmapCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::email_submission_get`] client method.
-///
-/// [`JmapClientStd::email_submission_get`]: crate::client::JmapClientStd::email_submission_get
-#[derive(Clone, Debug)]
-pub struct JmapEmailSubmissionGetOutput {
-    pub submissions: Vec<EmailSubmission>,
-    pub not_found: Vec<String>,
-    pub new_state: String,
 }

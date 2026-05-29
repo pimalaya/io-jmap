@@ -26,9 +26,9 @@ pub enum JmapEmailSetError {
     Set(#[from] JmapSetError),
 }
 
-/// Successful output of [`JmapEmailSet`].
+/// Successful terminal output of [`JmapEmailSet`].
 #[derive(Clone, Debug)]
-pub struct JmapEmailSetOk {
+pub struct JmapEmailSetOutput {
     pub new_state: String,
     pub created: BTreeMap<String, Email>,
     pub updated: BTreeMap<String, Option<Email>>,
@@ -186,12 +186,12 @@ impl JmapEmailSet {
 }
 
 impl JmapCoroutine for JmapEmailSet {
-    type Output = JmapEmailSetOk;
-    type Error = JmapEmailSetError;
+    type Yield = JmapYield;
+    type Return = Result<JmapEmailSetOutput, JmapEmailSetError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.set.resume(arg) {
-            JmapSetResult::Ok {
+            JmapCoroutineState::Complete(Ok(JmapSetOutput {
                 new_state,
                 created,
                 updated,
@@ -200,7 +200,7 @@ impl JmapCoroutine for JmapEmailSet {
                 not_updated,
                 not_destroyed,
                 keep_alive,
-            } => {
+            })) => {
                 let parse = |map: BTreeMap<String, serde_json::Value>| {
                     map.into_iter()
                         .map(|(k, v)| {
@@ -209,7 +209,7 @@ impl JmapCoroutine for JmapEmailSet {
                         })
                         .collect()
                 };
-                JmapCoroutineState::Done(JmapEmailSetOk {
+                JmapCoroutineState::Complete(Ok(JmapEmailSetOutput {
                     new_state,
                     created,
                     updated,
@@ -218,25 +218,10 @@ impl JmapCoroutine for JmapEmailSet {
                     not_updated: parse(not_updated),
                     not_destroyed: parse(not_destroyed),
                     keep_alive,
-                })
+                }))
             }
-            JmapSetResult::WantsRead => JmapCoroutineState::WantsRead,
-            JmapSetResult::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
-            JmapSetResult::Err(err) => JmapCoroutineState::Err(err.into()),
+            JmapCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
+            JmapCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::email_set`] client method.
-///
-/// [`JmapClientStd::email_set`]: crate::client::JmapClientStd::email_set
-#[derive(Clone, Debug)]
-pub struct JmapEmailSetOutput {
-    pub new_state: String,
-    pub created: BTreeMap<String, Email>,
-    pub updated: BTreeMap<String, Option<Email>>,
-    pub destroyed: Vec<String>,
-    pub not_created: BTreeMap<String, EmailSetError>,
-    pub not_updated: BTreeMap<String, EmailSetError>,
-    pub not_destroyed: BTreeMap<String, EmailSetError>,
 }

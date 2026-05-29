@@ -39,9 +39,9 @@ pub enum JmapEmailSubmissionQueryError {
     GetMethod(JmapMethodError),
 }
 
-/// Successful output of [`JmapEmailSubmissionQuery`].
+/// Successful terminal output of [`JmapEmailSubmissionQuery`].
 #[derive(Clone, Debug)]
-pub struct JmapEmailSubmissionQueryOk {
+pub struct JmapEmailSubmissionQueryOutput {
     pub submissions: Vec<EmailSubmission>,
     pub total: Option<u64>,
     pub position: u64,
@@ -153,75 +153,71 @@ impl JmapEmailSubmissionQuery {
 }
 
 impl JmapCoroutine for JmapEmailSubmissionQuery {
-    type Output = JmapEmailSubmissionQueryOk;
-    type Error = JmapEmailSubmissionQueryError;
+    type Yield = JmapYield;
+    type Return = Result<JmapEmailSubmissionQueryOutput, JmapEmailSubmissionQueryError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapCoroutineState::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => {
-                return JmapCoroutineState::WantsWrite(bytes);
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
             }
-            JmapSendResult::Err(err) => return JmapCoroutineState::Err(err.into()),
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let mut responses = response.method_responses.into_iter();
 
         let Some((query_name, query_args, _)) = responses.next() else {
-            return JmapCoroutineState::Err(JmapEmailSubmissionQueryError::MissingQueryResponse);
+            return JmapCoroutineState::Complete(Err(
+                JmapEmailSubmissionQueryError::MissingQueryResponse,
+            ));
         };
 
         if query_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(query_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(JmapEmailSubmissionQueryError::QueryMethod(err));
+            return JmapCoroutineState::Complete(Err(JmapEmailSubmissionQueryError::QueryMethod(
+                err,
+            )));
         }
 
         let query_response = match serde_json::from_value::<SubmissionQueryResponse>(query_args) {
             Ok(r) => r,
             Err(err) => {
-                return JmapCoroutineState::Err(JmapEmailSubmissionQueryError::ParseQueryResponse(
-                    err,
+                return JmapCoroutineState::Complete(Err(
+                    JmapEmailSubmissionQueryError::ParseQueryResponse(err),
                 ));
             }
         };
 
         let Some((get_name, get_args, _)) = responses.next() else {
-            return JmapCoroutineState::Err(JmapEmailSubmissionQueryError::MissingGetResponse);
+            return JmapCoroutineState::Complete(Err(
+                JmapEmailSubmissionQueryError::MissingGetResponse,
+            ));
         };
 
         if get_name == "error" {
             let err = serde_json::from_value::<JmapMethodError>(get_args)
                 .unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Err(JmapEmailSubmissionQueryError::GetMethod(err));
+            return JmapCoroutineState::Complete(Err(JmapEmailSubmissionQueryError::GetMethod(
+                err,
+            )));
         }
 
         match serde_json::from_value::<SubmissionGetResponse>(get_args) {
-            Ok(r) => JmapCoroutineState::Done(JmapEmailSubmissionQueryOk {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailSubmissionQueryOutput {
                 submissions: r.list,
                 total: query_response.total,
                 position: query_response.position,
                 query_state: query_response.query_state,
                 keep_alive,
-            }),
-            Err(err) => {
-                JmapCoroutineState::Err(JmapEmailSubmissionQueryError::ParseGetResponse(err))
-            }
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(
+                JmapEmailSubmissionQueryError::ParseGetResponse(err),
+            )),
         }
     }
-}
-
-/// Output of the [`JmapClientStd::email_submission_query`] client method.
-///
-/// [`JmapClientStd::email_submission_query`]: crate::client::JmapClientStd::email_submission_query
-#[derive(Clone, Debug)]
-pub struct JmapEmailSubmissionQueryOutput {
-    pub submissions: Vec<EmailSubmission>,
-    pub total: Option<u64>,
-    pub position: u64,
-    pub query_state: String,
 }

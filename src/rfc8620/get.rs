@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use url::Url;
 
+use crate::coroutine::*;
 use crate::rfc8620::{error::JmapMethodError, send::*};
 
 /// Errors that can occur during the coroutine progression.
@@ -26,22 +27,13 @@ pub enum JmapGetError {
     Method(#[from] JmapMethodError),
 }
 
-/// Result returned by the [`JmapGet`] coroutine.
-#[derive(Debug)]
-pub enum JmapGetResult<T> {
-    /// The coroutine has successfully completed.
-    Ok {
-        list: Vec<T>,
-        not_found: Vec<String>,
-        state: String,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The coroutine encountered an error.
-    Err(JmapGetError),
+/// Successful terminal output of the [`JmapGet`] coroutine.
+#[derive(Clone, Debug)]
+pub struct JmapGetOutput<T> {
+    pub list: Vec<T>,
+    pub not_found: Vec<String>,
+    pub state: String,
+    pub keep_alive: bool,
 }
 
 #[derive(Serialize)]
@@ -104,37 +96,42 @@ impl<T: DeserializeOwned> JmapGet<T> {
             _phantom: PhantomData,
         }
     }
+}
 
-    /// Advances the coroutine.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapGetResult<T> {
-        let (response, keep_alive) = match self.send.resume(arg) {
-            JmapSendResult::Ok {
-                response,
-                keep_alive,
-            } => (response, keep_alive),
-            JmapSendResult::WantsRead => return JmapGetResult::WantsRead,
-            JmapSendResult::WantsWrite(bytes) => return JmapGetResult::WantsWrite(bytes),
-            JmapSendResult::Err(err) => return JmapGetResult::Err(err.into()),
+impl<T: DeserializeOwned> JmapCoroutine for JmapGet<T> {
+    type Yield = JmapYield;
+    type Return = Result<JmapGetOutput<T>, JmapGetError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
+        let JmapSendOutput {
+            response,
+            keep_alive,
+        } = match self.send.resume(arg) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            JmapCoroutineState::Complete(Err(err)) => {
+                return JmapCoroutineState::Complete(Err(err.into()));
+            }
+            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
         };
 
         let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapGetResult::Err(JmapGetError::MissingResponse);
+            return JmapCoroutineState::Complete(Err(JmapGetError::MissingResponse));
         };
 
         if name == "error" {
             let err =
                 serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapGetResult::Err(err.into());
+            return JmapCoroutineState::Complete(Err(err.into()));
         }
 
         match serde_json::from_value::<GetResponse<T>>(args) {
-            Ok(r) => JmapGetResult::Ok {
+            Ok(r) => JmapCoroutineState::Complete(Ok(JmapGetOutput {
                 list: r.list,
                 not_found: r.not_found,
                 state: r.state,
                 keep_alive,
-            },
-            Err(err) => JmapGetResult::Err(JmapGetError::ParseResponse(err)),
+            })),
+            Err(err) => JmapCoroutineState::Complete(Err(JmapGetError::ParseResponse(err))),
         }
     }
 }

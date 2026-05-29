@@ -1,6 +1,6 @@
 //! # Standard, blocking JMAP client
 //!
-//! Holds a single boxed [`Stream`] (any blocking `Read + Write` impl)
+//! Holds a single boxed stream (any blocking `Read + Write` impl)
 //! plus the bearer token and discovered [`JmapSession`], and exposes
 //! one method per common coroutine. The bare [`new`] constructor takes
 //! a pre-connected stream; callers handle TCP and TLS themselves. With
@@ -39,10 +39,10 @@ use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
 
+use crate::coroutine::*;
 use crate::{
-    coroutine::{JmapCoroutine, JmapCoroutineState},
     rfc8620::{
-        blob_download::*, blob_upload::*, changes::JmapChangesOutput, send::*,
+        blob_download::*, blob_upload::*, redirect::JmapRedirectYield, send::*,
         session::JmapSession, session_get::*,
     },
     rfc8621::{
@@ -163,8 +163,8 @@ pub enum JmapClientStdError {
     )]
     UrlUnsupportedScheme(String, String),
 
-    #[error("JMAP server redirected during a non-redirectable operation")]
-    UnexpectedRedirect,
+    #[error("JMAP server redirected to `{0}` during a non-redirectable operation")]
+    UnexpectedRedirect(Url),
     #[error("JMAP client missing session; call `session_get` first")]
     MissingSession,
 }
@@ -179,7 +179,7 @@ pub enum JmapClientStdError {
 trait Stream: Read + Write + Send {}
 impl<T: Read + Write + Send + ?Sized> Stream for T {}
 
-/// Std-blocking JMAP client wrapping a single [`Stream`].
+/// Std-blocking JMAP client wrapping a single boxed stream.
 pub struct JmapClientStd {
     stream: Box<dyn Stream>,
     http_auth: SecretString,
@@ -196,29 +196,37 @@ impl fmt::Debug for JmapClientStd {
 }
 
 impl JmapClientStd {
-    /// Drives any [`JmapCoroutine`] to completion against the
-    /// underlying stream. Returns the coroutine's `Output` on success
-    /// and wraps its `Error` into [`JmapClientStdError`] on failure.
-    pub fn run<C>(&mut self, mut coroutine: C) -> Result<C::Output, JmapClientStdError>
+    /// Drives any standard-shape coroutine (`Yield = JmapYield`,
+    /// `Return = Result<Output, Error>`) against the wrapped stream
+    /// until it terminates.
+    ///
+    /// Coroutines that need richer Yield variants
+    /// ([`JmapSessionGet`], [`JmapBlobDownload`], [`JmapBlobUpload`]
+    /// with [`JmapRedirectYield::WantsRedirect`], or
+    /// [`JmapEventSource`](crate::rfc8620::event_source::JmapEventSource)
+    /// for streaming) get their own per-method client loops; see
+    /// [`Self::session_get`], [`Self::blob_upload`],
+    /// [`Self::blob_download`].
+    pub fn run<C, T, E>(&mut self, mut coroutine: C) -> Result<T, JmapClientStdError>
     where
-        C: JmapCoroutine,
-        JmapClientStdError: From<C::Error>,
+        C: JmapCoroutine<Yield = JmapYield, Return = Result<T, E>>,
+        JmapClientStdError: From<E>,
     {
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
 
         loop {
-            match coroutine.resume(arg) {
-                JmapCoroutineState::Done(out) => return Ok(out),
-                JmapCoroutineState::WantsRead => {
+            match coroutine.resume(arg.take()) {
+                JmapCoroutineState::Complete(Ok(out)) => return Ok(out),
+                JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
+                JmapCoroutineState::Yielded(JmapYield::WantsRead) => {
                     let n = self.stream.read(&mut buf)?;
                     arg = Some(&buf[..n]);
                 }
-                JmapCoroutineState::WantsWrite(bytes) => {
+                JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => {
                     self.stream.write_all(&bytes)?;
                     arg = None;
                 }
-                JmapCoroutineState::Err(err) => return Err(err.into()),
             }
         }
     }
@@ -331,23 +339,23 @@ impl JmapClientStd {
         let mut arg: Option<&[u8]> = None;
 
         loop {
-            match coroutine.resume(arg) {
-                JmapSessionGetResult::Ok { session, .. } => {
+            match coroutine.resume(arg.take()) {
+                JmapCoroutineState::Complete(Ok(JmapSessionGetOutput { session, .. })) => {
                     self.session = Some(session);
                     return Ok(self.session.as_ref().unwrap());
                 }
-                JmapSessionGetResult::WantsRead => {
+                JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead) => {
                     let n = self.stream.read(&mut buf)?;
                     arg = Some(&buf[..n]);
                 }
-                JmapSessionGetResult::WantsWrite(bytes) => {
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(bytes)) => {
                     self.stream.write_all(&bytes)?;
                     arg = None;
                 }
-                JmapSessionGetResult::WantsRedirect { .. } => {
-                    return Err(JmapClientStdError::UnexpectedRedirect);
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect { url, .. }) => {
+                    return Err(JmapClientStdError::UnexpectedRedirect(url));
                 }
-                JmapSessionGetResult::Err(err) => return Err(err.into()),
             }
         }
     }
@@ -357,24 +365,9 @@ impl JmapClientStd {
     /// CLIs and ad-hoc requests with custom `using` capabilities.
     pub fn send_raw(&mut self, request: JmapRequest) -> Result<JmapResponse, JmapClientStdError> {
         let session = self.session_or_err()?;
-        let mut coroutine = JmapSend::new(&self.http_auth, &session.api_url, request)?;
-        let mut buf = [0u8; READ_BUFFER_SIZE];
-        let mut arg: Option<&[u8]> = None;
-
-        loop {
-            match coroutine.resume(arg) {
-                JmapSendResult::Ok { response, .. } => return Ok(response),
-                JmapSendResult::WantsRead => {
-                    let n = self.stream.read(&mut buf)?;
-                    arg = Some(&buf[..n]);
-                }
-                JmapSendResult::WantsWrite(bytes) => {
-                    self.stream.write_all(&bytes)?;
-                    arg = None;
-                }
-                JmapSendResult::Err(err) => return Err(err.into()),
-            }
-        }
+        let coroutine = JmapSend::new(&self.http_auth, &session.api_url, request)?;
+        let out = self.run(coroutine)?;
+        Ok(out.response)
     }
 
     // ---- Blob (RFC 8620 §6) ----------------------------------------------
@@ -382,6 +375,9 @@ impl JmapClientStd {
     /// Uploads a blob to `upload_url` (RFC 8620 §6.1). The caller must
     /// resolve the session's `uploadUrl` template (e.g. substitute
     /// `{accountId}`) before passing it here.
+    ///
+    /// A redirect terminates the call with
+    /// [`JmapClientStdError::UnexpectedRedirect`].
     pub fn blob_upload(
         &mut self,
         upload_url: &Url,
@@ -393,28 +389,20 @@ impl JmapClientStd {
         let mut arg: Option<&[u8]> = None;
 
         loop {
-            match coroutine.resume(arg) {
-                JmapBlobUploadResult::Ok {
-                    blob_id,
-                    blob_type,
-                    size,
-                    ..
-                } => {
-                    return Ok(JmapBlobUploadOutput {
-                        blob_id,
-                        blob_type,
-                        size,
-                    });
-                }
-                JmapBlobUploadResult::WantsRead => {
+            match coroutine.resume(arg.take()) {
+                JmapCoroutineState::Complete(Ok(out)) => return Ok(out),
+                JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead) => {
                     let n = self.stream.read(&mut buf)?;
                     arg = Some(&buf[..n]);
                 }
-                JmapBlobUploadResult::WantsWrite(bytes) => {
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(bytes)) => {
                     self.stream.write_all(&bytes)?;
                     arg = None;
                 }
-                JmapBlobUploadResult::Err(err) => return Err(err.into()),
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect { url, .. }) => {
+                    return Err(JmapClientStdError::UnexpectedRedirect(url));
+                }
             }
         }
     }
@@ -431,20 +419,20 @@ impl JmapClientStd {
         let mut arg: Option<&[u8]> = None;
 
         loop {
-            match coroutine.resume(arg) {
-                JmapBlobDownloadResult::Ok { data, .. } => return Ok(data),
-                JmapBlobDownloadResult::WantsRead => {
+            match coroutine.resume(arg.take()) {
+                JmapCoroutineState::Complete(Ok(out)) => return Ok(out.data),
+                JmapCoroutineState::Complete(Err(err)) => return Err(err.into()),
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead) => {
                     let n = self.stream.read(&mut buf)?;
                     arg = Some(&buf[..n]);
                 }
-                JmapBlobDownloadResult::WantsWrite(bytes) => {
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(bytes)) => {
                     self.stream.write_all(&bytes)?;
                     arg = None;
                 }
-                JmapBlobDownloadResult::WantsRedirect { .. } => {
-                    return Err(JmapClientStdError::UnexpectedRedirect);
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect { url, .. }) => {
+                    return Err(JmapClientStdError::UnexpectedRedirect(url));
                 }
-                JmapBlobDownloadResult::Err(err) => return Err(err.into()),
             }
         }
     }
@@ -459,12 +447,7 @@ impl JmapClientStd {
     ) -> Result<JmapMailboxGetOutput, JmapClientStdError> {
         let coroutine =
             JmapMailboxGet::new(self.session_or_err()?, &self.http_auth, ids, properties)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapMailboxGetOutput {
-            mailboxes: out.mailboxes,
-            not_found: out.not_found,
-            new_state: out.new_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapMailboxQuery`] (batched `Mailbox/query` +
@@ -486,13 +469,7 @@ impl JmapClientStd {
             limit,
             properties,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapMailboxQueryOutput {
-            mailboxes: out.mailboxes,
-            total: out.total,
-            position: out.position,
-            query_state: out.query_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapMailboxSet`] (`Mailbox/set`).
@@ -501,16 +478,7 @@ impl JmapClientStd {
         args: JmapMailboxSetArgs,
     ) -> Result<JmapMailboxSetOutput, JmapClientStdError> {
         let coroutine = JmapMailboxSet::new(self.session_or_err()?, &self.http_auth, args)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapMailboxSetOutput {
-            new_state: out.new_state,
-            created: out.created,
-            updated: out.updated,
-            destroyed: out.destroyed,
-            not_created: out.not_created,
-            not_updated: out.not_updated,
-            not_destroyed: out.not_destroyed,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapMailboxChanges`] (`Mailbox/changes`).
@@ -518,21 +486,14 @@ impl JmapClientStd {
         &mut self,
         since_state: impl Into<String>,
         max_changes: Option<u64>,
-    ) -> Result<JmapChangesOutput, JmapClientStdError> {
+    ) -> Result<crate::rfc8620::changes::JmapChangesOutput, JmapClientStdError> {
         let coroutine = JmapMailboxChanges::new(
             self.session_or_err()?,
             &self.http_auth,
             since_state,
             max_changes,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapChangesOutput {
-            new_state: out.new_state,
-            has_more_changes: out.has_more_changes,
-            created: out.created,
-            updated: out.updated,
-            destroyed: out.destroyed,
-        })
+        self.run(coroutine)
     }
 
     // ---- Email (RFC 8621 §4) ---------------------------------------------
@@ -557,18 +518,13 @@ impl JmapClientStd {
             fetch_html_body_values,
             max_body_value_bytes,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailGetOutput {
-            emails: out.emails,
-            not_found: out.not_found,
-            new_state: out.new_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailQuery`] (batched `Email/query` + `Email/get`).
     pub fn email_query(
         &mut self,
-        filter: Option<EmailFilter>,
+        filter: Option<crate::rfc8620::filter::Filter<EmailFilter>>,
         sort: Option<Vec<EmailComparator>>,
         position: Option<u64>,
         limit: Option<u64>,
@@ -583,13 +539,7 @@ impl JmapClientStd {
             limit,
             properties,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailQueryOutput {
-            emails: out.emails,
-            total: out.total,
-            position: out.position,
-            query_state: out.query_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailSet`] (`Email/set`).
@@ -598,16 +548,7 @@ impl JmapClientStd {
         args: JmapEmailSetArgs,
     ) -> Result<JmapEmailSetOutput, JmapClientStdError> {
         let coroutine = JmapEmailSet::new(self.session_or_err()?, &self.http_auth, args)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailSetOutput {
-            new_state: out.new_state,
-            created: out.created,
-            updated: out.updated,
-            destroyed: out.destroyed,
-            not_created: out.not_created,
-            not_updated: out.not_updated,
-            not_destroyed: out.not_destroyed,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailChanges`] (`Email/changes`).
@@ -615,21 +556,14 @@ impl JmapClientStd {
         &mut self,
         since_state: impl Into<String>,
         max_changes: Option<u64>,
-    ) -> Result<JmapChangesOutput, JmapClientStdError> {
+    ) -> Result<crate::rfc8620::changes::JmapChangesOutput, JmapClientStdError> {
         let coroutine = JmapEmailChanges::new(
             self.session_or_err()?,
             &self.http_auth,
             since_state,
             max_changes,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapChangesOutput {
-            new_state: out.new_state,
-            has_more_changes: out.has_more_changes,
-            created: out.created,
-            updated: out.updated,
-            destroyed: out.destroyed,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailCopy`] (`Email/copy`).
@@ -644,12 +578,7 @@ impl JmapClientStd {
             from_account_id,
             emails,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailCopyOutput {
-            new_state: out.new_state,
-            created: out.created,
-            not_created: out.not_created,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailImport`] (`Email/import`).
@@ -658,12 +587,7 @@ impl JmapClientStd {
         emails: BTreeMap<String, EmailImport>,
     ) -> Result<JmapEmailImportOutput, JmapClientStdError> {
         let coroutine = JmapEmailImport::new(self.session_or_err()?, &self.http_auth, emails)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailImportOutput {
-            new_state: out.new_state,
-            created: out.created,
-            not_created: out.not_created,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailParse`] (`Email/parse`).
@@ -678,12 +602,7 @@ impl JmapClientStd {
             blob_ids,
             properties,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailParseOutput {
-            parsed: out.parsed,
-            not_parsable: out.not_parsable,
-            not_found: out.not_found,
-        })
+        self.run(coroutine)
     }
 
     // ---- Thread (RFC 8621 §3) --------------------------------------------
@@ -694,12 +613,7 @@ impl JmapClientStd {
         ids: Vec<String>,
     ) -> Result<JmapThreadGetOutput, JmapClientStdError> {
         let coroutine = JmapThreadGet::new(self.session_or_err()?, &self.http_auth, ids)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapThreadGetOutput {
-            threads: out.threads,
-            not_found: out.not_found,
-            new_state: out.new_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapThreadChanges`] (`Thread/changes`).
@@ -707,21 +621,14 @@ impl JmapClientStd {
         &mut self,
         since_state: impl Into<String>,
         max_changes: Option<u64>,
-    ) -> Result<JmapChangesOutput, JmapClientStdError> {
+    ) -> Result<crate::rfc8620::changes::JmapChangesOutput, JmapClientStdError> {
         let coroutine = JmapThreadChanges::new(
             self.session_or_err()?,
             &self.http_auth,
             since_state,
             max_changes,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapChangesOutput {
-            new_state: out.new_state,
-            has_more_changes: out.has_more_changes,
-            created: out.created,
-            updated: out.updated,
-            destroyed: out.destroyed,
-        })
+        self.run(coroutine)
     }
 
     // ---- Identity (RFC 8621 §6) ------------------------------------------
@@ -733,12 +640,7 @@ impl JmapClientStd {
         ids: Option<Vec<String>>,
     ) -> Result<JmapIdentityGetOutput, JmapClientStdError> {
         let coroutine = JmapIdentityGet::new(self.session_or_err()?, &self.http_auth, ids)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapIdentityGetOutput {
-            identities: out.identities,
-            not_found: out.not_found,
-            new_state: out.new_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapIdentitySet`] (`Identity/set`).
@@ -747,16 +649,7 @@ impl JmapClientStd {
         args: JmapIdentitySetArgs,
     ) -> Result<JmapIdentitySetOutput, JmapClientStdError> {
         let coroutine = JmapIdentitySet::new(self.session_or_err()?, &self.http_auth, args)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapIdentitySetOutput {
-            new_state: out.new_state,
-            created: out.created,
-            updated: out.updated,
-            destroyed: out.destroyed,
-            not_created: out.not_created,
-            not_updated: out.not_updated,
-            not_destroyed: out.not_destroyed,
-        })
+        self.run(coroutine)
     }
 
     // ---- EmailSubmission (RFC 8621 §7) -----------------------------------
@@ -767,12 +660,7 @@ impl JmapClientStd {
         ids: Option<Vec<String>>,
     ) -> Result<JmapEmailSubmissionGetOutput, JmapClientStdError> {
         let coroutine = JmapEmailSubmissionGet::new(self.session_or_err()?, &self.http_auth, ids)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailSubmissionGetOutput {
-            submissions: out.submissions,
-            not_found: out.not_found,
-            new_state: out.new_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailSubmissionQuery`] (batched
@@ -792,13 +680,7 @@ impl JmapClientStd {
             position,
             limit,
         )?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailSubmissionQueryOutput {
-            submissions: out.submissions,
-            total: out.total,
-            position: out.position,
-            query_state: out.query_state,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailSubmissionSet`] (`EmailSubmission/set`).
@@ -808,12 +690,7 @@ impl JmapClientStd {
     ) -> Result<JmapEmailSubmissionSetOutput, JmapClientStdError> {
         let coroutine =
             JmapEmailSubmissionSet::new(self.session_or_err()?, &self.http_auth, submissions)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailSubmissionSetOutput {
-            new_state: out.new_state,
-            created: out.created,
-            not_created: out.not_created,
-        })
+        self.run(coroutine)
     }
 
     /// Runs [`JmapEmailSubmissionCancel`] (`EmailSubmission/set` with
@@ -824,12 +701,7 @@ impl JmapClientStd {
     ) -> Result<JmapEmailSubmissionCancelOutput, JmapClientStdError> {
         let coroutine =
             JmapEmailSubmissionCancel::new(self.session_or_err()?, &self.http_auth, ids)?;
-        let out = self.run(coroutine)?;
-        Ok(JmapEmailSubmissionCancelOutput {
-            new_state: out.new_state,
-            updated: out.updated,
-            not_updated: out.not_updated,
-        })
+        self.run(coroutine)
     }
 
     // ---- VacationResponse (RFC 8621 §8) ----------------------------------

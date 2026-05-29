@@ -1,17 +1,20 @@
 //! I/O-free coroutine to discover a JMAP session (RFC 8620 §2).
 
-use alloc::vec::Vec;
-
 use io_http::{
-    rfc9110::request::HttpRequest,
-    rfc9112::send::{Http11Send, Http11SendError, Http11SendResult},
+    coroutine::*,
+    rfc9110::{
+        request::HttpRequest,
+        send::{HttpSendOutput, HttpSendYield},
+    },
+    rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
 
-use crate::rfc8620::session::JmapSession;
+use crate::coroutine::*;
+use crate::rfc8620::{redirect::JmapRedirectYield, session::JmapSession};
 
 /// Errors that can occur during the coroutine progression.
 #[derive(Debug, Error)]
@@ -26,29 +29,11 @@ pub enum JmapSessionGetError {
     NoPrimaryMailAccount,
 }
 
-/// Result returned by the [`JmapSessionGet`] coroutine.
-#[derive(Debug)]
-pub enum JmapSessionGetResult {
-    /// The coroutine successfully discovered the JMAP session.
-    Ok {
-        session: JmapSession,
-        keep_alive: bool,
-    },
-    /// The coroutine needs more bytes to be read from the socket.
-    WantsRead,
-    /// The coroutine wants the given bytes to be written to the socket.
-    WantsWrite(Vec<u8>),
-    /// The server responded with a redirect to a new URL.
-    ///
-    /// The caller must open a new connection to the redirected URL and
-    /// create a new [`JmapSessionGet`] coroutine targeting it.
-    WantsRedirect {
-        url: Url,
-        keep_alive: bool,
-        same_origin: bool,
-    },
-    /// The coroutine encountered an error.
-    Err(JmapSessionGetError),
+/// Successful terminal output of [`JmapSessionGet`].
+#[derive(Clone, Debug)]
+pub struct JmapSessionGetOutput {
+    pub session: JmapSession,
+    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine to fetch a JMAP session (RFC 8620 §2).
@@ -57,9 +42,9 @@ pub enum JmapSessionGetResult {
 /// GETs that path directly as the session endpoint. Otherwise GETs
 /// `/.well-known/jmap` for automatic discovery.
 ///
-/// When the server responds with a 3xx redirect, the coroutine returns
-/// [`JmapSessionGetResult::WantsRedirect`]. The caller is responsible
-/// for opening a new connection and retrying with a new coroutine.
+/// When the server responds with a 3xx redirect, the coroutine yields
+/// [`JmapRedirectYield::WantsRedirect`]. The caller is responsible for
+/// opening a new connection and retrying with a new coroutine.
 pub struct JmapSessionGet {
     send: Http11Send,
 }
@@ -93,46 +78,51 @@ impl JmapSessionGet {
             send: Http11Send::new(http_request),
         }
     }
+}
 
-    /// Advances the coroutine.
-    ///
-    /// Pass [`None`] when there is no data to provide (initial call,
-    /// after a write). Pass `Some(data)` with bytes read from the
-    /// socket after a [`JmapSessionGetResult::WantsRead`]. Pass
-    /// `Some(&[])` to signal EOF.
-    pub fn resume(&mut self, arg: Option<&[u8]>) -> JmapSessionGetResult {
+impl JmapCoroutine for JmapSessionGet {
+    type Yield = JmapRedirectYield;
+    type Return = Result<JmapSessionGetOutput, JmapSessionGetError>;
+
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.send.resume(arg) {
-            Http11SendResult::Ok {
+            HttpCoroutineState::Complete(Ok(HttpSendOutput {
                 response,
                 keep_alive,
                 ..
-            } => {
+            })) => {
                 if !response.status.is_success() {
                     let err = JmapSessionGetError::HttpStatus(*response.status);
-                    return JmapSessionGetResult::Err(err);
+                    return JmapCoroutineState::Complete(Err(err));
                 }
 
                 match serde_json::from_slice::<JmapSession>(&response.body) {
-                    Ok(session) => JmapSessionGetResult::Ok {
+                    Ok(session) => JmapCoroutineState::Complete(Ok(JmapSessionGetOutput {
                         session,
                         keep_alive,
-                    },
-                    Err(err) => JmapSessionGetResult::Err(JmapSessionGetError::ParseSession(err)),
+                    })),
+                    Err(err) => {
+                        JmapCoroutineState::Complete(Err(JmapSessionGetError::ParseSession(err)))
+                    }
                 }
             }
-            Http11SendResult::WantsRead => JmapSessionGetResult::WantsRead,
-            Http11SendResult::WantsWrite(bytes) => JmapSessionGetResult::WantsWrite(bytes),
-            Http11SendResult::WantsRedirect {
+            HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead)
+            }
+            HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(bytes))
+            }
+            HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect {
                 url,
                 keep_alive,
                 same_origin,
                 ..
-            } => JmapSessionGetResult::WantsRedirect {
+            }) => JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect {
                 url,
                 keep_alive,
                 same_origin,
-            },
-            Http11SendResult::Err(err) => JmapSessionGetResult::Err(err.into()),
+            }),
+            HttpCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
         }
     }
 }

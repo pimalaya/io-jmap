@@ -1,6 +1,6 @@
 //! I/O-free coroutine for `Mailbox/changes` (RFC 8621 §2.7).
 
-use alloc::{string::String, vec, vec::Vec};
+use alloc::{string::String, vec};
 
 use secrecy::SecretString;
 use thiserror::Error;
@@ -16,17 +16,6 @@ use crate::{
 pub enum JmapMailboxChangesError {
     #[error("JMAP Mailbox/changes error: {0}")]
     Changes(#[from] JmapChangesError),
-}
-
-/// Successful output of [`JmapMailboxChanges`].
-#[derive(Clone, Debug)]
-pub struct JmapMailboxChangesOk {
-    pub new_state: String,
-    pub has_more_changes: bool,
-    pub created: Vec<String>,
-    pub updated: Vec<String>,
-    pub destroyed: Vec<String>,
-    pub keep_alive: bool,
 }
 
 /// I/O-free coroutine for the JMAP `Mailbox/changes` method.
@@ -66,29 +55,14 @@ impl JmapMailboxChanges {
 }
 
 impl JmapCoroutine for JmapMailboxChanges {
-    type Output = JmapMailboxChangesOk;
-    type Error = JmapMailboxChangesError;
+    type Yield = JmapYield;
+    type Return = Result<JmapChangesOutput, JmapMailboxChangesError>;
 
-    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Output, Self::Error> {
+    fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         match self.changes.resume(arg) {
-            JmapCoroutineState::Done(JmapChangesOk {
-                new_state,
-                has_more_changes,
-                created,
-                updated,
-                destroyed,
-                keep_alive,
-            }) => JmapCoroutineState::Done(JmapMailboxChangesOk {
-                new_state,
-                has_more_changes,
-                created,
-                updated,
-                destroyed,
-                keep_alive,
-            }),
-            JmapCoroutineState::WantsRead => JmapCoroutineState::WantsRead,
-            JmapCoroutineState::WantsWrite(bytes) => JmapCoroutineState::WantsWrite(bytes),
-            JmapCoroutineState::Err(err) => JmapCoroutineState::Err(err.into()),
+            JmapCoroutineState::Complete(Ok(out)) => JmapCoroutineState::Complete(Ok(out)),
+            JmapCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
+            JmapCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y),
         }
     }
 }
