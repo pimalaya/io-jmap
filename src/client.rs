@@ -176,14 +176,14 @@ pub enum JmapClientStdError {
 /// neverest's per-mailbox dispatch). Every concrete stream the
 /// pimalaya stack hands in (`TcpStream`, `UnixStream`, rustls/native-tls
 /// wrappers, `StreamStd`) is already `Send`.
-trait Stream: Read + Write + Send {}
+pub trait Stream: Read + Write + Send {}
 impl<T: Read + Write + Send + ?Sized> Stream for T {}
 
 /// Std-blocking JMAP client wrapping a single boxed stream.
 pub struct JmapClientStd {
-    stream: Box<dyn Stream>,
-    http_auth: SecretString,
-    session: Option<JmapSession>,
+    pub stream: Box<dyn Stream>,
+    pub http_auth: SecretString,
+    pub session: Option<JmapSession>,
 }
 
 impl fmt::Debug for JmapClientStd {
