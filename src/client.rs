@@ -18,7 +18,7 @@
 //! [`connect`]: JmapClientStd::connect
 //! [`session_get`]: JmapClientStd::session_get
 
-use core::fmt;
+use core::{any::Any, fmt};
 
 #[cfg(any(
     feature = "rustls-aws",
@@ -73,8 +73,6 @@ use crate::{
         vacation_response_set::*,
     },
 };
-
-const READ_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Errors returned by [`JmapClientStd`].
 #[derive(Debug, Error)]
@@ -169,33 +167,27 @@ pub enum JmapClientStdError {
     MissingSession,
 }
 
-/// Marker for everything the client can run against; auto-implemented
-/// for any blocking `Read + Write + Send` impl. The `Send` supertrait
-/// flows the auto-trait through the `Box<dyn Stream>` type erasure so
-/// `JmapClientStd` can travel between threads in worker pools (e.g.
-/// neverest's per-mailbox dispatch). Every concrete stream the
-/// pimalaya stack hands in (`TcpStream`, `UnixStream`, rustls/native-tls
-/// wrappers, `StreamStd`) is already `Send`.
-pub trait Stream: Read + Write + Send {}
-impl<T: Read + Write + Send + ?Sized> Stream for T {}
+const READ_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Std-blocking JMAP client wrapping a single boxed stream.
 pub struct JmapClientStd {
-    pub stream: Box<dyn Stream>,
+    pub stream: Box<dyn JmapStream>,
     pub http_auth: SecretString,
     pub session: Option<JmapSession>,
 }
 
-impl fmt::Debug for JmapClientStd {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("JmapClientStd")
-            .field("http_auth", &self.http_auth)
-            .field("session", &self.session)
-            .finish_non_exhaustive()
-    }
-}
-
 impl JmapClientStd {
+    /// Builds a client around `stream`. The caller is responsible for
+    /// opening the connection (TCP, TLS handshake if needed) and for
+    /// the bearer token / authorization header value.
+    pub fn new<S: Read + Write + Send + 'static>(stream: S, http_auth: SecretString) -> Self {
+        Self {
+            stream: Box::new(stream),
+            http_auth,
+            session: None,
+        }
+    }
+
     /// Drives any standard-shape coroutine (`Yield = JmapYield`,
     /// `Return = Result<Output, Error>`) against the wrapped stream
     /// until it terminates.
@@ -228,17 +220,6 @@ impl JmapClientStd {
                     arg = None;
                 }
             }
-        }
-    }
-
-    /// Builds a client around `stream`. The caller is responsible for
-    /// opening the connection (TCP, TLS handshake if needed) and for
-    /// the bearer token / authorization header value.
-    pub fn new<S: Read + Write + Send + 'static>(stream: S, http_auth: SecretString) -> Self {
-        Self {
-            stream: Box::new(stream),
-            http_auth,
-            session: None,
         }
     }
 
@@ -363,6 +344,7 @@ impl JmapClientStd {
     /// Sends a raw JMAP request and returns the raw [`JmapResponse`].
     /// Lower level than the per-method helpers: useful for passthrough
     /// CLIs and ad-hoc requests with custom `using` capabilities.
+    // TODO: move this to one level down
     pub fn send_raw(&mut self, request: JmapRequest) -> Result<JmapResponse, JmapClientStdError> {
         let session = self.session_or_err()?;
         let coroutine = JmapSend::new(&self.http_auth, &session.api_url, request)?;
@@ -724,5 +706,37 @@ impl JmapClientStd {
         let coroutine =
             JmapVacationResponseSet::new(self.session_or_err()?, &self.http_auth, patch)?;
         Ok(self.run(coroutine)?.updated)
+    }
+}
+
+impl fmt::Debug for JmapClientStd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JmapClientStd")
+            .field("http_auth", &self.http_auth)
+            .field("session", &self.session)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Marker for everything the client can run against; auto-implemented
+/// for any blocking `Read + Write + Send + 'static` impl. The `Send`
+/// supertrait flows the auto-trait through the `Box<dyn JmapStream>`
+/// type erasure so `JmapClientStd` can travel between threads in
+/// worker pools (e.g. neverest's per-mailbox dispatch). Every concrete
+/// stream the pimalaya stack hands in (`TcpStream`, `UnixStream`,
+/// rustls/native-tls wrappers, `StreamStd`) is already `Send`.
+/// [`as_any_mut`] lets specialized callers (e.g. byte-level proxies
+/// that need [`StreamStd::set_read_timeout`]) downcast the boxed
+/// stream back to its concrete type.
+///
+/// [`as_any_mut`]: JmapStream::as_any_mut
+/// [`StreamStd::set_read_timeout`]: pimalaya_stream::std::stream::StreamStd::set_read_timeout
+pub trait JmapStream: Read + Write + Send + Any {
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+impl<T: Read + Write + Send + Any> JmapStream for T {
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
