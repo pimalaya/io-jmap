@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `JmapEventSource` mis-routing the head reader's leftover bytes (the start of the chunked body that arrives in the same socket read as the HTTP head) straight into the SSE parser. Those bytes are chunk-encoded; the parser saw `<hex chunk size>\r\n` lines as unknown SSE fields and silently split multi-chunk field values at the size-header boundary, truncating `data:` payloads and breaking JSON decoding. Leftover bytes now go through `Http11ReadChunksStream` first.
+
 ### Added
 
 - Added basic I/O-free coroutines.

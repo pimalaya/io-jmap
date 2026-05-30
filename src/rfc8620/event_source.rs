@@ -317,19 +317,41 @@ impl JmapCoroutine for JmapEventSource {
                                 JmapEventSourceError::NotChunked,
                             ));
                         }
+                        // The HTTP head reader may have over-read past
+                        // the blank line and hold the start of the
+                        // chunked body in `remaining`. Those bytes are
+                        // chunk-encoded; prime the chunk decoder with
+                        // them so the SSE parser only ever sees
+                        // decoded chunk bodies, never `<hex>\r\n` size
+                        // headers.
+                        let mut chunks = Http11ReadChunksStream::default();
                         let pending = if remaining.is_empty() {
                             None
                         } else {
-                            Some(remaining)
+                            match chunks.resume(Some(&remaining)) {
+                                HttpCoroutineState::Yielded(
+                                    Http11ReadChunksStreamYield::Frame { body },
+                                ) => Some(body),
+                                HttpCoroutineState::Yielded(
+                                    Http11ReadChunksStreamYield::WantsRead,
+                                ) => None,
+                                HttpCoroutineState::Complete(Ok(_)) => {
+                                    self.state = EventSourceState::Done;
+                                    return JmapCoroutineState::Complete(Ok(()));
+                                }
+                                HttpCoroutineState::Complete(Err(err)) => {
+                                    return JmapCoroutineState::Complete(Err(err.into()));
+                                }
+                            }
                         };
                         self.state = EventSourceState::Streaming {
-                            chunks: Http11ReadChunksStream::default(),
+                            chunks,
                             parser: SseFrameParser::default(),
                             pending,
                         };
-                        // Loop into the streaming arm with the same
-                        // `arg`; the chunk stream consumes socket
-                        // bytes, the pending buffer feeds the parser.
+                        // Loop into the streaming arm; subsequent
+                        // chunk.resume calls keep parsing from the
+                        // primed buffer before asking for more bytes.
                     }
                 },
                 EventSourceState::Streaming {
@@ -498,6 +520,63 @@ mod tests {
             upload_url: String::new(),
             event_source_url: String::new(),
             state: String::new(),
+        }
+    }
+
+    // Regression: when the HTTP head reader over-reads past
+    // `\r\n\r\n` and the leftover bytes contain the start of the
+    // chunked body, those bytes must be routed through the chunk
+    // decoder. The original implementation fed them straight into
+    // the SSE parser, which saw `<hex chunk size>\r\n` lines as
+    // unknown fields and (crucially) split a multi-chunk SSE field
+    // at the `<hex>\r\n` boundary, truncating the field value and
+    // breaking JSON parsing downstream.
+    //
+    // The body here splits `data:` across two chunks so the broken
+    // path produces invalid JSON and the test fails with the
+    // original code; the fix routes leftover bytes through the
+    // chunk decoder so the SSE parser sees the two halves joined.
+    #[test]
+    fn streaming_head_leftover_is_chunk_decoded() {
+        use alloc::string::ToString;
+
+        let session = JmapSession {
+            event_source_url: "https://example.org/sse".into(),
+            ..synthetic_session()
+        };
+        let auth = SecretString::from("Bearer t".to_string());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let mut es =
+            JmapEventSource::new(&session, &auth, &["Email"], 30, CloseAfter::State, shutdown)
+                .unwrap();
+
+        // Drain the initial GET-request write so the next resume
+        // enters the ReadingHead arm.
+        let JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(_)) = es.resume(None)
+        else {
+            panic!("expected initial WantsWrite");
+        };
+
+        let part1 = "event: state\ndata: {\"@type\":\"StateChange\",\"changed\":{\"u1\":";
+        let part2 = "{\"Email\":\"s1\"}}}\n\n";
+        let chunked = format!(
+            "{:x}\r\n{part1}\r\n{:x}\r\n{part2}\r\n0\r\n\r\n",
+            part1.len(),
+            part2.len(),
+        );
+        let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/event-stream\r\n\r\n";
+        let mut wire = head.as_bytes().to_vec();
+        wire.extend_from_slice(chunked.as_bytes());
+
+        // Head + the full multi-chunk body arrive in the same socket
+        // read: matches the Fastmail trace shape and the read
+        // boundary that triggered the bug.
+        match es.resume(Some(&wire)) {
+            JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(change)) => {
+                assert_eq!(change.r#type, DEFAULT_TYPE_TAG);
+                assert_eq!(change.changed["u1"]["Email"], "s1");
+            }
+            other => panic!("expected Frame yield, got {other:?}"),
         }
     }
 }
