@@ -18,7 +18,7 @@
 //! [`connect`]: JmapClientStd::connect
 //! [`session_get`]: JmapClientStd::session_get
 
-use core::{any::Any, fmt};
+use core::{any::Any, fmt, time::Duration};
 
 #[cfg(any(
     feature = "rustls-aws",
@@ -268,6 +268,14 @@ impl JmapClientStd {
                 ));
             }
         };
+
+        // Per-read timeout so the watch-mailbox loop polls its
+        // shutdown atomic every 5s instead of blocking forever on the
+        // SSE socket between push frames; mirrors the IMAP IDLE
+        // pattern (io-imap's connect does the same). Per-read (not
+        // per-operation), so large JMAP responses are fine as long as
+        // TCP packets keep arriving.
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
 
         Ok(Self {
             stream: Box::new(stream),

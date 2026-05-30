@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed `JmapEventSource` mis-routing the head reader's leftover bytes (the start of the chunked body that arrives in the same socket read as the HTTP head) straight into the SSE parser. Those bytes are chunk-encoded; the parser saw `<hex chunk size>\r\n` lines as unknown SSE fields and silently split multi-chunk field values at the size-header boundary, truncating `data:` payloads and breaking JSON decoding. Leftover bytes now go through `Http11ReadChunksStream` first.
 
+- Fixed cooperative shutdown for long-lived `JmapClientStd::watch_mailbox` callers: `JmapClientStd::connect` now sets a 5s per-read timeout on the underlying `StreamStd`, mirroring `io-imap`'s pattern. The watch driver already treated `WouldBlock` / `TimedOut` as "no new bytes", but without a timeout the SSE socket blocked indefinitely between push frames, so a Ctrl+C-driven shutdown atomic could not be polled until the server sent its next ping/state. The timeout is per-read (not per-operation), so non-watch HTTP responses remain unaffected as long as TCP packets keep arriving.
+
 ### Added
 
 - Added basic I/O-free coroutines.
