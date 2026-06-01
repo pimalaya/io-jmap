@@ -463,7 +463,7 @@ dependencies = [
 [[package]]
 name = "io-http"
 version = "0.0.3"
-source = "git+https://github.com/pimalaya/io-http#73b264b85209d86de48afed25957ab582b54c272"
+source = "git+https://github.com/pimalaya/io-http#23f3668558059c2db3603b1afdda5ce0f840e46a"
 dependencies = [
  "base64",
  "httparse",
@@ -723,7 +723,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "pimalaya-stream"
 version = "0.0.1"
-source = "git+https://github.com/pimalaya/stream#6449136364c9ef81248e3b4ab6491dd154293481"
+source = "git+https://github.com/pimalaya/stream#152911be92647ae47c2052c1bf1270f02eefbdd1"
 dependencies = [
  "anyhow",
  "log",
@@ -889,9 +889,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-native-certs"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "612460d5f7bea540c490b2b6395d8e34a953e52b491accd6c86c8164c5932a63"
+checksum = "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d"
 dependencies = [
  "openssl-probe",
  "rustls-pki-types",

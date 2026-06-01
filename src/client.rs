@@ -26,7 +26,8 @@ use core::{any::Any, fmt, time::Duration};
     feature = "native-tls"
 ))]
 use alloc::string::ToString;
-use alloc::{boxed::Box, collections::BTreeMap, string::String, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, string::String, vec, vec::Vec};
+
 use std::io::{self, Read, Write};
 
 #[cfg(any(
@@ -169,6 +170,15 @@ pub enum JmapClientStdError {
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 
+/// Default ALPN protocol identifier offered during the TLS handshake
+/// for JMAP connections; JMAP rides on HTTP/1.1 so the IANA `http/1.1`
+/// token is used. Re-exported so config-driven callers can use it as a
+/// serde default and so wizard/discovery code shares a single source
+/// of truth.
+pub fn default_alpn() -> Vec<String> {
+    vec![String::from("http/1.1")]
+}
+
 /// Std-blocking JMAP client wrapping a single boxed stream.
 pub struct JmapClientStd {
     pub stream: Box<dyn JmapStream>,
@@ -243,7 +253,8 @@ impl JmapClientStd {
 
     /// Connects to `url` and runs the TLS handshake when the scheme is
     /// `https` or `jmaps`. `http` and `jmap` go through plain TCP.
-    /// ALPN is set to `http/1.1`.
+    /// ALPN is read from `tls.rustls.alpn` (use [`default_alpn`] for
+    /// the JMAP-conformant `["http/1.1"]`); an empty vec skips ALPN.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
