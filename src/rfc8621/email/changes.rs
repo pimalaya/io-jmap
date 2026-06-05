@@ -6,13 +6,14 @@
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email::changes::JmapEmailChanges,
+//!     rfc8621::email::changes::{JmapEmailChanges, JmapEmailChangesOptions},
 //! };
 //! use secrecy::SecretString;
 //!
 //! # fn demo(session: &JmapSession) {
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine = JmapEmailChanges::new(session, &auth, "s1", None).unwrap();
+//! let coroutine =
+//!     JmapEmailChanges::new(session, &auth, "s1", JmapEmailChangesOptions::default()).unwrap();
 //! # let _ = coroutine;
 //! # }
 //! ```
@@ -25,9 +26,9 @@ use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapSession, changes::*},
     rfc8621::MAIL_CAPABILITY,
 };
@@ -37,6 +38,13 @@ use crate::{
 pub enum JmapEmailChangesError {
     #[error("JMAP Email/changes failed: {0}")]
     Changes(#[from] JmapChangesError),
+}
+
+/// Options for [`JmapEmailChanges::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapEmailChangesOptions {
+    /// Server-side cap on the number of changes returned.
+    pub max_changes: Option<u64>,
 }
 
 /// I/O-free coroutine for the JMAP `Email/changes` method.
@@ -49,7 +57,7 @@ impl JmapEmailChanges {
         session: &JmapSession,
         http_auth: &SecretString,
         since_state: impl Into<String>,
-        max_changes: Option<u64>,
+        opts: JmapEmailChangesOptions,
     ) -> Result<Self, JmapEmailChangesError> {
         let account_id = session
             .primary_accounts
@@ -66,7 +74,9 @@ impl JmapEmailChanges {
                 "Email/changes",
                 vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()],
                 since_state,
-                max_changes,
+                JmapChangesOptions {
+                    max_changes: opts.max_changes,
+                },
             )?),
         })
     }

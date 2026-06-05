@@ -1,5 +1,5 @@
-//! Generic JMAP `Foo/get` coroutine (RFC 8620 §5.1): wraps [`JmapSend`]
-//! with a single method-call batch and a typed response decoder.
+//! Generic JMAP `Foo/get` coroutine (RFC 8620 §5.1): wraps [`JmapSend`] with a
+//! single method-call batch and a typed response decoder.
 //!
 //! # Example
 //!
@@ -11,7 +11,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::get::JmapGet,
+//!     rfc8620::get::{JmapGet, JmapGetOptions},
 //! };
 //! use secrecy::SecretString;
 //! use serde::Deserialize;
@@ -32,8 +32,7 @@
 //!     &api_url,
 //!     "Mailbox/get",
 //!     vec!["urn:ietf:params:jmap:mail".into()],
-//!     None,
-//!     None,
+//!     JmapGetOptions::default(),
 //! )
 //! .unwrap();
 //! let mut arg = None;
@@ -65,9 +64,11 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::jmap_try;
-use crate::rfc8620::{JmapBatch, JmapMethodError, send::*};
+use crate::{
+    coroutine::*,
+    jmap_try,
+    rfc8620::{JmapBatch, JmapMethodError, send::*},
+};
 
 /// Failure causes during a JMAP `Foo/get` flow.
 #[derive(Debug, Error)]
@@ -82,6 +83,15 @@ pub enum JmapGetError {
     ParseResponse(#[source] serde_json::Error),
     #[error("JMAP Foo/get failed: {0}")]
     Method(#[from] JmapMethodError),
+}
+
+/// Options for [`JmapGet::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapGetOptions {
+    /// Restrict the fetch to these ids; `None` fetches all.
+    pub ids: Option<Vec<String>>,
+    /// Restrict the returned properties; `None` returns all.
+    pub properties: Option<Vec<String>>,
 }
 
 /// Successful terminal output of the [`JmapGet`] coroutine.
@@ -107,18 +117,18 @@ impl<T: DeserializeOwned> JmapGet<T> {
         api_url: &Url,
         method: impl Into<String>,
         capabilities: Vec<String>,
-        ids: Option<Vec<String>>,
-        properties: Option<Vec<String>>,
+        opts: JmapGetOptions,
     ) -> Result<Self, JmapGetError> {
         let args = serde_json::to_value(GetArgs {
             account_id: &account_id,
-            ids: ids.as_deref(),
-            properties: properties.as_deref(),
+            ids: opts.ids.as_deref(),
+            properties: opts.properties.as_deref(),
         })
         .map_err(JmapGetError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add(method, args);
+
         let request = batch.into_request(capabilities);
 
         Ok(Self {
@@ -143,6 +153,7 @@ impl<T: DeserializeOwned> JmapCoroutine for JmapGet<T> {
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
         trace!("get: {}", self.state);
+
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -231,8 +242,7 @@ mod tests {
             &make_url(),
             "Mailbox/get",
             vec!["urn:ietf:params:jmap:mail".to_string()],
-            None,
-            None,
+            JmapGetOptions::default(),
         )
         .unwrap()
     }

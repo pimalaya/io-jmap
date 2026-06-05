@@ -1,5 +1,5 @@
-//! I/O-free streaming coroutine that subscribes to a JMAP Event Source
-//! channel (RFC 8620 §7.2) and yields one [`StateChange`] per push frame.
+//! I/O-free streaming coroutine that subscribes to a JMAP Event Source channel
+//! (RFC 8620 §7.2) and yields one [`JmapStateChange`] per push frame.
 //!
 //! Composes [`Http11ReadHeaders`] + [`Http11ReadChunksStream`] +
 //! [`SseFrameParser`] + [`parse_state_change`] into one state machine.
@@ -18,7 +18,7 @@
 //!     rfc8620::{
 //!         JmapSession,
 //!         event_source::{
-//!             CloseAfter,
+//!             JmapCloseAfter,
 //!             subscribe::{JmapEventSource, JmapEventSourceYield},
 //!         },
 //!     },
@@ -32,7 +32,7 @@
 //! let auth = SecretString::from("Bearer xyz");
 //! let shutdown = Arc::new(AtomicBool::new(false));
 //! let mut coroutine =
-//!     JmapEventSource::new(session, &auth, &["Email"], 30, CloseAfter::State, shutdown)
+//!     JmapEventSource::new(session, &auth, &["Email"], 30, JmapCloseAfter::State, shutdown)
 //!         .unwrap();
 //! let mut arg = None;
 //!
@@ -78,18 +78,19 @@ use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::rfc8620::JmapSession;
+use crate::{coroutine::*, rfc8620::JmapSession};
 
-use super::types::{CloseAfter, EventSourceError, StateChange};
-use super::utils::{parse_state_change, subscribe_url};
+use super::{
+    types::{JmapCloseAfter, JmapStateChange, JmapStateChangeParseError},
+    utils::{parse_state_change, subscribe_url},
+};
 
 /// Per-step yield for [`JmapEventSource`].
 #[derive(Debug)]
 pub enum JmapEventSourceYield {
     /// One decoded push notification. Empty-data SSE frames (pings) surface as
-    /// the default [`StateChange`] with an empty `changed` map: keep-alive.
-    Frame(StateChange),
+    /// the default [`JmapStateChange`] with an empty `changed` map: keep-alive.
+    Frame(JmapStateChange),
     /// Driver should read more bytes and feed them back on the next resume.
     WantsRead,
     /// Driver should write these bytes; the next resume typically takes `None`.
@@ -110,7 +111,7 @@ pub enum JmapEventSourceError {
     #[error("JMAP event-source failed: {0}")]
     ReadChunks(#[from] Http11ReadChunksStreamError),
     #[error("JMAP event-source failed: {0}")]
-    DecodeFrame(#[from] EventSourceError),
+    DecodeFrame(#[from] JmapStateChangeParseError),
 }
 
 /// I/O-free streaming coroutine for the JMAP `EventSource` push channel.
@@ -130,13 +131,13 @@ impl JmapEventSource {
     ///
     /// `types` filters JMAP data types (empty = all). `ping_seconds` sets the
     /// server heartbeat cadence. `close_after` picks the lifecycle (see
-    /// [`CloseAfter`]). Flip `shutdown` to wind the coroutine down.
+    /// [`JmapCloseAfter`]). Flip `shutdown` to wind the coroutine down.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
         types: &[&str],
         ping_seconds: u64,
-        close_after: CloseAfter,
+        close_after: JmapCloseAfter,
         shutdown: Arc<AtomicBool>,
     ) -> Result<Self, JmapEventSourceError> {
         let url_str = subscribe_url(session, types, ping_seconds, close_after);
@@ -298,7 +299,7 @@ enum State {
     /// Driving [`Http11ReadHeaders`] on the response.
     ReadingHead(Http11ReadHeaders),
     /// Pumping chunks into the SSE parser, decoding each frame as a
-    /// `StateChange`.
+    /// `JmapStateChange`.
     Streaming {
         chunks: Http11ReadChunksStream,
         parser: SseFrameParser,
@@ -359,9 +360,15 @@ mod tests {
         };
         let auth = SecretString::from("Bearer t".to_string());
         let shutdown = Arc::new(AtomicBool::new(false));
-        let mut es =
-            JmapEventSource::new(&session, &auth, &["Email"], 30, CloseAfter::State, shutdown)
-                .unwrap();
+        let mut es = JmapEventSource::new(
+            &session,
+            &auth,
+            &["Email"],
+            30,
+            JmapCloseAfter::State,
+            shutdown,
+        )
+        .unwrap();
 
         // NOTE: drain the initial GET-request write so the next resume
         // enters the ReadingHead arm.

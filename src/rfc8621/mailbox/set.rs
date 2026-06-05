@@ -1,6 +1,6 @@
-//! JMAP `Mailbox/set` coroutine (RFC 8621 §2.6): wraps the generic
-//! [`JmapSet`] with [`JmapMailboxSetArgs`] (create/update/destroy) and
-//! decodes per-object [`MailboxSetError`] payloads.
+//! JMAP `Mailbox/set` coroutine (RFC 8621 §2.6): wraps the generic [`JmapSet`]
+//! with [`JmapMailboxSetArgs`] (create/update/destroy) and decodes per-object
+//! [`JmapMailboxSetItemError`] payloads.
 //!
 //! # Example
 //!
@@ -28,13 +28,13 @@ use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        mailbox::{Mailbox, MailboxCreate, MailboxSetError, MailboxUpdate},
+        mailbox::{JmapMailbox, JmapMailboxCreate, JmapMailboxSetItemError, JmapMailboxUpdate},
     },
 };
 
@@ -55,11 +55,11 @@ pub enum JmapMailboxSetError {
 pub struct JmapMailboxSetArgs {
     /// Objects to create (client ID → partial mailbox object).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create: Option<BTreeMap<String, MailboxCreate>>,
+    pub create: Option<BTreeMap<String, JmapMailboxCreate>>,
 
     /// Objects to update (mailbox ID → patch object).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update: Option<BTreeMap<String, MailboxUpdate>>,
+    pub update: Option<BTreeMap<String, JmapMailboxUpdate>>,
 
     /// IDs of objects to destroy.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -74,12 +74,12 @@ pub struct JmapMailboxSetArgs {
 #[derive(Clone, Debug)]
 pub struct JmapMailboxSetOutput {
     pub new_state: String,
-    pub created: BTreeMap<String, Mailbox>,
-    pub updated: BTreeMap<String, Option<Mailbox>>,
+    pub created: BTreeMap<String, JmapMailbox>,
+    pub updated: BTreeMap<String, Option<JmapMailbox>>,
     pub destroyed: Vec<String>,
-    pub not_created: BTreeMap<String, MailboxSetError>,
-    pub not_updated: BTreeMap<String, MailboxSetError>,
-    pub not_destroyed: BTreeMap<String, MailboxSetError>,
+    pub not_created: BTreeMap<String, JmapMailboxSetItemError>,
+    pub not_updated: BTreeMap<String, JmapMailboxSetItemError>,
+    pub not_destroyed: BTreeMap<String, JmapMailboxSetItemError>,
     pub keep_alive: bool,
 }
 
@@ -136,7 +136,8 @@ impl JmapCoroutine for JmapMailboxSet {
                 let parse = |map: BTreeMap<String, serde_json::Value>| {
                     map.into_iter()
                         .map(|(k, v)| {
-                            let e = serde_json::from_value(v).unwrap_or(MailboxSetError::Unknown);
+                            let e = serde_json::from_value(v)
+                                .unwrap_or(JmapMailboxSetItemError::Unknown);
                             (k, e)
                         })
                         .collect()
@@ -157,7 +158,7 @@ impl JmapCoroutine for JmapMailboxSet {
 }
 
 enum State {
-    Set(JmapSet<Mailbox>),
+    Set(JmapSet<JmapMailbox>),
 }
 
 impl fmt::Display for State {

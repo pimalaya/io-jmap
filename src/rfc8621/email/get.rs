@@ -1,13 +1,13 @@
-//! JMAP `Email/get` coroutine (RFC 8621 §4.5): wraps the generic
-//! [`JmapGet`] with the `Email/get`-specific args shape (property
-//! selection, body-value fetch toggles) and a typed [`Email`] decoder.
+//! JMAP `Email/get` coroutine (RFC 8621 §4.5): wraps the generic [`JmapGet`]
+//! with the `Email/get`-specific args shape (property selection, body-value
+//! fetch toggles) and a typed [`JmapEmail`] decoder.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email::get::JmapEmailGet,
+//!     rfc8621::email::get::{JmapEmailGet, JmapEmailGetOptions},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -17,10 +17,10 @@
 //!     session,
 //!     &auth,
 //!     vec!["e1".into()],
-//!     None,
-//!     true,
-//!     false,
-//!     0,
+//!     JmapEmailGetOptions {
+//!         fetch_text_body_values: true,
+//!         ..Default::default()
+//!     },
 //! )
 //! .unwrap();
 //! # let _ = coroutine;
@@ -36,13 +36,13 @@ use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, get::*, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        email::{Email, EmailProperty},
+        email::{JmapEmail, JmapEmailProperty},
     },
 };
 
@@ -57,10 +57,23 @@ pub enum JmapEmailGetError {
     Get(#[from] JmapGetError),
 }
 
+/// Options for [`JmapEmailGet::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapEmailGetOptions {
+    /// Restrict the returned properties; `None` returns all.
+    pub properties: Option<Vec<JmapEmailProperty>>,
+    /// Include `bodyValues` for text parts.
+    pub fetch_text_body_values: bool,
+    /// Include `bodyValues` for HTML parts.
+    pub fetch_html_body_values: bool,
+    /// Max bytes per body value (`0` is unlimited).
+    pub max_body_value_bytes: u64,
+}
+
 /// Successful terminal output of [`JmapEmailGet`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailGetOutput {
-    pub emails: Vec<Email>,
+    pub emails: Vec<JmapEmail>,
     pub not_found: Vec<String>,
     pub new_state: String,
     pub keep_alive: bool,
@@ -72,21 +85,11 @@ pub struct JmapEmailGet {
 }
 
 impl JmapEmailGet {
-    /// - `ids`: email IDs to fetch
-    /// - `properties`: specific properties to include, or `None` for all
-    /// - `fetch_text_body_values`: whether to include `bodyValues` for
-    ///   text parts
-    /// - `fetch_html_body_values`: whether to include `bodyValues` for
-    ///   HTML parts
-    /// - `max_body_value_bytes`: max bytes per body value (0 = unlimited)
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
         ids: Vec<String>,
-        properties: Option<Vec<EmailProperty>>,
-        fetch_text_body_values: bool,
-        fetch_html_body_values: bool,
-        max_body_value_bytes: u64,
+        opts: JmapEmailGetOptions,
     ) -> Result<Self, JmapEmailGetError> {
         let account_id = session
             .primary_accounts
@@ -98,10 +101,10 @@ impl JmapEmailGet {
         let args = serde_json::to_value(EmailGetArgs {
             account_id,
             ids,
-            properties,
-            fetch_text_body_values,
-            fetch_html_body_values,
-            max_body_value_bytes,
+            properties: opts.properties,
+            fetch_text_body_values: opts.fetch_text_body_values,
+            fetch_html_body_values: opts.fetch_html_body_values,
+            max_body_value_bytes: opts.max_body_value_bytes,
         })
         .map_err(JmapEmailGetError::SerializeArgs)?;
 
@@ -142,7 +145,7 @@ impl JmapCoroutine for JmapEmailGet {
 }
 
 enum State {
-    Get(JmapGet<Email>),
+    Get(JmapGet<JmapEmail>),
 }
 
 impl fmt::Display for State {
@@ -159,7 +162,7 @@ struct EmailGetArgs {
     account_id: String,
     ids: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    properties: Option<Vec<EmailProperty>>,
+    properties: Option<Vec<JmapEmailProperty>>,
     #[serde(skip_serializing_if = "is_false")]
     fetch_text_body_values: bool,
     #[serde(rename = "fetchHTMLBodyValues", skip_serializing_if = "is_false")]

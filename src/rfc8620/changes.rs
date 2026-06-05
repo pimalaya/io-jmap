@@ -1,11 +1,10 @@
-//! Generic JMAP `Foo/changes` coroutine (RFC 8620 §5.2): wraps
-//! [`JmapSend`] with a `since_state` cursor and decodes the changed-id
-//! lists.
+//! Generic JMAP `Foo/changes` coroutine (RFC 8620 §5.2): wraps [`JmapSend`]
+//! with a `since_state` cursor and decodes the changed-id lists.
 //!
 //! # Example
 //!
 //! ```rust,no_run
-//! use io_jmap::rfc8620::changes::JmapChanges;
+//! use io_jmap::rfc8620::changes::{JmapChanges, JmapChangesOptions};
 //! use secrecy::SecretString;
 //! use url::Url;
 //!
@@ -18,7 +17,7 @@
 //!     "Email/changes",
 //!     vec!["urn:ietf:params:jmap:mail".into()],
 //!     "s1",
-//!     None,
+//!     JmapChangesOptions::default(),
 //! )
 //! .unwrap();
 //! # let _ = coroutine;
@@ -34,9 +33,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::jmap_try;
-use crate::rfc8620::{JmapBatch, JmapMethodError, send::*};
+use crate::{
+    coroutine::*,
+    jmap_try,
+    rfc8620::{JmapBatch, JmapMethodError, send::*},
+};
 
 /// Failure causes during a JMAP `Foo/changes` flow.
 #[derive(Debug, Error)]
@@ -53,9 +54,16 @@ pub enum JmapChangesError {
     Method(#[from] JmapMethodError),
 }
 
-/// Successful terminal output of [`JmapChanges`] and of the per-type
-/// wrappers ([`JmapMailboxChanges`], [`JmapEmailChanges`],
-/// [`JmapThreadChanges`]).
+/// Options for [`JmapChanges::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapChangesOptions {
+    /// Server-side cap on the number of changes returned. `None` lets the
+    /// server pick.
+    pub max_changes: Option<u64>,
+}
+
+/// Successful terminal output of [`JmapChanges`] and of the per-type wrappers
+/// ([`JmapMailboxChanges`], [`JmapEmailChanges`], [`JmapThreadChanges`]).
 ///
 /// [`JmapMailboxChanges`]: crate::rfc8621::mailbox::changes::JmapMailboxChanges
 /// [`JmapEmailChanges`]: crate::rfc8621::email::changes::JmapEmailChanges
@@ -70,8 +78,8 @@ pub struct JmapChangesOutput {
     pub keep_alive: bool,
 }
 
-/// Generic I/O-free coroutine for the JMAP `Foo/changes` method
-/// (RFC 8620 §5.2).
+/// Generic I/O-free coroutine for the JMAP `Foo/changes` method (RFC 8620
+/// §5.2).
 pub struct JmapChanges {
     state: State,
 }
@@ -85,13 +93,13 @@ impl JmapChanges {
         method: impl Into<String>,
         capabilities: Vec<String>,
         since_state: impl Into<String>,
-        max_changes: Option<u64>,
+        opts: JmapChangesOptions,
     ) -> Result<Self, JmapChangesError> {
         let since_state = since_state.into();
         let args = serde_json::to_value(ChangesArgs {
             account_id: &account_id,
             since_state: &since_state,
-            max_changes,
+            max_changes: opts.max_changes,
         })
         .map_err(JmapChangesError::SerializeArgs)?;
 
@@ -206,7 +214,7 @@ mod tests {
             "Email/changes",
             vec!["urn:ietf:params:jmap:mail".to_string()],
             "s1",
-            None,
+            JmapChangesOptions::default(),
         )
         .unwrap()
     }

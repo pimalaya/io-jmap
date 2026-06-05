@@ -1,9 +1,9 @@
 //! JMAP blob upload coroutine (RFC 8620 §6.1): POSTs raw bytes to the
 //! caller-resolved `upload_url` and returns the server-assigned blob id.
 //!
-//! A 3xx response surfaces as
-//! [`JmapRedirectYield::WantsRedirect`]; the caller must open a new
-//! connection to the redirect target and build a fresh coroutine.
+//! A 3xx response surfaces as [`JmapRedirectYield::WantsRedirect`]; the caller
+//! must open a new connection to the redirect target and build a fresh
+//! coroutine.
 //!
 //! # Example
 //!
@@ -65,8 +65,7 @@ use serde::Deserialize;
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::rfc8620::coroutine::JmapRedirectYield;
+use crate::{coroutine::*, rfc8620::coroutine::JmapRedirectYield};
 
 /// Failure causes during the JMAP blob-upload flow.
 #[derive(Debug, Error)]

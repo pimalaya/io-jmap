@@ -11,12 +11,12 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// A JMAP Mailbox object (RFC 8621 §2.1): a named container for emails.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Mailbox {
+pub struct JmapMailbox {
     pub id: Option<String>,
     pub name: Option<String>,
     /// `None` for a top-level mailbox.
     pub parent_id: Option<String>,
-    pub role: Option<MailboxRole>,
+    pub role: Option<JmapMailboxRole>,
     #[serde(default)]
     pub sort_order: u32,
     #[serde(default)]
@@ -28,22 +28,22 @@ pub struct Mailbox {
     #[serde(default)]
     pub unread_threads: u32,
     #[serde(default)]
-    pub my_rights: MailboxRights,
+    pub my_rights: JmapMailboxRights,
     #[serde(default)]
     pub is_subscribed: bool,
 }
 
-/// Client-settable subset of [`Mailbox`] for `Mailbox/set` create requests
+/// Client-settable subset of [`JmapMailbox`] for `Mailbox/set` create requests
 /// (RFC 8621 §2.1). Server-assigned fields are excluded.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MailboxCreate {
+pub struct JmapMailboxCreate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<MailboxRole>,
+    pub role: Option<JmapMailboxRole>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -54,13 +54,13 @@ pub struct MailboxCreate {
 /// `Some` fields are serialised.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MailboxUpdate {
+pub struct JmapMailboxUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<MailboxRole>,
+    pub role: Option<JmapMailboxRole>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,7 +70,7 @@ pub struct MailboxUpdate {
 /// Access rights on a mailbox (RFC 8621 §2.1).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MailboxRights {
+pub struct JmapMailboxRights {
     /// May read items in the mailbox.
     pub may_read_items: bool,
     /// May add items to the mailbox.
@@ -92,9 +92,9 @@ pub struct MailboxRights {
 }
 
 /// Mailbox role per the IANA JMAP Mailbox Roles registry (RFC 8621 §2.1).
-/// Any unknown or server-defined role is held by [`MailboxRole::Other`].
+/// Any unknown or server-defined role is held by [`JmapMailboxRole::Other`].
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MailboxRole {
+pub enum JmapMailboxRole {
     /// Primary inbox.
     Inbox,
     /// Archived messages.
@@ -117,7 +117,7 @@ pub enum MailboxRole {
     Other(String),
 }
 
-impl fmt::Display for MailboxRole {
+impl fmt::Display for JmapMailboxRole {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Inbox => "inbox",
@@ -134,13 +134,13 @@ impl fmt::Display for MailboxRole {
     }
 }
 
-impl Serialize for MailboxRole {
+impl Serialize for JmapMailboxRole {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.to_string())
     }
 }
 
-impl<'de> Deserialize<'de> for MailboxRole {
+impl<'de> Deserialize<'de> for JmapMailboxRole {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
         Ok(match s.as_str() {
@@ -158,10 +158,10 @@ impl<'de> Deserialize<'de> for MailboxRole {
     }
 }
 
-/// [`Mailbox`] properties requestable in `Mailbox/get` (RFC 8621 §2.1).
+/// [`JmapMailbox`] properties requestable in `Mailbox/get` (RFC 8621 §2.1).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum MailboxProperty {
+pub enum JmapMailboxProperty {
     Id,
     Name,
     ParentId,
@@ -178,7 +178,7 @@ pub enum MailboxProperty {
 /// Sort property for `Mailbox/query` (RFC 8621 §2.4).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum MailboxSortProperty {
+pub enum JmapMailboxSortProperty {
     Name,
     SortOrder,
     ParentId,
@@ -187,25 +187,25 @@ pub enum MailboxSortProperty {
 /// Sort comparator for `Mailbox/query` (RFC 8620 §5.5).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MailboxSortComparator {
-    pub property: MailboxSortProperty,
+pub struct JmapMailboxSortComparator {
+    pub property: JmapMailboxSortProperty,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_ascending: Option<bool>,
 }
 
-/// Filter for `Mailbox/query` (RFC 8621 §2.4).
+/// JmapFilter for `Mailbox/query` (RFC 8621 §2.4).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct MailboxFilter {
-    /// Filter by parent mailbox ID.
+pub struct JmapMailboxFilter {
+    /// JmapFilter by parent mailbox ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
 
-    /// Filter by role.
+    /// JmapFilter by role.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<MailboxRole>,
+    pub role: Option<JmapMailboxRole>,
 
-    /// Filter by name (substring match).
+    /// JmapFilter by name (substring match).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
@@ -224,7 +224,7 @@ pub struct MailboxFilter {
 /// errors defined in RFC 8621 §2.6.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum MailboxSetError {
+pub enum JmapMailboxSetItemError {
     /// The mailbox cannot be destroyed because it has child mailboxes.
     MailboxHasChild {
         description: Option<String>,

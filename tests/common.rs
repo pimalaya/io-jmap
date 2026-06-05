@@ -41,16 +41,16 @@ use io_jmap::{
     },
     rfc8621::{
         email::{
-            EmailFilter, EmailImport,
-            get::{JmapEmailGet, JmapEmailGetOutput},
+            JmapEmailFilter, JmapEmailImportArgs,
+            get::{JmapEmailGet, JmapEmailGetOptions, JmapEmailGetOutput},
             import::{JmapEmailImport, JmapEmailImportOutput},
-            query::{JmapEmailQuery, JmapEmailQueryOutput},
+            query::{JmapEmailQuery, JmapEmailQueryOptions, JmapEmailQueryOutput},
             set::{JmapEmailSet, JmapEmailSetArgs, JmapEmailSetOutput},
         },
         mailbox::{
-            MailboxCreate, MailboxUpdate,
-            get::{JmapMailboxGet, JmapMailboxGetOutput},
-            query::{JmapMailboxQuery, JmapMailboxQueryOutput},
+            JmapMailboxCreate, JmapMailboxUpdate,
+            get::{JmapMailboxGet, JmapMailboxGetOptions, JmapMailboxGetOutput},
+            query::{JmapMailboxQuery, JmapMailboxQueryOptions, JmapMailboxQueryOutput},
             set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetOutput},
         },
         thread::get::{JmapThreadGet, JmapThreadGetOutput},
@@ -184,7 +184,7 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
 
     {
         let mut coroutine =
-            JmapMailboxQuery::new(&session, &token, None, None, None, None, None).unwrap();
+            JmapMailboxQuery::new(&session, &token, JmapMailboxQueryOptions::default()).unwrap();
         let mut arg: Option<&[u8]> = None;
         let mut read_buf = Vec::<u8>::new();
 
@@ -225,7 +225,7 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         let mut create = BTreeMap::new();
         create.insert(
             "new-mbox".to_owned(),
-            MailboxCreate {
+            JmapMailboxCreate {
                 name: Some(mbox_name.clone()),
                 is_subscribed: Some(true),
                 ..Default::default()
@@ -282,9 +282,15 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
     // ── MAILBOX GET (verify creation) ────────────────────────────────────────
 
     {
-        let mut coroutine =
-            JmapMailboxGet::new(&session, &token, Some(vec![mbox_id.clone()]), None)
-                .expect("create mailbox get coroutine");
+        let mut coroutine = JmapMailboxGet::new(
+            &session,
+            &token,
+            JmapMailboxGetOptions {
+                ids: Some(vec![mbox_id.clone()]),
+                ..Default::default()
+            },
+        )
+        .expect("create mailbox get coroutine");
         let mut arg: Option<&[u8]> = None;
         let mut read_buf = Vec::<u8>::new();
 
@@ -338,7 +344,7 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         let mut update = BTreeMap::new();
         update.insert(
             mbox_id.clone(),
-            MailboxUpdate {
+            JmapMailboxUpdate {
                 name: Some(mbox_name_2.clone()),
                 ..Default::default()
             },
@@ -386,9 +392,15 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
     // ── MAILBOX GET (verify rename) ──────────────────────────────────────────
 
     {
-        let mut coroutine =
-            JmapMailboxGet::new(&session, &token, Some(vec![mbox_id.clone()]), None)
-                .expect("create mailbox get coroutine");
+        let mut coroutine = JmapMailboxGet::new(
+            &session,
+            &token,
+            JmapMailboxGetOptions {
+                ids: Some(vec![mbox_id.clone()]),
+                ..Default::default()
+            },
+        )
+        .expect("create mailbox get coroutine");
         let mut arg: Option<&[u8]> = None;
         let mut read_buf = Vec::<u8>::new();
 
@@ -476,7 +488,7 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         let mut emails = BTreeMap::new();
         emails.insert(
             "e1".to_owned(),
-            EmailImport {
+            JmapEmailImportArgs {
                 blob_id: blob_id.clone(),
                 mailbox_ids,
                 keywords: None,
@@ -522,7 +534,7 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
     // ── EMAIL QUERY ──────────────────────────────────────────────────────────
 
     let (email_id, thread_id) = {
-        let filter = EmailFilter {
+        let filter = JmapEmailFilter {
             in_mailbox: Some(mbox_id.clone()),
             ..Default::default()
         };
@@ -530,11 +542,10 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         let mut coroutine = JmapEmailQuery::new(
             &session,
             &token,
-            Some(filter.into()),
-            None,
-            None,
-            None,
-            None,
+            JmapEmailQueryOptions {
+                filter: Some(filter.into()),
+                ..Default::default()
+            },
         )
         .unwrap();
         let mut arg: Option<&[u8]> = None;
@@ -578,10 +589,7 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
             &session,
             &token,
             vec![email_id.clone()],
-            None,
-            false,
-            false,
-            0,
+            JmapEmailGetOptions::default(),
         )
         .expect("create email get coroutine");
         let mut arg: Option<&[u8]> = None;

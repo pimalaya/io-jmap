@@ -1,18 +1,19 @@
-//! JMAP `Mailbox/get` coroutine (RFC 8621 §2.5): wraps the generic
-//! [`JmapGet`] with the JMAP-Mail capability set.
+//! JMAP `Mailbox/get` coroutine (RFC 8621 §2.5): wraps the generic [`JmapGet`]
+//! with the JMAP-Mail capability set.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::mailbox::get::JmapMailboxGet,
+//!     rfc8621::mailbox::get::{JmapMailboxGet, JmapMailboxGetOptions},
 //! };
 //! use secrecy::SecretString;
 //!
 //! # fn demo(session: &JmapSession) {
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine = JmapMailboxGet::new(session, &auth, None, None).unwrap();
+//! let coroutine =
+//!     JmapMailboxGet::new(session, &auth, JmapMailboxGetOptions::default()).unwrap();
 //! # let _ = coroutine;
 //! # }
 //! ```
@@ -25,13 +26,13 @@ use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapSession, get::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        mailbox::{Mailbox, MailboxProperty},
+        mailbox::{JmapMailbox, JmapMailboxProperty},
     },
 };
 
@@ -42,10 +43,19 @@ pub enum JmapMailboxGetError {
     Get(#[from] JmapGetError),
 }
 
+/// Options for [`JmapMailboxGet::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapMailboxGetOptions {
+    /// Restrict the fetch to these mailbox IDs; `None` fetches all.
+    pub ids: Option<Vec<String>>,
+    /// Restrict the returned properties; `None` returns all.
+    pub properties: Option<Vec<JmapMailboxProperty>>,
+}
+
 /// Successful terminal output of [`JmapMailboxGet`].
 #[derive(Clone, Debug)]
 pub struct JmapMailboxGetOutput {
-    pub mailboxes: Vec<Mailbox>,
+    pub mailboxes: Vec<JmapMailbox>,
     pub not_found: Vec<String>,
     pub new_state: String,
     pub keep_alive: bool,
@@ -60,8 +70,7 @@ impl JmapMailboxGet {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        ids: Option<Vec<String>>,
-        properties: Option<Vec<MailboxProperty>>,
+        opts: JmapMailboxGetOptions,
     ) -> Result<Self, JmapMailboxGetError> {
         let account_id = session
             .primary_accounts
@@ -70,7 +79,7 @@ impl JmapMailboxGet {
             .unwrap_or_default();
         let api_url = &session.api_url;
 
-        let props = properties.map(|ps| {
+        let props = opts.properties.map(|ps| {
             ps.iter()
                 .map(|p| {
                     serde_json::to_value(p)
@@ -88,8 +97,10 @@ impl JmapMailboxGet {
                 api_url,
                 "Mailbox/get",
                 vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()],
-                ids,
-                props,
+                JmapGetOptions {
+                    ids: opts.ids,
+                    properties: props,
+                },
             )?),
         })
     }
@@ -121,7 +132,7 @@ impl JmapCoroutine for JmapMailboxGet {
 }
 
 enum State {
-    Get(JmapGet<Mailbox>),
+    Get(JmapGet<JmapMailbox>),
 }
 
 impl fmt::Display for State {

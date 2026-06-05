@@ -1,5 +1,5 @@
-//! JMAP `VacationResponse/get` coroutine (RFC 8621 §8.2): wraps the
-//! generic [`JmapGet`] for the singleton `VacationResponse` object.
+//! JMAP `VacationResponse/get` coroutine (RFC 8621 §8.2): wraps the generic
+//! [`JmapGet`] for the singleton `JmapVacationResponse` object.
 //!
 //! # Example
 //!
@@ -30,13 +30,13 @@ use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, get::*, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        vacation_response::{VACATION_RESPONSE_CAPABILITY, VacationResponse},
+        vacation_response::{JmapVacationResponse, VACATION_RESPONSE_CAPABILITY},
     },
 };
 
@@ -54,7 +54,7 @@ pub enum JmapVacationResponseGetError {
 /// Successful terminal output of [`JmapVacationResponseGet`].
 #[derive(Clone, Debug)]
 pub struct JmapVacationResponseGetOutput {
-    pub vacation_response: Option<VacationResponse>,
+    pub vacation_response: Option<JmapVacationResponse>,
     pub new_state: String,
     pub keep_alive: bool,
 }
@@ -127,7 +127,7 @@ impl JmapCoroutine for JmapVacationResponseGet {
 }
 
 enum State {
-    Get(JmapGet<VacationResponse>),
+    Get(JmapGet<JmapVacationResponse>),
 }
 
 impl fmt::Display for State {

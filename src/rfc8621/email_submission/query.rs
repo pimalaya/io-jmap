@@ -1,20 +1,25 @@
-//! Batched JMAP `EmailSubmission/query` + `EmailSubmission/get`
-//! coroutine (RFC 8621 §7.3 + §7.2): one HTTP request, server-side
-//! `#ids` back-reference.
+//! Batched JMAP `EmailSubmission/query` + `EmailSubmission/get` coroutine (RFC
+//! 8621 §7.3 + §7.2): one HTTP request, server-side `#ids` back-reference.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email_submission::query::JmapEmailSubmissionQuery,
+//!     rfc8621::email_submission::query::{
+//!         JmapEmailSubmissionQuery, JmapEmailSubmissionQueryOptions,
+//!     },
 //! };
 //! use secrecy::SecretString;
 //!
 //! # fn demo(session: &JmapSession) {
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine =
-//!     JmapEmailSubmissionQuery::new(session, &auth, None, None, None, None).unwrap();
+//! let coroutine = JmapEmailSubmissionQuery::new(
+//!     session,
+//!     &auth,
+//!     JmapEmailSubmissionQueryOptions::default(),
+//! )
+//! .unwrap();
 //! # let _ = coroutine;
 //! # }
 //! ```
@@ -28,14 +33,16 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, ResultReference, send::*},
+    coroutine::*,
+    jmap_try,
+    rfc8620::{
+        CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
+    },
     rfc8621::{
         MAIL_CAPABILITY,
         email_submission::{
-            EmailSubmission, EmailSubmissionComparator, EmailSubmissionFilter,
+            JmapEmailSubmission, JmapEmailSubmissionComparator, JmapEmailSubmissionFilter,
             SUBMISSION_CAPABILITY,
         },
     },
@@ -66,10 +73,19 @@ pub enum JmapEmailSubmissionQueryError {
     GetMethod(JmapMethodError),
 }
 
+/// Options for [`JmapEmailSubmissionQuery::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapEmailSubmissionQueryOptions {
+    pub filter: Option<JmapEmailSubmissionFilter>,
+    pub sort: Option<Vec<JmapEmailSubmissionComparator>>,
+    pub position: Option<u64>,
+    pub limit: Option<u64>,
+}
+
 /// Successful terminal output of [`JmapEmailSubmissionQuery`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailSubmissionQueryOutput {
-    pub submissions: Vec<EmailSubmission>,
+    pub submissions: Vec<JmapEmailSubmission>,
     pub total: Option<u64>,
     pub position: u64,
     pub query_state: String,
@@ -86,10 +102,7 @@ impl JmapEmailSubmissionQuery {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        filter: Option<EmailSubmissionFilter>,
-        sort: Option<Vec<EmailSubmissionComparator>>,
-        position: Option<u64>,
-        limit: Option<u64>,
+        opts: JmapEmailSubmissionQueryOptions,
     ) -> Result<Self, JmapEmailSubmissionQueryError> {
         let account_id = session
             .primary_accounts
@@ -100,10 +113,10 @@ impl JmapEmailSubmissionQuery {
 
         let query_args = SubmissionQueryArgs {
             account_id: &account_id,
-            filter: filter.as_ref(),
-            sort: sort.as_deref(),
-            position,
-            limit,
+            filter: opts.filter.as_ref(),
+            sort: opts.sort.as_deref(),
+            position: opts.position,
+            limit: opts.limit,
             calculate_total: true,
         };
 
@@ -116,7 +129,7 @@ impl JmapEmailSubmissionQuery {
 
         let get_args = SubmissionGetByRefArgs {
             account_id: &account_id,
-            ids_ref: ResultReference {
+            ids_ref: JmapResultReference {
                 result_of: &query_id,
                 name: "EmailSubmission/query",
                 path: "/ids",
@@ -228,9 +241,9 @@ impl fmt::Display for State {
 struct SubmissionQueryArgs<'a> {
     account_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    filter: Option<&'a EmailSubmissionFilter>,
+    filter: Option<&'a JmapEmailSubmissionFilter>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    sort: Option<&'a [EmailSubmissionComparator]>,
+    sort: Option<&'a [JmapEmailSubmissionComparator]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     position: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,7 +256,7 @@ struct SubmissionQueryArgs<'a> {
 struct SubmissionGetByRefArgs<'a> {
     account_id: &'a str,
     #[serde(rename = "#ids")]
-    ids_ref: ResultReference<'a>,
+    ids_ref: JmapResultReference<'a>,
 }
 
 #[derive(Deserialize)]
@@ -259,5 +272,5 @@ struct SubmissionQueryResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SubmissionGetResponse {
-    list: Vec<EmailSubmission>,
+    list: Vec<JmapEmailSubmission>,
 }

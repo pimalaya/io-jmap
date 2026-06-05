@@ -120,7 +120,10 @@ io-jmap = { version = "0.0.1", default-features = false, features = ["client"] }
 ```rust,no_run
 use std::{net::TcpStream, sync::Arc};
 
-use io_jmap::client::JmapClientStd;
+use io_jmap::{
+    client::JmapClientStd,
+    rfc8621::mailbox::query::JmapMailboxQueryOptions,
+};
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;
@@ -139,7 +142,7 @@ let mut client = JmapClientStd::new(stream, http_auth);
 let session = client.session_get(&session_url).unwrap();
 println!("Logged in as: {}", session.username);
 
-let mailboxes = client.mailbox_query(None, None, None, None, None).unwrap();
+let mailboxes = client.mailbox_query(JmapMailboxQueryOptions::default()).unwrap();
 for mailbox in &mailboxes.mailboxes {
     println!("{:?}: {:?}", mailbox.role, mailbox.name);
 }
@@ -155,7 +158,10 @@ io-jmap = "0.0.1" # rustls-ring is enabled by default
 ```
 
 ```rust,no_run
-use io_jmap::client::JmapClientStd;
+use io_jmap::{
+    client::JmapClientStd,
+    rfc8621::mailbox::query::JmapMailboxQueryOptions,
+};
 use pimalaya_stream::tls::Tls;
 use secrecy::SecretString;
 use url::Url;
@@ -168,7 +174,7 @@ let mut client = JmapClientStd::connect(&session_url, &tls, http_auth).unwrap();
 let session = client.session_get(&session_url).unwrap();
 println!("Logged in as: {}", session.username);
 
-let mailboxes = client.mailbox_query(None, None, None, None, None).unwrap();
+let mailboxes = client.mailbox_query(JmapMailboxQueryOptions::default()).unwrap();
 for mailbox in &mailboxes.mailboxes {
     println!("{:?}: {:?}", mailbox.role, mailbox.name);
 }

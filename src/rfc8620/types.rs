@@ -25,8 +25,8 @@ pub struct JmapSession {
 }
 
 impl JmapSession {
-    /// Returns the primary account ID for the given capability URN, or
-    /// an empty string if none is advertised.
+    /// Returns the primary account ID for the given capability URN, or an empty
+    /// string if none is advertised.
     pub fn primary_account_id_for(&self, capability: &str) -> String {
         self.primary_accounts
             .get(capability)
@@ -205,7 +205,7 @@ impl Error for JmapMethodError {}
 /// Per-object error returned in `Foo/set` responses (RFC 8620 §5.3).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SetError {
+pub struct JmapSetError {
     pub r#type: String,
     pub description: Option<String>,
     #[serde(default)]
@@ -213,44 +213,44 @@ pub struct SetError {
 }
 
 /// A JMAP filter (RFC 8620 §5.5): a protocol-specific condition (e.g.
-/// [`crate::rfc8621::email::EmailFilter`]) or a logical combinator.
+/// [`crate::rfc8621::email::JmapEmailFilter`]) or a logical combinator.
 ///
-/// `untagged` serde: presence of `operator` picks [`FilterOperator`].
+/// `untagged` serde: presence of `operator` picks [`JmapFilterOperator`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum Filter<C> {
-    Operator(FilterOperator<C>),
+pub enum JmapFilter<C> {
+    Operator(JmapFilterOperator<C>),
     Condition(C),
 }
 
-impl<C> From<C> for Filter<C> {
+impl<C> From<C> for JmapFilter<C> {
     fn from(condition: C) -> Self {
-        Filter::Condition(condition)
+        JmapFilter::Condition(condition)
     }
 }
 
-impl<C> Filter<C> {
+impl<C> JmapFilter<C> {
     /// Wraps `conditions` in an AND combinator.
-    pub fn and(conditions: Vec<Filter<C>>) -> Self {
-        Filter::Operator(FilterOperator {
-            operator: FilterOperatorKind::And,
+    pub fn and(conditions: Vec<JmapFilter<C>>) -> Self {
+        JmapFilter::Operator(JmapFilterOperator {
+            operator: JmapFilterOperatorKind::And,
             conditions,
         })
     }
 
     /// Wraps `conditions` in an OR combinator.
-    pub fn or(conditions: Vec<Filter<C>>) -> Self {
-        Filter::Operator(FilterOperator {
-            operator: FilterOperatorKind::Or,
+    pub fn or(conditions: Vec<JmapFilter<C>>) -> Self {
+        JmapFilter::Operator(JmapFilterOperator {
+            operator: JmapFilterOperatorKind::Or,
             conditions,
         })
     }
 
     /// Wraps `conditions` in a NOT combinator. Satisfied when no condition
     /// matches (RFC 8620 §5.5), so a single-element vec models unary negation.
-    pub fn not(conditions: Vec<Filter<C>>) -> Self {
-        Filter::Operator(FilterOperator {
-            operator: FilterOperatorKind::Not,
+    pub fn not(conditions: Vec<JmapFilter<C>>) -> Self {
+        JmapFilter::Operator(JmapFilterOperator {
+            operator: JmapFilterOperatorKind::Not,
             conditions,
         })
     }
@@ -259,15 +259,15 @@ impl<C> Filter<C> {
 /// Logical combinator over a list of sub-filters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct FilterOperator<C> {
-    pub operator: FilterOperatorKind,
-    pub conditions: Vec<Filter<C>>,
+pub struct JmapFilterOperator<C> {
+    pub operator: JmapFilterOperatorKind,
+    pub conditions: Vec<JmapFilter<C>>,
 }
 
 /// AND / OR / NOT, serialized as RFC 8620 §5.5 spells them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
-pub enum FilterOperatorKind {
+pub enum JmapFilterOperatorKind {
     And,
     Or,
     Not,
@@ -277,7 +277,7 @@ pub enum FilterOperatorKind {
 /// earlier method call's result within a batch request.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ResultReference<'a> {
+pub struct JmapResultReference<'a> {
     pub result_of: &'a str,
     pub name: &'static str,
     pub path: &'static str,
@@ -318,7 +318,7 @@ pub struct JmapResponse {
 }
 
 /// Builder for batched JMAP requests: multiple method calls in one HTTP
-/// request, with generated call IDs for [`ResultReference`] back-refs.
+/// request, with generated call IDs for [`JmapResultReference`] back-refs.
 #[derive(Debug, Default)]
 pub struct JmapBatch {
     calls: Vec<(String, Value, String)>,
@@ -352,7 +352,7 @@ impl JmapBatch {
 
 /// A single added item in a `Foo/queryChanges` response (RFC 8620 §5.6).
 #[derive(Clone, Debug, Deserialize)]
-pub struct AddedItem {
+pub struct JmapAddedItem {
     pub id: String,
     pub index: u64,
 }
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn condition_serializes_flat() {
-        let f: Filter<Cond> = Filter::Condition(Cond {
+        let f: JmapFilter<Cond> = JmapFilter::Condition(Cond {
             from: Some("alice".into()),
         });
         assert_eq!(
@@ -383,11 +383,11 @@ mod tests {
 
     #[test]
     fn and_serializes_with_operator_key() {
-        let f: Filter<Cond> = Filter::and(vec![
-            Filter::Condition(Cond {
+        let f: JmapFilter<Cond> = JmapFilter::and(vec![
+            JmapFilter::Condition(Cond {
                 from: Some("a".into()),
             }),
-            Filter::Condition(Cond {
+            JmapFilter::Condition(Cond {
                 from: Some("b".into()),
             }),
         ]);
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn not_wraps_a_single_subfilter() {
-        let f: Filter<Cond> = Filter::not(vec![Filter::Condition(Cond {
+        let f: JmapFilter<Cond> = JmapFilter::not(vec![JmapFilter::Condition(Cond {
             from: Some("a".into()),
         })]);
         assert_eq!(
@@ -420,18 +420,18 @@ mod tests {
     #[test]
     fn deserialize_discriminates_on_operator_key() {
         let v = json!({ "from": "alice" });
-        let f: Filter<Cond> = serde_json::from_value(v).unwrap();
-        assert!(matches!(f, Filter::Condition(Cond { from: Some(_) })));
+        let f: JmapFilter<Cond> = serde_json::from_value(v).unwrap();
+        assert!(matches!(f, JmapFilter::Condition(Cond { from: Some(_) })));
 
         let v = json!({
             "operator": "OR",
             "conditions": [{ "from": "a" }, { "from": "b" }],
         });
-        let f: Filter<Cond> = serde_json::from_value(v).unwrap();
+        let f: JmapFilter<Cond> = serde_json::from_value(v).unwrap();
         assert!(matches!(
             f,
-            Filter::Operator(FilterOperator {
-                operator: FilterOperatorKind::Or,
+            JmapFilter::Operator(JmapFilterOperator {
+                operator: JmapFilterOperatorKind::Or,
                 ..
             })
         ));

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// A JMAP Email object (RFC 8621 §4.1).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Email {
+pub struct JmapEmail {
     pub id: Option<String>,
     /// Blob ID for the raw RFC 5322 message.
     pub blob_id: Option<String>,
@@ -24,32 +24,32 @@ pub struct Email {
     pub message_id: Option<Vec<String>>,
     pub in_reply_to: Option<Vec<String>>,
     pub references: Option<Vec<String>>,
-    pub sender: Option<Vec<EmailAddress>>,
-    pub from: Option<Vec<EmailAddress>>,
-    pub to: Option<Vec<EmailAddress>>,
-    pub cc: Option<Vec<EmailAddress>>,
-    pub bcc: Option<Vec<EmailAddress>>,
-    pub reply_to: Option<Vec<EmailAddress>>,
+    pub sender: Option<Vec<JmapEmailAddress>>,
+    pub from: Option<Vec<JmapEmailAddress>>,
+    pub to: Option<Vec<JmapEmailAddress>>,
+    pub cc: Option<Vec<JmapEmailAddress>>,
+    pub bcc: Option<Vec<JmapEmailAddress>>,
+    pub reply_to: Option<Vec<JmapEmailAddress>>,
     pub subject: Option<String>,
     /// `Date` header as an RFC 3339 string.
     pub sent_at: Option<String>,
-    pub body_structure: Option<EmailBodyPart>,
+    pub body_structure: Option<JmapEmailBodyPart>,
     /// `{ part-id -> body }` for text parts.
-    pub body_values: Option<BTreeMap<String, EmailBodyValue>>,
-    pub text_body: Option<Vec<EmailBodyPart>>,
-    pub html_body: Option<Vec<EmailBodyPart>>,
-    pub attachments: Option<Vec<EmailBodyPart>>,
+    pub body_values: Option<BTreeMap<String, JmapEmailBodyValue>>,
+    pub text_body: Option<Vec<JmapEmailBodyPart>>,
+    pub html_body: Option<Vec<JmapEmailBodyPart>>,
+    pub attachments: Option<Vec<JmapEmailBodyPart>>,
     pub has_attachment: Option<bool>,
     /// Short plaintext preview (up to 256 chars).
     pub preview: Option<String>,
     /// Raw headers in order of appearance.
-    pub headers: Option<Vec<EmailHeader>>,
+    pub headers: Option<Vec<JmapEmailHeader>>,
 }
 
 /// An email address (name + email pair).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailAddress {
+pub struct JmapEmailAddress {
     pub name: Option<String>,
     pub email: String,
 }
@@ -57,7 +57,7 @@ pub struct EmailAddress {
 /// A raw email header name-value pair.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailHeader {
+pub struct JmapEmailHeader {
     /// Field name, without trailing colon.
     pub name: String,
     /// Raw value, with leading whitespace preserved.
@@ -67,7 +67,7 @@ pub struct EmailHeader {
 /// A MIME body part descriptor.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailBodyPart {
+pub struct JmapEmailBodyPart {
     pub part_id: Option<String>,
     pub blob_id: Option<String>,
     pub size: Option<u64>,
@@ -81,14 +81,14 @@ pub struct EmailBodyPart {
     pub language: Option<Vec<String>>,
     pub location: Option<String>,
     /// Sub-parts (multipart only).
-    pub sub_parts: Option<Vec<EmailBodyPart>>,
-    pub headers: Option<Vec<EmailHeader>>,
+    pub sub_parts: Option<Vec<JmapEmailBodyPart>>,
+    pub headers: Option<Vec<JmapEmailHeader>>,
 }
 
 /// The text content of a body part.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailBodyValue {
+pub struct JmapEmailBodyValue {
     pub value: String,
     /// Charset or encoding problem during decode.
     pub is_encoding_problem: bool,
@@ -96,10 +96,10 @@ pub struct EmailBodyValue {
     pub is_truncated: bool,
 }
 
-/// [`Email`] properties requestable in `Email/get` (RFC 8621 §4.1).
+/// [`JmapEmail`] properties requestable in `Email/get` (RFC 8621 §4.1).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum EmailProperty {
+pub enum JmapEmailProperty {
     Id,
     BlobId,
     ThreadId,
@@ -131,7 +131,7 @@ pub enum EmailProperty {
 /// Sort property for `Email/query` (RFC 8621 §4.4).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum EmailSortProperty {
+pub enum JmapEmailSortProperty {
     ReceivedAt,
     SentAt,
     Size,
@@ -149,10 +149,10 @@ pub enum EmailSortProperty {
     SomeInThreadHaveKeyword,
 }
 
-/// Filter for `Email/query` (RFC 8621 §4.4).
+/// JmapFilter for `Email/query` (RFC 8621 §4.4).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailFilter {
+pub struct JmapEmailFilter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_mailbox: Option<String>,
     /// Exclude messages in any of these mailbox IDs.
@@ -200,8 +200,8 @@ pub struct EmailFilter {
 /// Comparator for `Email/query` sorting (RFC 8621 §4.4).
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailComparator {
-    pub property: EmailSortProperty,
+pub struct JmapEmailComparator {
+    pub property: JmapEmailSortProperty,
     /// Ascending if `None` or `Some(true)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_ascending: Option<bool>,
@@ -214,11 +214,11 @@ pub struct EmailComparator {
     pub keyword: Option<String>,
 }
 
-impl EmailComparator {
+impl JmapEmailComparator {
     /// Sort by `receivedAt` descending (newest first).
     pub fn received_at_desc() -> Self {
         Self {
-            property: EmailSortProperty::ReceivedAt,
+            property: JmapEmailSortProperty::ReceivedAt,
             is_ascending: Some(false),
             collation: None,
             keyword: None,
@@ -229,7 +229,7 @@ impl EmailComparator {
 /// A single operation in an `Email/set` update patch (RFC 8621 §4.7). Each
 /// variant serialises as a JSON Pointer entry in a flat patch object.
 #[derive(Clone, Debug)]
-pub enum EmailPatchOp {
+pub enum JmapEmailPatchOp {
     /// Set a keyword: `"keywords/<kw>": true`
     SetKeyword(String),
     /// Unset a keyword: `"keywords/<kw>": null`
@@ -248,60 +248,62 @@ pub enum EmailPatchOp {
 ///
 /// Serializes to a flat JSON Merge Patch object (RFC 7396).
 #[derive(Clone, Debug, Default)]
-pub struct EmailPatch(pub Vec<EmailPatchOp>);
+pub struct JmapEmailPatch(pub Vec<JmapEmailPatchOp>);
 
-impl EmailPatch {
+impl JmapEmailPatch {
     pub fn set_keyword(mut self, keyword: impl Into<String>) -> Self {
-        self.0.push(EmailPatchOp::SetKeyword(keyword.into()));
+        self.0.push(JmapEmailPatchOp::SetKeyword(keyword.into()));
         self
     }
 
     pub fn unset_keyword(mut self, keyword: impl Into<String>) -> Self {
-        self.0.push(EmailPatchOp::UnsetKeyword(keyword.into()));
+        self.0.push(JmapEmailPatchOp::UnsetKeyword(keyword.into()));
         self
     }
 
     pub fn replace_keywords(mut self, keywords: BTreeMap<String, bool>) -> Self {
-        self.0.push(EmailPatchOp::ReplaceKeywords(keywords));
+        self.0.push(JmapEmailPatchOp::ReplaceKeywords(keywords));
         self
     }
 
     pub fn add_to_mailbox(mut self, id: impl Into<String>) -> Self {
-        self.0.push(EmailPatchOp::AddToMailbox(id.into()));
+        self.0.push(JmapEmailPatchOp::AddToMailbox(id.into()));
         self
     }
 
     pub fn remove_from_mailbox(mut self, id: impl Into<String>) -> Self {
-        self.0.push(EmailPatchOp::RemoveFromMailbox(id.into()));
+        self.0.push(JmapEmailPatchOp::RemoveFromMailbox(id.into()));
         self
     }
 
     pub fn replace_mailbox_ids(mut self, ids: BTreeMap<String, bool>) -> Self {
-        self.0.push(EmailPatchOp::ReplaceMailboxIds(ids));
+        self.0.push(JmapEmailPatchOp::ReplaceMailboxIds(ids));
         self
     }
 }
 
-impl Serialize for EmailPatch {
+impl Serialize for JmapEmailPatch {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
         let mut map = s.serialize_map(Some(self.0.len()))?;
         for op in &self.0 {
             match op {
-                EmailPatchOp::SetKeyword(kw) => {
+                JmapEmailPatchOp::SetKeyword(kw) => {
                     map.serialize_entry(&format!("keywords/{kw}"), &true)?
                 }
-                EmailPatchOp::UnsetKeyword(kw) => {
+                JmapEmailPatchOp::UnsetKeyword(kw) => {
                     map.serialize_entry(&format!("keywords/{kw}"), &Option::<bool>::None)?
                 }
-                EmailPatchOp::ReplaceKeywords(kws) => map.serialize_entry("keywords", kws)?,
-                EmailPatchOp::AddToMailbox(id) => {
+                JmapEmailPatchOp::ReplaceKeywords(kws) => map.serialize_entry("keywords", kws)?,
+                JmapEmailPatchOp::AddToMailbox(id) => {
                     map.serialize_entry(&format!("mailboxIds/{id}"), &true)?
                 }
-                EmailPatchOp::RemoveFromMailbox(id) => {
+                JmapEmailPatchOp::RemoveFromMailbox(id) => {
                     map.serialize_entry(&format!("mailboxIds/{id}"), &Option::<bool>::None)?
                 }
-                EmailPatchOp::ReplaceMailboxIds(ids) => map.serialize_entry("mailboxIds", ids)?,
+                JmapEmailPatchOp::ReplaceMailboxIds(ids) => {
+                    map.serialize_entry("mailboxIds", ids)?
+                }
             }
         }
         map.end()
@@ -311,7 +313,7 @@ impl Serialize for EmailPatch {
 /// Arguments for importing a single RFC 5322 message via `Email/import`.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailImport {
+pub struct JmapEmailImportArgs {
     /// Blob ID of the RFC 5322 message.
     pub blob_id: String,
     /// `{ mailbox-id -> true }` for destination mailboxes.
@@ -326,7 +328,7 @@ pub struct EmailImport {
 /// Arguments for copying a single email between accounts via `Email/copy`.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailCopy {
+pub struct JmapEmailCopyArgs {
     /// Source email ID.
     pub id: String,
     /// `{ mailbox-id -> true }` for destination mailboxes.
@@ -342,7 +344,7 @@ pub struct EmailCopy {
 /// Per-object error returned in `Email/set` responses (RFC 8621 §4.7).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum EmailSetError {
+pub enum JmapEmailSetItemError {
     /// The email would exceed the server's keyword limit (RFC 8621 §4.7).
     TooManyKeywords { description: Option<String> },
     /// The email would be in too many mailboxes (RFC 8621 §4.7).
@@ -373,7 +375,7 @@ pub enum EmailSetError {
 /// Per-object error returned in `Email/import` responses (RFC 8621 §4.9).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum EmailImportError {
+pub enum JmapEmailImportItemError {
     /// The message body was not a valid RFC 5322 message (RFC 8621 §4.9).
     InvalidEmail { description: Option<String> },
     /// Standard set error (RFC 8620 §5.3): target id not found.
@@ -392,7 +394,7 @@ pub enum EmailImportError {
 /// Per-object error returned in `Email/copy` responses (RFC 8621 §4.10).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum EmailCopyError {
+pub enum JmapEmailCopyItemError {
     /// The email already exists in the destination account (RFC 8621 §4.10).
     AlreadyExists { description: Option<String> },
     /// Standard set error (RFC 8620 §5.3): target id not found.

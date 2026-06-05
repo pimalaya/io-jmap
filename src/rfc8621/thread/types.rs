@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 /// `Message-ID` and in-reply-to chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Thread {
+pub struct JmapThread {
     /// The server-assigned ID for this thread.
     pub id: String,
 

@@ -1,5 +1,5 @@
-//! JMAP `Thread/get` coroutine (RFC 8621 §3.3): wraps the generic
-//! [`JmapGet`] with the JMAP-Mail capability set.
+//! JMAP `Thread/get` coroutine (RFC 8621 §3.3): wraps the generic [`JmapGet`]
+//! with the JMAP-Mail capability set.
 //!
 //! # Example
 //!
@@ -25,11 +25,11 @@ use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapSession, get::*},
-    rfc8621::{MAIL_CAPABILITY, thread::Thread},
+    rfc8621::{MAIL_CAPABILITY, thread::JmapThread},
 };
 
 /// Failure causes during a JMAP `Thread/get` flow.
@@ -42,7 +42,7 @@ pub enum JmapThreadGetError {
 /// Successful terminal output of [`JmapThreadGet`].
 #[derive(Clone, Debug)]
 pub struct JmapThreadGetOutput {
-    pub threads: Vec<Thread>,
+    pub threads: Vec<JmapThread>,
     pub not_found: Vec<String>,
     pub new_state: String,
     pub keep_alive: bool,
@@ -73,8 +73,10 @@ impl JmapThreadGet {
                 api_url,
                 "Thread/get",
                 vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()],
-                Some(ids),
-                None,
+                JmapGetOptions {
+                    ids: Some(ids),
+                    properties: None,
+                },
             )?),
         })
     }
@@ -106,7 +108,7 @@ impl JmapCoroutine for JmapThreadGet {
 }
 
 enum State {
-    Get(JmapGet<Thread>),
+    Get(JmapGet<JmapThread>),
 }
 
 impl fmt::Display for State {

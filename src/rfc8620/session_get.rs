@@ -1,6 +1,6 @@
 //! JMAP session discovery coroutine (RFC 8620 §2): GETs either
-//! `/.well-known/jmap` (for a base URL) or the supplied URL directly,
-//! returning the parsed [`JmapSession`].
+//! `/.well-known/jmap` (for a base URL) or the supplied URL directly, returning
+//! the parsed [`JmapSession`].
 //!
 //! # Example
 //!
@@ -59,8 +59,10 @@ use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::rfc8620::{JmapSession, coroutine::JmapRedirectYield};
+use crate::{
+    coroutine::*,
+    rfc8620::{JmapSession, coroutine::JmapRedirectYield},
+};
 
 /// Failure causes during the JMAP session-get flow.
 #[derive(Debug, Error)]

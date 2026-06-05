@@ -1,8 +1,8 @@
 //! Resolve a JMAP session via the std-blocking [`JmapClientStd`].
 //!
-//! Requires one of the TLS feature flags (`rustls-ring`, `rustls-aws`
-//! or `native-tls`) so the client can open `https://` URLs
-//! end-to-end via [`pimalaya_stream`].
+//! Requires one of the TLS feature flags (`rustls-ring`, `rustls-aws` or
+//! `native-tls`) so the client can open `https://` URLs end-to-end via
+//! [`pimalaya_stream`].
 //!
 //! # Usage
 //!

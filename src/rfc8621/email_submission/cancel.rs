@@ -1,6 +1,6 @@
-//! JMAP `EmailSubmission/set` cancel coroutine (RFC 8621 §7.5):
-//! patches `undoStatus: "canceled"` on each pending submission id.
-//! Submissions not in `pending` state surface in `notUpdated`.
+//! JMAP `EmailSubmission/set` cancel coroutine (RFC 8621 §7.5): patches
+//! `undoStatus: "canceled"` on each pending submission id.  Submissions not in
+//! `pending` state surface in `notUpdated`.
 //!
 //! # Example
 //!
@@ -28,15 +28,15 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
         email_submission::{
-            EmailSubmission, EmailSubmissionSetError, EmailSubmissionUpdate, SUBMISSION_CAPABILITY,
-            UndoStatus,
+            JmapEmailSubmission, JmapEmailSubmissionSetItemError, JmapEmailSubmissionUpdate,
+            JmapUndoStatus, SUBMISSION_CAPABILITY,
         },
     },
 };
@@ -60,8 +60,8 @@ pub enum JmapEmailSubmissionCancelError {
 #[derive(Clone, Debug)]
 pub struct JmapEmailSubmissionCancelOutput {
     pub new_state: String,
-    pub updated: BTreeMap<String, Option<EmailSubmission>>,
-    pub not_updated: BTreeMap<String, EmailSubmissionSetError>,
+    pub updated: BTreeMap<String, Option<JmapEmailSubmission>>,
+    pub not_updated: BTreeMap<String, JmapEmailSubmissionSetItemError>,
     pub keep_alive: bool,
 }
 
@@ -89,8 +89,8 @@ impl JmapEmailSubmissionCancel {
             .map(|id| {
                 (
                     id,
-                    EmailSubmissionUpdate {
-                        undo_status: Some(UndoStatus::Canceled),
+                    JmapEmailSubmissionUpdate {
+                        undo_status: Some(JmapUndoStatus::Canceled),
                     },
                 )
             })
@@ -118,7 +118,7 @@ impl JmapCoroutine for JmapEmailSubmissionCancel {
     type Return = Result<JmapEmailSubmissionCancelOutput, JmapEmailSubmissionCancelError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("EmailSubmission/cancel: {}", self.state);
+        trace!("JmapEmailSubmission/cancel: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -170,7 +170,7 @@ impl fmt::Display for State {
 #[serde(rename_all = "camelCase")]
 struct CancelEmailSubmissionsArgs {
     account_id: String,
-    update: BTreeMap<String, EmailSubmissionUpdate>,
+    update: BTreeMap<String, JmapEmailSubmissionUpdate>,
 }
 
 #[derive(Deserialize)]
@@ -178,7 +178,7 @@ struct CancelEmailSubmissionsArgs {
 struct EmailSubmissionCancelResponse {
     new_state: String,
     #[serde(default)]
-    updated: Option<BTreeMap<String, Option<EmailSubmission>>>,
+    updated: Option<BTreeMap<String, Option<JmapEmailSubmission>>>,
     #[serde(default)]
-    not_updated: Option<BTreeMap<String, EmailSubmissionSetError>>,
+    not_updated: Option<BTreeMap<String, JmapEmailSubmissionSetItemError>>,
 }

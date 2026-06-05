@@ -1,28 +1,23 @@
-//! Generic JMAP `Foo/query` coroutine (RFC 8620 §5.5): wraps [`JmapSend`]
-//! with a single filter+sort batch and decodes the id list.
+//! Generic JMAP `Foo/query` coroutine (RFC 8620 §5.5): wraps [`JmapSend`] with
+//! a single filter+sort batch and decodes the id list.
 //!
 //! # Example
 //!
 //! ```rust,no_run
-//! use io_jmap::rfc8620::query::JmapQuery;
+//! use io_jmap::rfc8620::query::{JmapQuery, JmapQueryOptions};
 //! use secrecy::SecretString;
+//! use serde_json::Value;
 //! use url::Url;
 //!
 //! let auth = SecretString::from("Bearer xyz");
 //! let api_url: Url = "https://api.example.com/jmap/".parse().unwrap();
-//! let coroutine = JmapQuery::new::<serde_json::Value, serde_json::Value>(
+//! let coroutine = JmapQuery::new::<Value, Value>(
 //!     "a1".into(),
 //!     &auth,
 //!     &api_url,
 //!     "Email/query",
 //!     vec!["urn:ietf:params:jmap:mail".into()],
-//!     None,
-//!     None,
-//!     None,
-//!     None,
-//!     None,
-//!     Some(10),
-//!     false,
+//!     JmapQueryOptions { limit: Some(10), ..Default::default() },
 //! )
 //! .unwrap();
 //! # let _ = coroutine;
@@ -38,9 +33,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::jmap_try;
-use crate::rfc8620::{JmapBatch, JmapMethodError, send::*};
+use crate::{
+    coroutine::*,
+    jmap_try,
+    rfc8620::{JmapBatch, JmapMethodError, send::*},
+};
 
 /// Failure causes during a JMAP `Foo/query` flow.
 #[derive(Debug, Error)]
@@ -55,6 +52,33 @@ pub enum JmapQueryError {
     ParseResponse(#[source] serde_json::Error),
     #[error("JMAP Foo/query failed: {0}")]
     Method(#[from] JmapMethodError),
+}
+
+/// Options for [`JmapQuery::new`].
+#[derive(Clone, Debug)]
+pub struct JmapQueryOptions<F: Serialize, S: Serialize> {
+    pub filter: Option<F>,
+    pub sort: Option<Vec<S>>,
+    pub position: Option<u64>,
+    pub anchor: Option<String>,
+    pub anchor_offset: Option<i64>,
+    pub limit: Option<u64>,
+    /// Ask the server to compute `total`. Off by default.
+    pub calculate_total: bool,
+}
+
+impl<F: Serialize, S: Serialize> Default for JmapQueryOptions<F, S> {
+    fn default() -> Self {
+        Self {
+            filter: None,
+            sort: None,
+            position: None,
+            anchor: None,
+            anchor_offset: None,
+            limit: None,
+            calculate_total: false,
+        }
+    }
 }
 
 /// Successful terminal output of [`JmapQuery`].
@@ -82,23 +106,17 @@ impl JmapQuery {
         api_url: &Url,
         method: impl Into<String>,
         capabilities: Vec<String>,
-        filter: Option<F>,
-        sort: Option<Vec<S>>,
-        position: Option<u64>,
-        anchor: Option<String>,
-        anchor_offset: Option<i64>,
-        limit: Option<u64>,
-        calculate_total: bool,
+        opts: JmapQueryOptions<F, S>,
     ) -> Result<Self, JmapQueryError> {
         let args = serde_json::to_value(QueryArgs {
             account_id: &account_id,
-            filter,
-            sort,
-            position,
-            anchor,
-            anchor_offset,
-            limit,
-            calculate_total,
+            filter: opts.filter,
+            sort: opts.sort,
+            position: opts.position,
+            anchor: opts.anchor,
+            anchor_offset: opts.anchor_offset,
+            limit: opts.limit,
+            calculate_total: opts.calculate_total,
         })
         .map_err(JmapQueryError::SerializeArgs)?;
 
@@ -228,13 +246,10 @@ mod tests {
             &make_url(),
             "Email/query",
             vec!["urn:ietf:params:jmap:mail".to_string()],
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(10),
-            false,
+            JmapQueryOptions {
+                limit: Some(10),
+                ..Default::default()
+            },
         )
         .unwrap()
     }

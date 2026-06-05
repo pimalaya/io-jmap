@@ -6,13 +6,20 @@
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email_submission::get::JmapEmailSubmissionGet,
+//!     rfc8621::email_submission::get::{
+//!         JmapEmailSubmissionGet, JmapEmailSubmissionGetOptions,
+//!     },
 //! };
 //! use secrecy::SecretString;
 //!
 //! # fn demo(session: &JmapSession) {
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine = JmapEmailSubmissionGet::new(session, &auth, None).unwrap();
+//! let coroutine = JmapEmailSubmissionGet::new(
+//!     session,
+//!     &auth,
+//!     JmapEmailSubmissionGetOptions::default(),
+//! )
+//! .unwrap();
 //! # let _ = coroutine;
 //! # }
 //! ```
@@ -25,13 +32,13 @@ use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapSession, get::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        email_submission::{EmailSubmission, SUBMISSION_CAPABILITY},
+        email_submission::{JmapEmailSubmission, SUBMISSION_CAPABILITY},
     },
 };
 
@@ -42,10 +49,17 @@ pub enum JmapEmailSubmissionGetError {
     Get(#[from] JmapGetError),
 }
 
+/// Options for [`JmapEmailSubmissionGet::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapEmailSubmissionGetOptions {
+    /// Restrict the fetch to these submission IDs; `None` fetches all.
+    pub ids: Option<Vec<String>>,
+}
+
 /// Successful terminal output of [`JmapEmailSubmissionGet`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailSubmissionGetOutput {
-    pub submissions: Vec<EmailSubmission>,
+    pub submissions: Vec<JmapEmailSubmission>,
     pub not_found: Vec<String>,
     pub new_state: String,
     pub keep_alive: bool,
@@ -60,7 +74,7 @@ impl JmapEmailSubmissionGet {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        ids: Option<Vec<String>>,
+        opts: JmapEmailSubmissionGetOptions,
     ) -> Result<Self, JmapEmailSubmissionGetError> {
         let account_id = session
             .primary_accounts
@@ -80,8 +94,10 @@ impl JmapEmailSubmissionGet {
                     MAIL_CAPABILITY.into(),
                     SUBMISSION_CAPABILITY.into(),
                 ],
-                ids,
-                None,
+                JmapGetOptions {
+                    ids: opts.ids,
+                    properties: None,
+                },
             )?),
         })
     }
@@ -113,7 +129,7 @@ impl JmapCoroutine for JmapEmailSubmissionGet {
 }
 
 enum State {
-    Get(JmapGet<EmailSubmission>),
+    Get(JmapGet<JmapEmailSubmission>),
 }
 
 impl fmt::Display for State {

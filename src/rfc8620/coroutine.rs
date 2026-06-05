@@ -1,7 +1,7 @@
-//! Shared yield enum emitted by the three redirect-capable RFC 8620
-//! coroutines (session-get, blob-download, blob-upload). Their HTTP/1.1
-//! exchange may surface a 3xx; the caller chooses whether to follow it or
-//! treat it as an error.
+//! Shared yield enum emitted by the three redirect-capable RFC 8620 coroutines
+//! (session-get, blob-download, blob-upload). Their HTTP/1.1 exchange may
+//! surface a 3xx; the caller chooses whether to follow it or treat it as an
+//! error.
 
 use alloc::vec::Vec;
 

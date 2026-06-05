@@ -1,9 +1,9 @@
-//! JMAP blob download coroutine (RFC 8620 §6.2): GETs from the
-//! caller-resolved `download_url` and returns the response body bytes.
+//! JMAP blob download coroutine (RFC 8620 §6.2): GETs from the caller-resolved
+//! `download_url` and returns the response body bytes.
 //!
-//! A 3xx response surfaces as
-//! [`JmapRedirectYield::WantsRedirect`]; the caller must open a new
-//! connection to the redirect target and build a fresh coroutine.
+//! A 3xx response surfaces as [`JmapRedirectYield::WantsRedirect`]; the caller
+//! must open a new connection to the redirect target and build a fresh
+//! coroutine.
 //!
 //! # Example
 //!
@@ -63,8 +63,7 @@ use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::rfc8620::coroutine::JmapRedirectYield;
+use crate::{coroutine::*, rfc8620::coroutine::JmapRedirectYield};
 
 /// Failure causes during the JMAP blob-download flow.
 #[derive(Debug, Error)]

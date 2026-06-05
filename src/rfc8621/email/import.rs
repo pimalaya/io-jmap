@@ -1,6 +1,6 @@
-//! JMAP `Email/import` coroutine (RFC 8621 §4.9): imports RFC 5322
-//! messages (previously uploaded as blobs) into mailboxes. JMAP
-//! equivalent of IMAP `APPEND`.
+//! JMAP `Email/import` coroutine (RFC 8621 §4.9): imports RFC 5322 messages
+//! (previously uploaded as blobs) into mailboxes. JMAP equivalent of IMAP
+//! `APPEND`.
 //!
 //! # Example
 //!
@@ -9,7 +9,7 @@
 //!
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email::{EmailImport, import::JmapEmailImport},
+//!     rfc8621::email::{JmapEmailImportArgs, import::JmapEmailImport},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -18,7 +18,7 @@
 //! let mut emails = BTreeMap::new();
 //! emails.insert(
 //!     "c1".to_string(),
-//!     EmailImport {
+//!     JmapEmailImportArgs {
 //!         blob_id: "b1".into(),
 //!         mailbox_ids: Default::default(),
 //!         keywords: None,
@@ -39,13 +39,13 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        email::{Email, EmailImport, EmailImportError},
+        email::{JmapEmail, JmapEmailImportArgs, JmapEmailImportItemError},
     },
 };
 
@@ -68,8 +68,8 @@ pub enum JmapEmailImportError {
 #[derive(Clone, Debug)]
 pub struct JmapEmailImportOutput {
     pub new_state: String,
-    pub created: BTreeMap<String, Email>,
-    pub not_created: BTreeMap<String, EmailImportError>,
+    pub created: BTreeMap<String, JmapEmail>,
+    pub not_created: BTreeMap<String, JmapEmailImportItemError>,
     pub keep_alive: bool,
 }
 
@@ -79,11 +79,11 @@ pub struct JmapEmailImport {
 }
 
 impl JmapEmailImport {
-    /// `emails` maps client-assigned IDs to [`EmailImport`] descriptors.
+    /// `emails` maps client-assigned IDs to [`JmapEmailImportArgs`] descriptors.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        emails: BTreeMap<String, EmailImport>,
+        emails: BTreeMap<String, JmapEmailImportArgs>,
     ) -> Result<Self, JmapEmailImportError> {
         let account_id = session
             .primary_accounts
@@ -162,7 +162,7 @@ impl fmt::Display for State {
 #[serde(rename_all = "camelCase")]
 struct EmailImportArgs {
     account_id: String,
-    emails: BTreeMap<String, EmailImport>,
+    emails: BTreeMap<String, JmapEmailImportArgs>,
 }
 
 #[derive(Deserialize)]
@@ -170,7 +170,7 @@ struct EmailImportArgs {
 struct EmailImportResponse {
     new_state: String,
     #[serde(default)]
-    created: BTreeMap<String, Email>,
+    created: BTreeMap<String, JmapEmail>,
     #[serde(default)]
-    not_created: BTreeMap<String, EmailImportError>,
+    not_created: BTreeMap<String, JmapEmailImportItemError>,
 }

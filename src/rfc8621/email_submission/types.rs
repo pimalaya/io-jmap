@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 /// The undo status of an email submission (RFC 8621 §7.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum UndoStatus {
+pub enum JmapUndoStatus {
     Pending,
     Final,
     Canceled,
 }
 
-impl fmt::Display for UndoStatus {
+impl fmt::Display for JmapUndoStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pending => write!(f, "pending"),
@@ -29,30 +29,30 @@ impl fmt::Display for UndoStatus {
 /// Represents a sending of an email from a particular identity.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailSubmission {
+pub struct JmapEmailSubmission {
     /// Server-assigned ID.
     pub id: Option<String>,
 
     /// The identity to send as.
     pub identity_id: Option<String>,
 
-    /// The ID of the Email to send.
+    /// The ID of the email to send.
     pub email_id: Option<String>,
 
     /// The thread the email belongs to.
     pub thread_id: Option<String>,
 
     /// SMTP envelope to use for delivery.
-    pub envelope: Option<Envelope>,
+    pub envelope: Option<JmapEnvelope>,
 
     /// Date/time the submission was made (RFC 3339).
     pub send_at: Option<String>,
 
     /// Current undo status: `"pending"`, `"final"`, or `"canceled"`.
-    pub undo_status: Option<UndoStatus>,
+    pub undo_status: Option<JmapUndoStatus>,
 
     /// Per-recipient delivery status.
-    pub delivery_status: Option<BTreeMap<String, DeliveryStatus>>,
+    pub delivery_status: Option<BTreeMap<String, JmapDeliveryStatus>>,
 
     /// Blob IDs of DSN messages.
     pub dsn_blob_ids: Option<Vec<String>>,
@@ -64,18 +64,18 @@ pub struct EmailSubmission {
 /// SMTP envelope for an email submission.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Envelope {
+pub struct JmapEnvelope {
     /// MAIL FROM address and parameters.
-    pub mail_from: EmailAddressWithParameters,
+    pub mail_from: JmapEmailAddressWithParameters,
 
     /// RCPT TO addresses and parameters.
-    pub rcpt_to: Vec<EmailAddressWithParameters>,
+    pub rcpt_to: Vec<JmapEmailAddressWithParameters>,
 }
 
 /// An email address with optional SMTP parameters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailAddressWithParameters {
+pub struct JmapEmailAddressWithParameters {
     /// The email address.
     pub email: String,
 
@@ -86,7 +86,7 @@ pub struct EmailAddressWithParameters {
 /// Delivery state of a single recipient (RFC 8621 §7.1.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Delivered {
+pub enum JmapDelivered {
     /// The message is in a local mail queue.
     Queued,
     /// The message was successfully delivered.
@@ -100,7 +100,7 @@ pub enum Delivered {
 /// Whether the email has been displayed to the recipient (RFC 8621 §7.1.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Displayed {
+pub enum JmapDisplayed {
     /// Display status is unknown.
     Unknown,
     /// The message has been displayed.
@@ -112,30 +112,30 @@ pub enum Displayed {
 /// Per-recipient delivery status from a submission.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeliveryStatus {
+pub struct JmapDeliveryStatus {
     /// The SMTP reply for this recipient.
     pub smtp_reply: String,
 
     /// Delivery state for this recipient.
-    pub delivered: Delivered,
+    pub delivered: JmapDelivered,
 
     /// Whether the message has been displayed to the recipient.
-    pub displayed: Displayed,
+    pub displayed: JmapDisplayed,
 }
 
 /// A single email submission to create via `EmailSubmission/set`.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailSubmissionCreate {
+pub struct JmapEmailSubmissionCreate {
     /// The identity to send as.
     pub identity_id: String,
 
-    /// The ID of the Email to send.
+    /// The ID of the email to send.
     pub email_id: String,
 
     /// SMTP envelope override (uses email headers if omitted).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub envelope: Option<Envelope>,
+    pub envelope: Option<JmapEnvelope>,
 }
 
 /// Patch object for `EmailSubmission/set` update.
@@ -143,15 +143,15 @@ pub struct EmailSubmissionCreate {
 /// Only `undoStatus` can be updated (to `"canceled"`).
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailSubmissionUpdate {
+pub struct JmapEmailSubmissionUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub undo_status: Option<UndoStatus>,
+    pub undo_status: Option<JmapUndoStatus>,
 }
 
-/// Filter for `EmailSubmission/query` (RFC 8621 §7.4).
+/// JmapFilter for `EmailSubmission/query` (RFC 8621 §7.4).
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailSubmissionFilter {
+pub struct JmapEmailSubmissionFilter {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity_ids: Option<Vec<String>>,
 
@@ -162,7 +162,7 @@ pub struct EmailSubmissionFilter {
     pub thread_ids: Option<Vec<String>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub undo_status: Option<UndoStatus>,
+    pub undo_status: Option<JmapUndoStatus>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before: Option<String>,
@@ -174,7 +174,7 @@ pub struct EmailSubmissionFilter {
 /// Sort property for `EmailSubmission/query`.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum EmailSubmissionSortProperty {
+pub enum JmapEmailSubmissionSortProperty {
     EmailId,
     ThreadId,
     SentAt,
@@ -183,8 +183,8 @@ pub enum EmailSubmissionSortProperty {
 /// Sort comparator for `EmailSubmission/query`.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EmailSubmissionComparator {
-    pub property: EmailSubmissionSortProperty,
+pub struct JmapEmailSubmissionComparator {
+    pub property: JmapEmailSubmissionSortProperty,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_ascending: Option<bool>,
 }
@@ -193,7 +193,7 @@ pub struct EmailSubmissionComparator {
 /// (RFC 8621 §7.5).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
-pub enum EmailSubmissionSetError {
+pub enum JmapEmailSubmissionSetItemError {
     /// The message had too many recipients (RFC 8621 §7.5).
     TooManyRecipients { description: Option<String> },
     /// The message had no recipients (RFC 8621 §7.5).

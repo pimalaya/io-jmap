@@ -8,13 +8,20 @@ use io_jmap::{
     rfc8620::JmapSession,
     rfc8621::{
         email::{
-            get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOutput},
-            query::{JmapEmailQuery, JmapEmailQueryError, JmapEmailQueryOutput},
+            get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOptions, JmapEmailGetOutput},
+            query::{
+                JmapEmailQuery, JmapEmailQueryError, JmapEmailQueryOptions, JmapEmailQueryOutput,
+            },
         },
         mailbox::{
-            MailboxCreate,
-            get::{JmapMailboxGet, JmapMailboxGetError, JmapMailboxGetOutput},
-            query::{JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOutput},
+            JmapMailboxCreate,
+            get::{
+                JmapMailboxGet, JmapMailboxGetError, JmapMailboxGetOptions, JmapMailboxGetOutput,
+            },
+            query::{
+                JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOptions,
+                JmapMailboxQueryOutput,
+            },
             set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError, JmapMailboxSetOutput},
         },
     },
@@ -75,7 +82,7 @@ fn run_mailbox_query(
     let session = make_session();
     let token = make_token();
     let mut coroutine =
-        JmapMailboxQuery::new(&session, &token, None, None, None, None, None).unwrap();
+        JmapMailboxQuery::new(&session, &token, JmapMailboxQueryOptions::default()).unwrap();
     let mut arg: Option<&[u8]> = None;
 
     loop {
@@ -93,7 +100,15 @@ fn run_mailbox_get(
 ) -> JmapCoroutineState<JmapYield, Result<JmapMailboxGetOutput, JmapMailboxGetError>> {
     let session = make_session();
     let token = make_token();
-    let mut coroutine = JmapMailboxGet::new(&session, &token, ids, None).unwrap();
+    let mut coroutine = JmapMailboxGet::new(
+        &session,
+        &token,
+        JmapMailboxGetOptions {
+            ids,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let mut arg: Option<&[u8]> = None;
 
     loop {
@@ -129,7 +144,7 @@ fn run_email_query(
     let session = make_session();
     let token = make_token();
     let mut coroutine =
-        JmapEmailQuery::new(&session, &token, None, None, None, None, None).unwrap();
+        JmapEmailQuery::new(&session, &token, JmapEmailQueryOptions::default()).unwrap();
     let mut arg: Option<&[u8]> = None;
 
     loop {
@@ -147,7 +162,8 @@ fn run_email_get(
 ) -> JmapCoroutineState<JmapYield, Result<JmapEmailGetOutput, JmapEmailGetError>> {
     let session = make_session();
     let token = make_token();
-    let mut coroutine = JmapEmailGet::new(&session, &token, ids, None, false, false, 0).unwrap();
+    let mut coroutine =
+        JmapEmailGet::new(&session, &token, ids, JmapEmailGetOptions::default()).unwrap();
     let mut arg: Option<&[u8]> = None;
 
     loop {
@@ -270,7 +286,7 @@ fn mailbox_query_missing_get_response() {
     match run_mailbox_query(&http_ok(body)) {
         JmapCoroutineState::Complete(Err(err)) => {
             assert!(
-                err.to_string().contains("Missing"),
+                err.to_string().contains("missing"),
                 "expected missing response error, got: {err}"
             );
         }
@@ -394,7 +410,7 @@ fn mailbox_set_create_ok() {
     let mut create = std::collections::BTreeMap::new();
     create.insert(
         "new-mbox".to_owned(),
-        MailboxCreate {
+        JmapMailboxCreate {
             name: Some("TestBox".to_owned()),
             ..Default::default()
         },

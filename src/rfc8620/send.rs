@@ -1,6 +1,6 @@
-//! Base coroutine all higher-level JMAP coroutines delegate to:
-//! serialises a [`JmapRequest`] as JSON, drives an HTTP/1.1 POST, and
-//! deserialises the [`JmapResponse`] body.
+//! Base coroutine all higher-level JMAP coroutines delegate to: serialises a
+//! [`JmapRequest`] as JSON, drives an HTTP/1.1 POST, and deserialises the
+//! [`JmapResponse`] body.
 //!
 //! 3xx redirects surface as [`JmapSendError::UnexpectedRedirect`];
 //! redirect-aware coroutines drive [`Http11Send`] directly instead.
@@ -69,8 +69,10 @@ use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::rfc8620::{JmapRequest, JmapResponse};
+use crate::{
+    coroutine::*,
+    rfc8620::{JmapRequest, JmapResponse},
+};
 
 /// Failure causes during the JMAP send flow.
 #[derive(Debug, Error)]

@@ -1,6 +1,6 @@
-//! JMAP `Identity/set` coroutine (RFC 8621 §6.4): builds a custom set
-//! batch (Identity has no generic `JmapSet` reuse because its set
-//! response is parsed loosely to tolerate partial server output).
+//! JMAP `Identity/set` coroutine (RFC 8621 §6.4): builds a custom set batch
+//! (Identity has no generic `JmapSet` reuse because its set response is parsed
+//! loosely to tolerate partial server output).
 //!
 //! # Example
 //!
@@ -29,14 +29,16 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
         email_submission::SUBMISSION_CAPABILITY,
-        identity::{Identity, IdentityCreate, IdentitySetError, IdentityUpdate},
+        identity::{
+            JmapIdentity, JmapIdentityCreate, JmapIdentitySetItemError, JmapIdentityUpdate,
+        },
     },
 };
 
@@ -58,18 +60,22 @@ pub enum JmapIdentitySetError {
 /// Arguments for an `Identity/set` request.
 #[derive(Clone, Debug, Default)]
 pub struct JmapIdentitySetArgs {
-    pub create: BTreeMap<String, IdentityCreate>,
-    pub update: BTreeMap<String, IdentityUpdate>,
+    pub create: BTreeMap<String, JmapIdentityCreate>,
+    pub update: BTreeMap<String, JmapIdentityUpdate>,
     pub destroy: Vec<String>,
 }
 
 impl JmapIdentitySetArgs {
-    pub fn create(&mut self, client_id: impl Into<String>, identity: IdentityCreate) -> &mut Self {
+    pub fn create(
+        &mut self,
+        client_id: impl Into<String>,
+        identity: JmapIdentityCreate,
+    ) -> &mut Self {
         self.create.insert(client_id.into(), identity);
         self
     }
 
-    pub fn update(&mut self, id: impl Into<String>, patch: IdentityUpdate) -> &mut Self {
+    pub fn update(&mut self, id: impl Into<String>, patch: JmapIdentityUpdate) -> &mut Self {
         self.update.insert(id.into(), patch);
         self
     }
@@ -84,12 +90,12 @@ impl JmapIdentitySetArgs {
 #[derive(Clone, Debug)]
 pub struct JmapIdentitySetOutput {
     pub new_state: String,
-    pub created: BTreeMap<String, Identity>,
-    pub updated: BTreeMap<String, Option<Identity>>,
+    pub created: BTreeMap<String, JmapIdentity>,
+    pub updated: BTreeMap<String, Option<JmapIdentity>>,
     pub destroyed: Vec<String>,
-    pub not_created: BTreeMap<String, IdentitySetError>,
-    pub not_updated: BTreeMap<String, IdentitySetError>,
-    pub not_destroyed: BTreeMap<String, IdentitySetError>,
+    pub not_created: BTreeMap<String, JmapIdentitySetItemError>,
+    pub not_updated: BTreeMap<String, JmapIdentitySetItemError>,
+    pub not_destroyed: BTreeMap<String, JmapIdentitySetItemError>,
     pub keep_alive: bool,
 }
 
@@ -195,9 +201,9 @@ impl fmt::Display for State {
 struct IdentitySetRequest {
     account_id: String,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    create: BTreeMap<String, IdentityCreate>,
+    create: BTreeMap<String, JmapIdentityCreate>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    update: BTreeMap<String, IdentityUpdate>,
+    update: BTreeMap<String, JmapIdentityUpdate>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     destroy: Vec<String>,
 }
@@ -218,9 +224,9 @@ struct IdentitySetResponse {
     #[serde(default)]
     destroyed: Option<Vec<String>>,
     #[serde(default)]
-    not_created: Option<BTreeMap<String, IdentitySetError>>,
+    not_created: Option<BTreeMap<String, JmapIdentitySetItemError>>,
     #[serde(default)]
-    not_updated: Option<BTreeMap<String, IdentitySetError>>,
+    not_updated: Option<BTreeMap<String, JmapIdentitySetItemError>>,
     #[serde(default)]
-    not_destroyed: Option<BTreeMap<String, IdentitySetError>>,
+    not_destroyed: Option<BTreeMap<String, JmapIdentitySetItemError>>,
 }

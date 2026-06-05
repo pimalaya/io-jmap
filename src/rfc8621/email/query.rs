@@ -1,17 +1,16 @@
-//! Batched JMAP `Email/query` + `Email/get` coroutine (RFC 8621 §4):
-//! a single HTTP request that runs `Email/query` to find matching ids
-//! and `Email/get` (via a Result Reference) to fetch their properties.
+//! Batched JMAP `Email/query` + `Email/get` coroutine (RFC 8621 §4): a single
+//! HTTP request that runs `Email/query` to find matching ids and `Email/get`
+//! (via a Result Reference) to fetch their properties.
 //!
-//! Equivalent to IMAP's `SELECT` + `SEARCH` + `FETCH` but in one round
-//! trip; the result reference (`#ids`) keeps the two method calls
-//! linked server-side.
+//! Equivalent to IMAP's `SELECT` + `SEARCH` + `FETCH` but in one round trip;
+//! the result reference (`#ids`) keeps the two method calls linked server-side.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email::query::JmapEmailQuery,
+//!     rfc8621::email::query::{JmapEmailQuery, JmapEmailQueryOptions},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -20,11 +19,11 @@
 //! let coroutine = JmapEmailQuery::new(
 //!     session,
 //!     &auth,
-//!     None,
-//!     None,
-//!     Some(0),
-//!     Some(20),
-//!     None,
+//!     JmapEmailQueryOptions {
+//!         position: Some(0),
+//!         limit: Some(20),
+//!         ..Default::default()
+//!     },
 //! )
 //! .unwrap();
 //! # let _ = coroutine;
@@ -40,15 +39,16 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{
-        CORE_CAPABILITY, Filter, JmapBatch, JmapMethodError, JmapSession, ResultReference, send::*,
+        CORE_CAPABILITY, JmapBatch, JmapFilter, JmapMethodError, JmapResultReference, JmapSession,
+        send::*,
     },
     rfc8621::{
         MAIL_CAPABILITY,
-        email::{Email, EmailComparator, EmailFilter, EmailProperty},
+        email::{JmapEmail, JmapEmailComparator, JmapEmailFilter, JmapEmailProperty},
     },
 };
 
@@ -71,10 +71,25 @@ pub enum JmapEmailQueryError {
     GetMethod(JmapMethodError),
 }
 
+/// Options for [`JmapEmailQuery::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapEmailQueryOptions {
+    /// Filter criteria; `None` matches all emails.
+    pub filter: Option<JmapFilter<JmapEmailFilter>>,
+    /// Sort order; `None` uses the server default.
+    pub sort: Option<Vec<JmapEmailComparator>>,
+    /// Zero-based offset into the result list.
+    pub position: Option<u64>,
+    /// Max number of emails to return.
+    pub limit: Option<u64>,
+    /// Email properties to fetch; `None` returns all.
+    pub properties: Option<Vec<JmapEmailProperty>>,
+}
+
 /// Successful terminal output of [`JmapEmailQuery`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailQueryOutput {
-    pub emails: Vec<Email>,
+    pub emails: Vec<JmapEmail>,
     pub total: Option<u64>,
     pub position: u64,
     pub query_state: String,
@@ -87,19 +102,10 @@ pub struct JmapEmailQuery {
 }
 
 impl JmapEmailQuery {
-    /// - `filter`: filter criteria (pass `None` for all emails)
-    /// - `sort`: sort order (pass `None` for default)
-    /// - `position`: offset from the start of the results
-    /// - `limit`: maximum number of emails to return
-    /// - `properties`: email properties to fetch (pass `None` for all)
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        filter: Option<Filter<EmailFilter>>,
-        sort: Option<Vec<EmailComparator>>,
-        position: Option<u64>,
-        limit: Option<u64>,
-        properties: Option<Vec<EmailProperty>>,
+        opts: JmapEmailQueryOptions,
     ) -> Result<Self, JmapEmailQueryError> {
         let account_id = session
             .primary_accounts
@@ -110,10 +116,10 @@ impl JmapEmailQuery {
 
         let query_args = EmailQueryArgs {
             account_id: &account_id,
-            filter: filter.as_ref(),
-            sort: sort.as_deref(),
-            position,
-            limit,
+            filter: opts.filter.as_ref(),
+            sort: opts.sort.as_deref(),
+            position: opts.position,
+            limit: opts.limit,
             calculate_total: true,
         };
 
@@ -125,12 +131,12 @@ impl JmapEmailQuery {
 
         let get_args = EmailGetByRefArgs {
             account_id: &account_id,
-            ids_ref: ResultReference {
+            ids_ref: JmapResultReference {
                 result_of: &query_id,
                 name: "Email/query",
                 path: "/ids",
             },
-            properties: properties.as_deref(),
+            properties: opts.properties.as_deref(),
         };
 
         batch.add(
@@ -231,9 +237,9 @@ impl fmt::Display for State {
 struct EmailQueryArgs<'a> {
     account_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    filter: Option<&'a Filter<EmailFilter>>,
+    filter: Option<&'a JmapFilter<JmapEmailFilter>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    sort: Option<&'a [EmailComparator]>,
+    sort: Option<&'a [JmapEmailComparator]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     position: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -246,9 +252,9 @@ struct EmailQueryArgs<'a> {
 struct EmailGetByRefArgs<'a> {
     account_id: &'a str,
     #[serde(rename = "#ids")]
-    ids_ref: ResultReference<'a>,
+    ids_ref: JmapResultReference<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    properties: Option<&'a [EmailProperty]>,
+    properties: Option<&'a [JmapEmailProperty]>,
 }
 
 #[derive(Deserialize)]
@@ -264,5 +270,5 @@ struct EmailQueryResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EmailGetResponse {
-    list: Vec<Email>,
+    list: Vec<JmapEmail>,
 }

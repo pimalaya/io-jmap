@@ -1,6 +1,6 @@
-//! JMAP `Email/set` coroutine (RFC 8621 §4.7): wraps the generic
-//! [`JmapSet`] with [`JmapEmailSetArgs`] (create/update/destroy) and
-//! decodes per-object [`EmailSetError`] payloads.
+//! JMAP `Email/set` coroutine (RFC 8621 §4.7): wraps the generic [`JmapSet`]
+//! with [`JmapEmailSetArgs`] (create/update/destroy) and decodes per-object
+//! [`JmapEmailSetItemError`] payloads.
 //!
 //! # Example
 //!
@@ -29,13 +29,13 @@ use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        email::{Email, EmailPatch, EmailPatchOp, EmailSetError},
+        email::{JmapEmail, JmapEmailPatch, JmapEmailPatchOp, JmapEmailSetItemError},
     },
 };
 
@@ -56,11 +56,11 @@ pub enum JmapEmailSetError {
 pub struct JmapEmailSetArgs {
     /// Objects to create (client ID → partial email object).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create: Option<BTreeMap<String, Email>>,
+    pub create: Option<BTreeMap<String, JmapEmail>>,
 
     /// Objects to update (email ID → patch).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub update: Option<BTreeMap<String, EmailPatch>>,
+    pub update: Option<BTreeMap<String, JmapEmailPatch>>,
 
     /// IDs to destroy (delete).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,7 +69,7 @@ pub struct JmapEmailSetArgs {
 
 impl JmapEmailSetArgs {
     /// Queue an email for creation under the given client-chosen ID.
-    pub fn create(&mut self, client_id: impl Into<String>, email: Email) -> &mut Self {
+    pub fn create(&mut self, client_id: impl Into<String>, email: JmapEmail) -> &mut Self {
         self.create
             .get_or_insert_with(Default::default)
             .insert(client_id.into(), email);
@@ -87,7 +87,7 @@ impl JmapEmailSetArgs {
     pub fn set_keyword(&mut self, id: impl Into<String>, keyword: impl Into<String>) -> &mut Self {
         self.patch(id)
             .0
-            .push(EmailPatchOp::SetKeyword(keyword.into()));
+            .push(JmapEmailPatchOp::SetKeyword(keyword.into()));
         self
     }
 
@@ -98,7 +98,7 @@ impl JmapEmailSetArgs {
     ) -> &mut Self {
         self.patch(id)
             .0
-            .push(EmailPatchOp::UnsetKeyword(keyword.into()));
+            .push(JmapEmailPatchOp::UnsetKeyword(keyword.into()));
         self
     }
 
@@ -109,7 +109,7 @@ impl JmapEmailSetArgs {
     ) -> &mut Self {
         self.patch(id)
             .0
-            .push(EmailPatchOp::ReplaceKeywords(keywords));
+            .push(JmapEmailPatchOp::ReplaceKeywords(keywords));
         self
     }
 
@@ -120,7 +120,7 @@ impl JmapEmailSetArgs {
     ) -> &mut Self {
         self.patch(id)
             .0
-            .push(EmailPatchOp::AddToMailbox(mailbox_id.into()));
+            .push(JmapEmailPatchOp::AddToMailbox(mailbox_id.into()));
         self
     }
 
@@ -131,7 +131,7 @@ impl JmapEmailSetArgs {
     ) -> &mut Self {
         self.patch(id)
             .0
-            .push(EmailPatchOp::RemoveFromMailbox(mailbox_id.into()));
+            .push(JmapEmailPatchOp::RemoveFromMailbox(mailbox_id.into()));
         self
     }
 
@@ -140,11 +140,13 @@ impl JmapEmailSetArgs {
         id: impl Into<String>,
         ids: BTreeMap<String, bool>,
     ) -> &mut Self {
-        self.patch(id).0.push(EmailPatchOp::ReplaceMailboxIds(ids));
+        self.patch(id)
+            .0
+            .push(JmapEmailPatchOp::ReplaceMailboxIds(ids));
         self
     }
 
-    fn patch(&mut self, id: impl Into<String>) -> &mut EmailPatch {
+    fn patch(&mut self, id: impl Into<String>) -> &mut JmapEmailPatch {
         self.update
             .get_or_insert_with(Default::default)
             .entry(id.into())
@@ -156,12 +158,12 @@ impl JmapEmailSetArgs {
 #[derive(Clone, Debug)]
 pub struct JmapEmailSetOutput {
     pub new_state: String,
-    pub created: BTreeMap<String, Email>,
-    pub updated: BTreeMap<String, Option<Email>>,
+    pub created: BTreeMap<String, JmapEmail>,
+    pub updated: BTreeMap<String, Option<JmapEmail>>,
     pub destroyed: Vec<String>,
-    pub not_created: BTreeMap<String, EmailSetError>,
-    pub not_updated: BTreeMap<String, EmailSetError>,
-    pub not_destroyed: BTreeMap<String, EmailSetError>,
+    pub not_created: BTreeMap<String, JmapEmailSetItemError>,
+    pub not_updated: BTreeMap<String, JmapEmailSetItemError>,
+    pub not_destroyed: BTreeMap<String, JmapEmailSetItemError>,
     pub keep_alive: bool,
 }
 
@@ -218,7 +220,8 @@ impl JmapCoroutine for JmapEmailSet {
                 let parse = |map: BTreeMap<String, serde_json::Value>| {
                     map.into_iter()
                         .map(|(k, v)| {
-                            let e = serde_json::from_value(v).unwrap_or(EmailSetError::Unknown);
+                            let e =
+                                serde_json::from_value(v).unwrap_or(JmapEmailSetItemError::Unknown);
                             (k, e)
                         })
                         .collect()
@@ -239,7 +242,7 @@ impl JmapCoroutine for JmapEmailSet {
 }
 
 enum State {
-    Set(JmapSet<Email>),
+    Set(JmapSet<JmapEmail>),
 }
 
 impl fmt::Display for State {

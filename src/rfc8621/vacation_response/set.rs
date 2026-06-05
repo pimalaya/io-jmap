@@ -1,16 +1,16 @@
-//! JMAP `VacationResponse/set` coroutine (RFC 8621 §8.3): updates the
-//! singleton VacationResponse (id `"singleton"`).
+//! JMAP `VacationResponse/set` coroutine (RFC 8621 §8.3): updates the singleton
+//! VacationResponse (id `"singleton"`).
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::vacation_response::{VacationResponseUpdate, set::JmapVacationResponseSet},
+//!     rfc8621::vacation_response::{JmapVacationResponseUpdate, set::JmapVacationResponseSet},
 //! };
 //! use secrecy::SecretString;
 //!
-//! # fn demo(session: &JmapSession, patch: VacationResponseUpdate) {
+//! # fn demo(session: &JmapSession, patch: JmapVacationResponseUpdate) {
 //! let auth = SecretString::from("Bearer xyz");
 //! let coroutine = JmapVacationResponseSet::new(session, &auth, patch).unwrap();
 //! # let _ = coroutine;
@@ -33,7 +33,7 @@ use crate::{
     rfc8621::{
         MAIL_CAPABILITY,
         vacation_response::{
-            VACATION_RESPONSE_CAPABILITY, VacationResponse, VacationResponseUpdate,
+            JmapVacationResponse, JmapVacationResponseUpdate, VACATION_RESPONSE_CAPABILITY,
         },
     },
 };
@@ -57,7 +57,7 @@ pub enum JmapVacationResponseSetError {
 #[derive(Clone, Debug)]
 pub struct JmapVacationResponseSetOutput {
     pub new_state: String,
-    pub updated: Option<VacationResponse>,
+    pub updated: Option<JmapVacationResponse>,
     pub keep_alive: bool,
 }
 
@@ -70,7 +70,7 @@ impl JmapVacationResponseSet {
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        patch: VacationResponseUpdate,
+        patch: JmapVacationResponseUpdate,
     ) -> Result<Self, JmapVacationResponseSetError> {
         let account_id = session
             .primary_accounts
@@ -160,7 +160,7 @@ impl fmt::Display for State {
 #[serde(rename_all = "camelCase")]
 struct VacationResponseSetArgs {
     account_id: String,
-    update: BTreeMap<&'static str, VacationResponseUpdate>,
+    update: BTreeMap<&'static str, JmapVacationResponseUpdate>,
 }
 
 #[derive(Deserialize)]
@@ -168,5 +168,5 @@ struct VacationResponseSetArgs {
 struct VacationResponseSetResponse {
     new_state: String,
     #[serde(default)]
-    updated: Option<BTreeMap<String, Option<VacationResponse>>>,
+    updated: Option<BTreeMap<String, Option<JmapVacationResponse>>>,
 }

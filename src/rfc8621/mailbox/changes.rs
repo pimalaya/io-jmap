@@ -6,13 +6,15 @@
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::mailbox::changes::JmapMailboxChanges,
+//!     rfc8621::mailbox::changes::{JmapMailboxChanges, JmapMailboxChangesOptions},
 //! };
 //! use secrecy::SecretString;
 //!
 //! # fn demo(session: &JmapSession) {
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine = JmapMailboxChanges::new(session, &auth, "s1", None).unwrap();
+//! let coroutine =
+//!     JmapMailboxChanges::new(session, &auth, "s1", JmapMailboxChangesOptions::default())
+//!         .unwrap();
 //! # let _ = coroutine;
 //! # }
 //! ```
@@ -25,9 +27,9 @@ use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapSession, changes::*},
     rfc8621::MAIL_CAPABILITY,
 };
@@ -37,6 +39,13 @@ use crate::{
 pub enum JmapMailboxChangesError {
     #[error("JMAP Mailbox/changes failed: {0}")]
     Changes(#[from] JmapChangesError),
+}
+
+/// Options for [`JmapMailboxChanges::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapMailboxChangesOptions {
+    /// Server-side cap on the number of changes returned.
+    pub max_changes: Option<u64>,
 }
 
 /// I/O-free coroutine for the JMAP `Mailbox/changes` method.
@@ -49,7 +58,7 @@ impl JmapMailboxChanges {
         session: &JmapSession,
         http_auth: &SecretString,
         since_state: impl Into<String>,
-        max_changes: Option<u64>,
+        opts: JmapMailboxChangesOptions,
     ) -> Result<Self, JmapMailboxChangesError> {
         let account_id = session
             .primary_accounts
@@ -66,7 +75,9 @@ impl JmapMailboxChanges {
                 "Mailbox/changes",
                 vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()],
                 since_state,
-                max_changes,
+                JmapChangesOptions {
+                    max_changes: opts.max_changes,
+                },
             )?),
         })
     }

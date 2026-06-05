@@ -2,7 +2,7 @@
 //!
 //! A streaming GET against
 //! [`JmapSession::event_source_url`](crate::rfc8620::JmapSession::event_source_url)
-//! yields W3C SSE frames carrying [`StateChange`] payloads.
+//! yields W3C SSE frames carrying [`JmapStateChange`] payloads.
 
 pub mod subscribe;
 mod types;

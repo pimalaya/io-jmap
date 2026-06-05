@@ -1,5 +1,5 @@
 //! Helpers for the JMAP Event Source channel: decode an SSE frame as a
-//! [`StateChange`], and build the subscription URL from a [`JmapSession`].
+//! [`JmapStateChange`], and build the subscription URL from a [`JmapSession`].
 
 use alloc::{
     format,
@@ -8,7 +8,7 @@ use alloc::{
 
 use crate::rfc8620::JmapSession;
 
-use super::types::{CloseAfter, EventSourceError, StateChange};
+use super::types::{JmapCloseAfter, JmapStateChange, JmapStateChangeParseError};
 
 pub(super) const DEFAULT_TYPE_TAG: &str = "StateChange";
 
@@ -18,28 +18,28 @@ pub(super) fn default_type_tag() -> String {
 
 /// Decodes one SSE frame's `data` field as a JMAP `StateChange`. Empty or
 /// whitespace-only payloads return an empty `changed` map (keep-alive).
-pub fn parse_state_change(data: &str) -> Result<StateChange, EventSourceError> {
+pub fn parse_state_change(data: &str) -> Result<JmapStateChange, JmapStateChangeParseError> {
     let trimmed = data.trim();
     if trimmed.is_empty() {
-        return Ok(StateChange::default());
+        return Ok(JmapStateChange::default());
     }
 
-    let change: StateChange = serde_json::from_str(trimmed)?;
+    let change: JmapStateChange = serde_json::from_str(trimmed)?;
     if change.r#type != DEFAULT_TYPE_TAG {
-        return Err(EventSourceError::UnexpectedType(change.r#type));
+        return Err(JmapStateChangeParseError::UnexpectedType(change.r#type));
     }
 
     Ok(change)
 }
 
 /// Builds the JMAP push subscription URL: `event_source_url` plus
-/// `types=<csv>`, `closeafter=<v>` (see [`CloseAfter`]) and `ping=<seconds>`.
-/// `types` may be empty for "all types".
+/// `types=<csv>`, `closeafter=<v>` (see [`JmapCloseAfter`]) and
+/// `ping=<seconds>`.  `types` may be empty for "all types".
 pub fn subscribe_url(
     session: &JmapSession,
     types: &[&str],
     ping_seconds: u64,
-    close_after: CloseAfter,
+    close_after: JmapCloseAfter,
 ) -> String {
     let base = &session.event_source_url;
     let types = types.join(",");
@@ -92,7 +92,7 @@ mod tests {
     fn wrong_type_field_rejected() {
         let json = r#"{"@type":"NotAStateChange","changed":{}}"#;
         match parse_state_change(json) {
-            Err(EventSourceError::UnexpectedType(t)) => assert_eq!(t, "NotAStateChange"),
+            Err(JmapStateChangeParseError::UnexpectedType(t)) => assert_eq!(t, "NotAStateChange"),
             other => panic!("unexpected: {other:?}"),
         }
     }
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn invalid_json_rejected() {
         match parse_state_change("{not json") {
-            Err(EventSourceError::InvalidJson(_)) => {}
+            Err(JmapStateChangeParseError::InvalidJson(_)) => {}
             other => panic!("unexpected: {other:?}"),
         }
     }
@@ -118,7 +118,12 @@ mod tests {
             event_source_url: "https://jmap.example.org/events".into(),
             ..synthetic_session()
         };
-        let url = subscribe_url(&session, &["Email", "EmailDelivery"], 30, CloseAfter::No);
+        let url = subscribe_url(
+            &session,
+            &["Email", "EmailDelivery"],
+            30,
+            JmapCloseAfter::No,
+        );
         assert_eq!(
             url,
             "https://jmap.example.org/events?types=Email,EmailDelivery&closeafter=no&ping=30"
@@ -131,7 +136,7 @@ mod tests {
             event_source_url: "https://jmap.example.org/events?token=abc".into(),
             ..synthetic_session()
         };
-        let url = subscribe_url(&session, &[], 15, CloseAfter::State);
+        let url = subscribe_url(&session, &[], 15, JmapCloseAfter::State);
         assert_eq!(
             url,
             "https://jmap.example.org/events?token=abc&types=&closeafter=state&ping=15"

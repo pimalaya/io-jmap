@@ -1,19 +1,20 @@
-//! Batched JMAP `Mailbox/query` + `Mailbox/get` coroutine (RFC 8621
-//! §2.4–2.5): single HTTP request, server-side `#ids` back-reference
-//! resolves the get against the query results.
+//! Batched JMAP `Mailbox/query` + `Mailbox/get` coroutine (RFC 8621 §2.4–2.5):
+//! single HTTP request, server-side `#ids` back-reference resolves the get
+//! against the query results.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::mailbox::query::JmapMailboxQuery,
+//!     rfc8621::mailbox::query::{JmapMailboxQuery, JmapMailboxQueryOptions},
 //! };
 //! use secrecy::SecretString;
 //!
 //! # fn demo(session: &JmapSession) {
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine = JmapMailboxQuery::new(session, &auth, None, None, None, None, None).unwrap();
+//! let coroutine =
+//!     JmapMailboxQuery::new(session, &auth, JmapMailboxQueryOptions::default()).unwrap();
 //! # let _ = coroutine;
 //! # }
 //! ```
@@ -27,13 +28,15 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, ResultReference, send::*},
+    coroutine::*,
+    jmap_try,
+    rfc8620::{
+        CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
+    },
     rfc8621::{
         MAIL_CAPABILITY,
-        mailbox::{Mailbox, MailboxFilter, MailboxProperty, MailboxSortComparator},
+        mailbox::{JmapMailbox, JmapMailboxFilter, JmapMailboxProperty, JmapMailboxSortComparator},
     },
 };
 
@@ -58,10 +61,25 @@ pub enum JmapMailboxQueryError {
     GetMethod(JmapMethodError),
 }
 
+/// Options for [`JmapMailboxQuery::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapMailboxQueryOptions {
+    /// Filter criteria; `None` matches all mailboxes.
+    pub filter: Option<JmapMailboxFilter>,
+    /// Sort order; `None` uses the server default.
+    pub sort: Option<Vec<JmapMailboxSortComparator>>,
+    /// Zero-based offset into the result list.
+    pub position: Option<u64>,
+    /// Max number of mailboxes to return.
+    pub limit: Option<u64>,
+    /// Mailbox properties to fetch; `None` returns all.
+    pub properties: Option<Vec<JmapMailboxProperty>>,
+}
+
 /// Successful terminal output of [`JmapMailboxQuery`].
 #[derive(Clone, Debug)]
 pub struct JmapMailboxQueryOutput {
-    pub mailboxes: Vec<Mailbox>,
+    pub mailboxes: Vec<JmapMailbox>,
     pub total: Option<u64>,
     pub position: u64,
     pub query_state: String,
@@ -75,19 +93,10 @@ pub struct JmapMailboxQuery {
 }
 
 impl JmapMailboxQuery {
-    /// - `filter`: filter criteria, or `None` for all mailboxes
-    /// - `sort`: sort order, or `None` for server default
-    /// - `position`: zero-based offset into results
-    /// - `limit`: maximum number of mailboxes to return
-    /// - `properties`: mailbox properties to fetch, or `None` for all
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        filter: Option<MailboxFilter>,
-        sort: Option<Vec<MailboxSortComparator>>,
-        position: Option<u64>,
-        limit: Option<u64>,
-        properties: Option<Vec<MailboxProperty>>,
+        opts: JmapMailboxQueryOptions,
     ) -> Result<Self, JmapMailboxQueryError> {
         let account_id = session
             .primary_accounts
@@ -98,10 +107,10 @@ impl JmapMailboxQuery {
 
         let query_args = MailboxQueryArgs {
             account_id: &account_id,
-            filter: filter.as_ref(),
-            sort: sort.as_deref(),
-            position,
-            limit,
+            filter: opts.filter.as_ref(),
+            sort: opts.sort.as_deref(),
+            position: opts.position,
+            limit: opts.limit,
             calculate_total: true,
         };
 
@@ -113,12 +122,12 @@ impl JmapMailboxQuery {
 
         let get_args = MailboxGetByRefArgs {
             account_id: &account_id,
-            ids_ref: ResultReference {
+            ids_ref: JmapResultReference {
                 result_of: &query_id,
                 name: "Mailbox/query",
                 path: "/ids",
             },
-            properties: properties.as_deref(),
+            properties: opts.properties.as_deref(),
         };
 
         batch.add(
@@ -221,9 +230,9 @@ impl fmt::Display for State {
 struct MailboxQueryArgs<'a> {
     account_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    filter: Option<&'a MailboxFilter>,
+    filter: Option<&'a JmapMailboxFilter>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    sort: Option<&'a [MailboxSortComparator]>,
+    sort: Option<&'a [JmapMailboxSortComparator]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     position: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,9 +245,9 @@ struct MailboxQueryArgs<'a> {
 struct MailboxGetByRefArgs<'a> {
     account_id: &'a str,
     #[serde(rename = "#ids")]
-    ids_ref: ResultReference<'a>,
+    ids_ref: JmapResultReference<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    properties: Option<&'a [MailboxProperty]>,
+    properties: Option<&'a [JmapMailboxProperty]>,
 }
 
 #[derive(Deserialize)]
@@ -254,5 +263,5 @@ struct MailboxQueryResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MailboxGetResponse {
-    list: Vec<Mailbox>,
+    list: Vec<JmapMailbox>,
 }

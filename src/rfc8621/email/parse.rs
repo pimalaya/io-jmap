@@ -1,20 +1,24 @@
-//! JMAP `Email/parse` coroutine (RFC 8621 §4.11): parses RFC 5322
-//! message blobs that are not yet stored as Email objects (useful for
-//! attached `.eml` files).
+//! JMAP `Email/parse` coroutine (RFC 8621 §4.11): parses RFC 5322 message blobs
+//! that are not yet stored as Email objects (useful for attached `.eml` files).
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email::parse::JmapEmailParse,
+//!     rfc8621::email::parse::{JmapEmailParse, JmapEmailParseOptions},
 //! };
 //! use secrecy::SecretString;
 //!
 //! # fn demo(session: &JmapSession) {
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine =
-//!     JmapEmailParse::new(session, &auth, vec!["b1".into()], None).unwrap();
+//! let coroutine = JmapEmailParse::new(
+//!     session,
+//!     &auth,
+//!     vec!["b1".into()],
+//!     JmapEmailParseOptions::default(),
+//! )
+//! .unwrap();
 //! # let _ = coroutine;
 //! # }
 //! ```
@@ -28,13 +32,13 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        email::{Email, EmailProperty},
+        email::{JmapEmail, JmapEmailProperty},
     },
 };
 
@@ -53,10 +57,17 @@ pub enum JmapEmailParseError {
     Method(#[from] JmapMethodError),
 }
 
+/// Options for [`JmapEmailParse::new`].
+#[derive(Clone, Debug, Default)]
+pub struct JmapEmailParseOptions {
+    /// Email properties to return; `None` returns all.
+    pub properties: Option<Vec<JmapEmailProperty>>,
+}
+
 /// Successful terminal output of [`JmapEmailParse`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailParseOutput {
-    pub parsed: BTreeMap<String, Email>,
+    pub parsed: BTreeMap<String, JmapEmail>,
     pub not_parsable: Vec<String>,
     pub not_found: Vec<String>,
     pub keep_alive: bool,
@@ -68,13 +79,11 @@ pub struct JmapEmailParse {
 }
 
 impl JmapEmailParse {
-    /// - `blob_ids`: IDs of blobs to parse as RFC 5322 messages
-    /// - `properties`: email properties to return (or `None` for all)
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
         blob_ids: Vec<String>,
-        properties: Option<Vec<EmailProperty>>,
+        opts: JmapEmailParseOptions,
     ) -> Result<Self, JmapEmailParseError> {
         let account_id = session
             .primary_accounts
@@ -86,7 +95,7 @@ impl JmapEmailParse {
         let parse_args = EmailParseArgs {
             account_id: &account_id,
             blob_ids: &blob_ids,
-            properties: properties.as_deref(),
+            properties: opts.properties.as_deref(),
             fetch_text_body_values: true,
             fetch_html_body_values: true,
             max_body_value_bytes: None,
@@ -162,7 +171,7 @@ struct EmailParseArgs<'a> {
     account_id: &'a str,
     blob_ids: &'a [String],
     #[serde(skip_serializing_if = "Option::is_none")]
-    properties: Option<&'a [EmailProperty]>,
+    properties: Option<&'a [JmapEmailProperty]>,
     fetch_text_body_values: bool,
     #[serde(rename = "fetchHTMLBodyValues")]
     fetch_html_body_values: bool,
@@ -174,7 +183,7 @@ struct EmailParseArgs<'a> {
 #[serde(rename_all = "camelCase")]
 struct EmailParseResponse {
     #[serde(default)]
-    parsed: BTreeMap<String, Email>,
+    parsed: BTreeMap<String, JmapEmail>,
     not_parsable: Option<Vec<String>>,
     not_found: Option<Vec<String>>,
 }

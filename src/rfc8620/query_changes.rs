@@ -1,28 +1,25 @@
 //! Generic JMAP `Foo/queryChanges` coroutine (RFC 8620 §5.6): wraps
-//! [`JmapSend`] with a `since_query_state` cursor and decodes the
-//! removed/added id deltas.
+//! [`JmapSend`] with a `since_query_state` cursor and decodes the removed/added
+//! id deltas.
 //!
 //! # Example
 //!
 //! ```rust,no_run
-//! use io_jmap::rfc8620::query_changes::JmapQueryChanges;
+//! use io_jmap::rfc8620::query_changes::{JmapQueryChanges, JmapQueryChangesOptions};
 //! use secrecy::SecretString;
+//! use serde_json::Value;
 //! use url::Url;
 //!
 //! let auth = SecretString::from("Bearer xyz");
 //! let api_url: Url = "https://api.example.com/jmap/".parse().unwrap();
-//! let coroutine = JmapQueryChanges::new::<serde_json::Value, serde_json::Value>(
+//! let coroutine = JmapQueryChanges::new::<Value, Value>(
 //!     "a1".into(),
 //!     &auth,
 //!     &api_url,
 //!     "Email/queryChanges",
 //!     vec!["urn:ietf:params:jmap:mail".into()],
-//!     None,
-//!     None,
 //!     "qs1",
-//!     None,
-//!     None,
-//!     false,
+//!     JmapQueryChangesOptions::default(),
 //! )
 //! .unwrap();
 //! # let _ = coroutine;
@@ -38,9 +35,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::jmap_try;
-use crate::rfc8620::{AddedItem, JmapBatch, JmapMethodError, send::*};
+use crate::{
+    coroutine::*,
+    jmap_try,
+    rfc8620::{JmapAddedItem, JmapBatch, JmapMethodError, send::*},
+};
 
 /// Failure causes during a JMAP `Foo/queryChanges` flow.
 #[derive(Debug, Error)]
@@ -57,13 +56,36 @@ pub enum JmapQueryChangesError {
     Method(#[from] JmapMethodError),
 }
 
+/// Options for [`JmapQueryChanges::new`].
+#[derive(Clone, Debug)]
+pub struct JmapQueryChangesOptions<F: Serialize, S: Serialize> {
+    pub filter: Option<F>,
+    pub sort: Option<Vec<S>>,
+    pub max_changes: Option<u64>,
+    pub up_to_id: Option<String>,
+    /// Ask the server to compute `total`. Off by default.
+    pub calculate_total: bool,
+}
+
+impl<F: Serialize, S: Serialize> Default for JmapQueryChangesOptions<F, S> {
+    fn default() -> Self {
+        Self {
+            filter: None,
+            sort: None,
+            max_changes: None,
+            up_to_id: None,
+            calculate_total: false,
+        }
+    }
+}
+
 /// Successful terminal output of [`JmapQueryChanges`].
 #[derive(Clone, Debug)]
 pub struct JmapQueryChangesOutput {
     pub new_query_state: String,
     pub total: Option<u64>,
     pub removed: Vec<String>,
-    pub added: Vec<AddedItem>,
+    pub added: Vec<JmapAddedItem>,
     pub keep_alive: bool,
 }
 
@@ -82,22 +104,18 @@ impl JmapQueryChanges {
         api_url: &Url,
         method: impl Into<String>,
         capabilities: Vec<String>,
-        filter: Option<F>,
-        sort: Option<Vec<S>>,
         since_query_state: impl Into<String>,
-        max_changes: Option<u64>,
-        up_to_id: Option<String>,
-        calculate_total: bool,
+        opts: JmapQueryChangesOptions<F, S>,
     ) -> Result<Self, JmapQueryChangesError> {
         let since_query_state = since_query_state.into();
         let args = serde_json::to_value(QueryChangesArgs {
             account_id: &account_id,
-            filter,
-            sort,
+            filter: opts.filter,
+            sort: opts.sort,
             since_query_state: &since_query_state,
-            max_changes,
-            up_to_id,
-            calculate_total,
+            max_changes: opts.max_changes,
+            up_to_id: opts.up_to_id,
+            calculate_total: opts.calculate_total,
         })
         .map_err(JmapQueryChangesError::SerializeArgs)?;
 
@@ -188,7 +206,7 @@ struct QueryChangesResponse {
     #[serde(default)]
     total: Option<u64>,
     removed: Vec<String>,
-    added: Vec<AddedItem>,
+    added: Vec<JmapAddedItem>,
 }
 
 #[cfg(test)]
@@ -212,12 +230,8 @@ mod tests {
             &make_url(),
             "Email/queryChanges",
             vec!["urn:ietf:params:jmap:mail".to_string()],
-            None,
-            None,
             "qs1",
-            None,
-            None,
-            false,
+            JmapQueryChangesOptions::default(),
         )
         .unwrap()
     }

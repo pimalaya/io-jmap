@@ -1,5 +1,5 @@
-//! JMAP `Email/copy` coroutine (RFC 8621 §4.10): copies emails from
-//! one account into the current session account.
+//! JMAP `Email/copy` coroutine (RFC 8621 §4.10): copies emails from one account
+//! into the current session account.
 //!
 //! # Example
 //!
@@ -8,7 +8,7 @@
 //!
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email::{EmailCopy, copy::JmapEmailCopy},
+//!     rfc8621::email::{JmapEmailCopyArgs, copy::JmapEmailCopy},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -17,7 +17,7 @@
 //! let mut create = BTreeMap::new();
 //! create.insert(
 //!     "c1".to_string(),
-//!     EmailCopy {
+//!     JmapEmailCopyArgs {
 //!         id: "e1".into(),
 //!         mailbox_ids: Default::default(),
 //!         keywords: None,
@@ -38,13 +38,13 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
-        email::{Email, EmailCopy, EmailCopyError},
+        email::{JmapEmail, JmapEmailCopyArgs, JmapEmailCopyItemError},
     },
 };
 
@@ -67,8 +67,8 @@ pub enum JmapEmailCopyError {
 #[derive(Clone, Debug)]
 pub struct JmapEmailCopyOutput {
     pub new_state: String,
-    pub created: BTreeMap<String, Email>,
-    pub not_created: BTreeMap<String, EmailCopyError>,
+    pub created: BTreeMap<String, JmapEmail>,
+    pub not_created: BTreeMap<String, JmapEmailCopyItemError>,
     pub keep_alive: bool,
 }
 
@@ -82,7 +82,7 @@ impl JmapEmailCopy {
         session: &JmapSession,
         http_auth: &SecretString,
         from_account_id: impl Into<String>,
-        emails: BTreeMap<String, EmailCopy>,
+        emails: BTreeMap<String, JmapEmailCopyArgs>,
     ) -> Result<Self, JmapEmailCopyError> {
         let account_id = session
             .primary_accounts
@@ -164,7 +164,7 @@ impl fmt::Display for State {
 struct EmailCopyArgs {
     from_account_id: String,
     account_id: String,
-    create: BTreeMap<String, EmailCopy>,
+    create: BTreeMap<String, JmapEmailCopyArgs>,
 }
 
 #[derive(Deserialize)]
@@ -172,7 +172,7 @@ struct EmailCopyArgs {
 struct EmailCopyResponse {
     new_state: String,
     #[serde(default)]
-    created: BTreeMap<String, Email>,
+    created: BTreeMap<String, JmapEmail>,
     #[serde(default)]
-    not_created: BTreeMap<String, EmailCopyError>,
+    not_created: BTreeMap<String, JmapEmailCopyItemError>,
 }

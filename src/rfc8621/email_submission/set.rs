@@ -1,5 +1,5 @@
-//! JMAP `EmailSubmission/set` coroutine (RFC 8621 §7.5): submits
-//! emails for sending. JMAP equivalent of SMTP message submission.
+//! JMAP `EmailSubmission/set` coroutine (RFC 8621 §7.5): submits emails for
+//! sending. JMAP equivalent of SMTP message submission.
 //!
 //! # Example
 //!
@@ -8,11 +8,11 @@
 //!
 //! use io_jmap::{
 //!     rfc8620::JmapSession,
-//!     rfc8621::email_submission::{EmailSubmissionCreate, set::JmapEmailSubmissionSet},
+//!     rfc8621::email_submission::{JmapEmailSubmissionCreate, set::JmapEmailSubmissionSet},
 //! };
 //! use secrecy::SecretString;
 //!
-//! # fn demo(session: &JmapSession, submission: EmailSubmissionCreate) {
+//! # fn demo(session: &JmapSession, submission: JmapEmailSubmissionCreate) {
 //! let auth = SecretString::from("Bearer xyz");
 //! let mut submissions = BTreeMap::new();
 //! submissions.insert("c1".to_string(), submission);
@@ -30,14 +30,15 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::coroutine::*;
-use crate::jmap_try;
 use crate::{
+    coroutine::*,
+    jmap_try,
     rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
         MAIL_CAPABILITY,
         email_submission::{
-            EmailSubmission, EmailSubmissionCreate, EmailSubmissionSetError, SUBMISSION_CAPABILITY,
+            JmapEmailSubmission, JmapEmailSubmissionCreate, JmapEmailSubmissionSetItemError,
+            SUBMISSION_CAPABILITY,
         },
     },
 };
@@ -61,8 +62,8 @@ pub enum JmapEmailSubmissionSetError {
 #[derive(Clone, Debug)]
 pub struct JmapEmailSubmissionSetOutput {
     pub new_state: String,
-    pub created: BTreeMap<String, EmailSubmission>,
-    pub not_created: BTreeMap<String, EmailSubmissionSetError>,
+    pub created: BTreeMap<String, JmapEmailSubmission>,
+    pub not_created: BTreeMap<String, JmapEmailSubmissionSetItemError>,
     pub keep_alive: bool,
 }
 
@@ -72,11 +73,11 @@ pub struct JmapEmailSubmissionSet {
 }
 
 impl JmapEmailSubmissionSet {
-    /// `submissions` maps client-assigned IDs to [`EmailSubmissionCreate`].
+    /// `submissions` maps client-assigned IDs to [`JmapEmailSubmissionCreate`].
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        submissions: BTreeMap<String, EmailSubmissionCreate>,
+        submissions: BTreeMap<String, JmapEmailSubmissionCreate>,
     ) -> Result<Self, JmapEmailSubmissionSetError> {
         let account_id = session
             .primary_accounts
@@ -162,7 +163,7 @@ impl fmt::Display for State {
 #[serde(rename_all = "camelCase")]
 struct EmailSubmissionSetArgs {
     account_id: String,
-    create: BTreeMap<String, EmailSubmissionCreate>,
+    create: BTreeMap<String, JmapEmailSubmissionCreate>,
 }
 
 #[derive(Deserialize)]
@@ -170,7 +171,7 @@ struct EmailSubmissionSetArgs {
 struct EmailSubmissionSetResponse {
     new_state: String,
     #[serde(default)]
-    created: Option<BTreeMap<String, EmailSubmission>>,
+    created: Option<BTreeMap<String, JmapEmailSubmission>>,
     #[serde(default)]
-    not_created: Option<BTreeMap<String, EmailSubmissionSetError>>,
+    not_created: Option<BTreeMap<String, JmapEmailSubmissionSetItemError>>,
 }

@@ -1,11 +1,11 @@
-//! Generic JMAP `Foo/set` coroutine (RFC 8620 §5.3): wraps [`JmapSend`]
-//! with a single create/update/destroy batch and a typed response decoder.
+//! Generic JMAP `Foo/set` coroutine (RFC 8620 §5.3): wraps [`JmapSend`] with a
+//! single create/update/destroy batch and a typed response decoder.
 //!
 //! # Example
 //!
 //! ```rust,no_run
 //! use std::collections::BTreeMap;
-//! use io_jmap::rfc8620::set::JmapSet;
+//! use io_jmap::rfc8620::set::{JmapSet, JmapSetOptions};
 //! use secrecy::SecretString;
 //! use serde::{Deserialize, Serialize};
 //! use url::Url;
@@ -26,10 +26,7 @@
 //!     &api_url,
 //!     "Mailbox/set",
 //!     vec!["urn:ietf:params:jmap:mail".into()],
-//!     None,
-//!     Some(create),
-//!     None,
-//!     None,
+//!     JmapSetOptions { create: Some(create), ..Default::default() },
 //! )
 //! .unwrap();
 //! # let _ = coroutine;
@@ -45,9 +42,11 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use url::Url;
 
-use crate::coroutine::*;
-use crate::jmap_try;
-use crate::rfc8620::{JmapBatch, JmapMethodError, send::*};
+use crate::{
+    coroutine::*,
+    jmap_try,
+    rfc8620::{JmapBatch, JmapMethodError, send::*},
+};
 
 /// Failure causes during a JMAP `Foo/set` flow.
 #[derive(Debug, Error)]
@@ -62,6 +61,31 @@ pub enum JmapSetError {
     ParseResponse(#[source] serde_json::Error),
     #[error("JMAP Foo/set failed: {0}")]
     Method(#[from] JmapMethodError),
+}
+
+/// Options for [`JmapSet::new`].
+#[derive(Clone, Debug)]
+pub struct JmapSetOptions<C: Serialize, U: Serialize> {
+    /// Optimistic concurrency token: matched against the server's current
+    /// state; mismatch aborts the call with `stateMismatch`.
+    pub if_in_state: Option<String>,
+    /// Objects to create (client ID → partial object).
+    pub create: Option<BTreeMap<String, C>>,
+    /// Objects to update (id → patch).
+    pub update: Option<BTreeMap<String, U>>,
+    /// Object IDs to destroy.
+    pub destroy: Option<Vec<String>>,
+}
+
+impl<C: Serialize, U: Serialize> Default for JmapSetOptions<C, U> {
+    fn default() -> Self {
+        Self {
+            if_in_state: None,
+            create: None,
+            update: None,
+            destroy: None,
+        }
+    }
 }
 
 /// Successful terminal output of the [`JmapSet`] coroutine.
@@ -91,17 +115,14 @@ impl<T: DeserializeOwned> JmapSet<T> {
         api_url: &Url,
         method: impl Into<String>,
         capabilities: Vec<String>,
-        if_in_state: Option<String>,
-        create: Option<BTreeMap<String, C>>,
-        update: Option<BTreeMap<String, U>>,
-        destroy: Option<Vec<String>>,
+        opts: JmapSetOptions<C, U>,
     ) -> Result<Self, JmapSetError> {
         let args = serde_json::to_value(SetArgs {
             account_id,
-            if_in_state,
-            create,
-            update,
-            destroy,
+            if_in_state: opts.if_in_state,
+            create: opts.create,
+            update: opts.update,
+            destroy: opts.destroy,
         })
         .map_err(JmapSetError::SerializeArgs)?;
 
@@ -243,10 +264,10 @@ mod tests {
             &make_url(),
             "Mailbox/set",
             vec!["urn:ietf:params:jmap:mail".to_string()],
-            None,
-            Some(create),
-            None,
-            None,
+            JmapSetOptions {
+                create: Some(create),
+                ..Default::default()
+            },
         )
         .unwrap()
     }

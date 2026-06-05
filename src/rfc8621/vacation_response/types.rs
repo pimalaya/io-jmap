@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 /// is always `"singleton"`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VacationResponse {
+pub struct JmapVacationResponse {
     /// Always `"singleton"`.
     pub id: String,
 
@@ -43,7 +43,7 @@ pub struct VacationResponse {
 /// Only `Some` fields are serialized; `None` fields are left unchanged.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VacationResponseUpdate {
+pub struct JmapVacationResponseUpdate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_enabled: Option<bool>,
 
