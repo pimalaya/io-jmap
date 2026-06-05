@@ -1,27 +1,27 @@
-//! Generic JMAP `Foo/query` coroutine (RFC 8620 §5.5): wraps [`JmapSend`]
-//! with a single filter+sort batch and decodes the id list.
+//! Generic JMAP `Foo/queryChanges` coroutine (RFC 8620 §5.6): wraps
+//! [`JmapSend`] with a `since_query_state` cursor and decodes the
+//! removed/added id deltas.
 //!
 //! # Example
 //!
 //! ```rust,no_run
-//! use io_jmap::rfc8620::query::JmapQuery;
+//! use io_jmap::rfc8620::query_changes::JmapQueryChanges;
 //! use secrecy::SecretString;
 //! use url::Url;
 //!
 //! let auth = SecretString::from("Bearer xyz");
 //! let api_url: Url = "https://api.example.com/jmap/".parse().unwrap();
-//! let coroutine = JmapQuery::new::<serde_json::Value, serde_json::Value>(
+//! let coroutine = JmapQueryChanges::new::<serde_json::Value, serde_json::Value>(
 //!     "a1".into(),
 //!     &auth,
 //!     &api_url,
-//!     "Email/query",
+//!     "Email/queryChanges",
 //!     vec!["urn:ietf:params:jmap:mail".into()],
 //!     None,
 //!     None,
+//!     "qs1",
 //!     None,
 //!     None,
-//!     None,
-//!     Some(10),
 //!     false,
 //! )
 //! .unwrap();
@@ -40,42 +40,42 @@ use url::Url;
 
 use crate::coroutine::*;
 use crate::jmap_try;
-use crate::rfc8620::{JmapBatch, JmapMethodError, send::*};
+use crate::rfc8620::{AddedItem, JmapBatch, JmapMethodError, send::*};
 
-/// Failure causes during a JMAP `Foo/query` flow.
+/// Failure causes during a JMAP `Foo/queryChanges` flow.
 #[derive(Debug, Error)]
-pub enum JmapQueryError {
-    #[error("JMAP Foo/query failed: missing response in method_responses")]
+pub enum JmapQueryChangesError {
+    #[error("JMAP Foo/queryChanges failed: missing response in method_responses")]
     MissingResponse,
-    #[error("JMAP Foo/query failed: {0}")]
+    #[error("JMAP Foo/queryChanges failed: {0}")]
     Send(#[from] JmapSendError),
-    #[error("JMAP Foo/query failed: serialize args: {0}")]
+    #[error("JMAP Foo/queryChanges failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
-    #[error("JMAP Foo/query failed: parse response: {0}")]
+    #[error("JMAP Foo/queryChanges failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
-    #[error("JMAP Foo/query failed: {0}")]
+    #[error("JMAP Foo/queryChanges failed: {0}")]
     Method(#[from] JmapMethodError),
 }
 
-/// Successful terminal output of [`JmapQuery`].
+/// Successful terminal output of [`JmapQueryChanges`].
 #[derive(Clone, Debug)]
-pub struct JmapQueryOutput {
-    pub query_state: String,
-    pub can_calculate_changes: bool,
-    pub position: u64,
-    pub ids: Vec<String>,
+pub struct JmapQueryChangesOutput {
+    pub new_query_state: String,
     pub total: Option<u64>,
-    pub limit: Option<u64>,
+    pub removed: Vec<String>,
+    pub added: Vec<AddedItem>,
     pub keep_alive: bool,
 }
 
-/// Generic I/O-free coroutine for the JMAP `Foo/query` method (RFC 8620 §5.5).
-pub struct JmapQuery {
+/// Generic I/O-free coroutine for the JMAP `Foo/queryChanges` method
+/// (RFC 8620 §5.6).
+pub struct JmapQueryChanges {
     state: State,
 }
 
-impl JmapQuery {
-    /// Builds a single-call `Foo/query` batch and wraps it in [`JmapSend`].
+impl JmapQueryChanges {
+    /// Builds a single-call `Foo/queryChanges` batch and wraps it in
+    /// [`JmapSend`].
     pub fn new<F: Serialize, S: Serialize>(
         account_id: String,
         http_auth: &SecretString,
@@ -84,23 +84,22 @@ impl JmapQuery {
         capabilities: Vec<String>,
         filter: Option<F>,
         sort: Option<Vec<S>>,
-        position: Option<u64>,
-        anchor: Option<String>,
-        anchor_offset: Option<i64>,
-        limit: Option<u64>,
+        since_query_state: impl Into<String>,
+        max_changes: Option<u64>,
+        up_to_id: Option<String>,
         calculate_total: bool,
-    ) -> Result<Self, JmapQueryError> {
-        let args = serde_json::to_value(QueryArgs {
+    ) -> Result<Self, JmapQueryChangesError> {
+        let since_query_state = since_query_state.into();
+        let args = serde_json::to_value(QueryChangesArgs {
             account_id: &account_id,
             filter,
             sort,
-            position,
-            anchor,
-            anchor_offset,
-            limit,
+            since_query_state: &since_query_state,
+            max_changes,
+            up_to_id,
             calculate_total,
         })
-        .map_err(JmapQueryError::SerializeArgs)?;
+        .map_err(JmapQueryChangesError::SerializeArgs)?;
 
         let mut batch = JmapBatch::new();
         batch.add(method, args);
@@ -110,21 +109,14 @@ impl JmapQuery {
             state: State::Send(JmapSend::new(http_auth, api_url, request)?),
         })
     }
-
-    /// Wraps a pre-built [`JmapSend`].
-    pub fn from_send(send: JmapSend) -> Self {
-        Self {
-            state: State::Send(send),
-        }
-    }
 }
 
-impl JmapCoroutine for JmapQuery {
+impl JmapCoroutine for JmapQueryChanges {
     type Yield = JmapYield;
-    type Return = Result<JmapQueryOutput, JmapQueryError>;
+    type Return = Result<JmapQueryChangesOutput, JmapQueryChangesError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("query: {}", self.state);
+        trace!("query-changes: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -133,7 +125,9 @@ impl JmapCoroutine for JmapQuery {
                 } = jmap_try!(send, arg);
 
                 let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-                    return JmapCoroutineState::Complete(Err(JmapQueryError::MissingResponse));
+                    return JmapCoroutineState::Complete(Err(
+                        JmapQueryChangesError::MissingResponse,
+                    ));
                 };
 
                 if name == "error" {
@@ -142,18 +136,16 @@ impl JmapCoroutine for JmapQuery {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<QueryResponse>(args) {
-                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapQueryOutput {
-                        query_state: r.query_state,
-                        can_calculate_changes: r.can_calculate_changes,
-                        position: r.position,
-                        ids: r.ids,
+                match serde_json::from_value::<QueryChangesResponse>(args) {
+                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapQueryChangesOutput {
+                        new_query_state: r.new_query_state,
                         total: r.total,
-                        limit: r.limit,
+                        removed: r.removed,
+                        added: r.added,
                         keep_alive,
                     })),
                     Err(err) => {
-                        JmapCoroutineState::Complete(Err(JmapQueryError::ParseResponse(err)))
+                        JmapCoroutineState::Complete(Err(JmapQueryChangesError::ParseResponse(err)))
                     }
                 }
             }
@@ -175,36 +167,28 @@ impl fmt::Display for State {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct QueryArgs<'a, F: Serialize, S: Serialize> {
+struct QueryChangesArgs<'a, F: Serialize, S: Serialize> {
     account_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     filter: Option<F>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sort: Option<Vec<S>>,
+    since_query_state: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    position: Option<u64>,
+    max_changes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    anchor: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    anchor_offset: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<u64>,
+    up_to_id: Option<String>,
     calculate_total: bool,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct QueryResponse {
-    query_state: String,
-    #[serde(default)]
-    can_calculate_changes: bool,
-    #[serde(default)]
-    position: u64,
-    ids: Vec<String>,
+struct QueryChangesResponse {
+    new_query_state: String,
     #[serde(default)]
     total: Option<u64>,
-    #[serde(default)]
-    limit: Option<u64>,
+    removed: Vec<String>,
+    added: Vec<AddedItem>,
 }
 
 #[cfg(test)]
@@ -221,19 +205,18 @@ mod tests {
         "https://api.example.com/jmap/".parse().unwrap()
     }
 
-    fn make_query() -> JmapQuery {
-        JmapQuery::new::<serde_json::Value, serde_json::Value>(
+    fn make_query_changes() -> JmapQueryChanges {
+        JmapQueryChanges::new::<serde_json::Value, serde_json::Value>(
             "a1".to_string(),
             &make_auth(),
             &make_url(),
-            "Email/query",
+            "Email/queryChanges",
             vec!["urn:ietf:params:jmap:mail".to_string()],
             None,
             None,
+            "qs1",
             None,
             None,
-            None,
-            Some(10),
             false,
         )
         .unwrap()
@@ -251,99 +234,101 @@ mod tests {
 
     #[test]
     fn success_returns_ok() {
-        let mut cor = make_query();
+        let mut cor = make_query_changes();
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
 
         let body = br#"{
-            "methodResponses": [["Email/query", {"queryState":"qs","position":0,"ids":["e1","e2"]}, "c0"]],
-            "sessionState": "s1"
+            "methodResponses": [["Email/queryChanges", {"newQueryState":"qs2","removed":["e2"],"added":[{"id":"e1","index":0}]}, "c0"]],
+            "sessionState": "s2"
         }"#;
         let reply = build_http_reply(body);
         let out = expect_complete_ok(&mut cor, &reply);
-        assert_eq!(out.ids, vec!["e1".to_string(), "e2".to_string()]);
+        assert_eq!(out.new_query_state, "qs2");
+        assert_eq!(out.removed, vec!["e2".to_string()]);
+        assert_eq!(out.added.len(), 1);
     }
 
     #[test]
     fn method_error_returns_method_error() {
-        let mut cor = make_query();
+        let mut cor = make_query_changes();
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
 
         let body = br#"{
-            "methodResponses": [["error", {"type":"invalidArguments"}, "c0"]],
+            "methodResponses": [["error", {"type":"cannotCalculateChanges"}, "c0"]],
             "sessionState": "s1"
         }"#;
         let reply = build_http_reply(body);
         let err = expect_complete_err(&mut cor, &reply);
-        assert!(matches!(err, JmapQueryError::Method(_)));
+        assert!(matches!(err, JmapQueryChangesError::Method(_)));
     }
 
     #[test]
     fn missing_response_returns_missing_response() {
-        let mut cor = make_query();
+        let mut cor = make_query_changes();
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
 
         let reply = build_http_reply(br#"{"methodResponses":[], "sessionState":"s"}"#);
         let err = expect_complete_err(&mut cor, &reply);
-        assert!(matches!(err, JmapQueryError::MissingResponse));
+        assert!(matches!(err, JmapQueryChangesError::MissingResponse));
     }
 
     #[test]
     fn parse_error_returns_parse_response() {
-        let mut cor = make_query();
+        let mut cor = make_query_changes();
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
 
         let body = br#"{
-            "methodResponses": [["Email/query", {"queryState":42}, "c0"]],
+            "methodResponses": [["Email/queryChanges", {"newQueryState":42}, "c0"]],
             "sessionState": "s"
         }"#;
         let reply = build_http_reply(body);
         let err = expect_complete_err(&mut cor, &reply);
-        assert!(matches!(err, JmapQueryError::ParseResponse(_)));
+        assert!(matches!(err, JmapQueryChangesError::ParseResponse(_)));
     }
 
     #[test]
-    fn total_when_calculate_total_set() {
-        let mut cor = make_query();
+    fn total_optional_when_calculate_total_set() {
+        let mut cor = make_query_changes();
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
 
         let body = br#"{
-            "methodResponses": [["Email/query", {"queryState":"qs","position":0,"ids":[],"total":42}, "c0"]],
+            "methodResponses": [["Email/queryChanges", {"newQueryState":"qs2","removed":[],"added":[],"total":7}, "c0"]],
             "sessionState": "s"
         }"#;
         let reply = build_http_reply(body);
         let out = expect_complete_ok(&mut cor, &reply);
-        assert_eq!(out.total, Some(42));
+        assert_eq!(out.total, Some(7));
     }
 
     // --- utils
 
-    fn expect_wants_write(cor: &mut JmapQuery, arg: Option<&[u8]>) -> Vec<u8> {
+    fn expect_wants_write(cor: &mut JmapQueryChanges, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {
             JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => bytes,
             state => panic!("expected WantsWrite, got {state:?}"),
         }
     }
 
-    fn expect_wants_read(cor: &mut JmapQuery) {
+    fn expect_wants_read(cor: &mut JmapQueryChanges) {
         match cor.resume(None) {
             JmapCoroutineState::Yielded(JmapYield::WantsRead) => {}
             state => panic!("expected WantsRead, got {state:?}"),
         }
     }
 
-    fn expect_complete_ok(cor: &mut JmapQuery, reply: &[u8]) -> JmapQueryOutput {
+    fn expect_complete_ok(cor: &mut JmapQueryChanges, reply: &[u8]) -> JmapQueryChangesOutput {
         match cor.resume(Some(reply)) {
             JmapCoroutineState::Complete(Ok(out)) => out,
             state => panic!("expected Complete(Ok), got {state:?}"),
         }
     }
 
-    fn expect_complete_err(cor: &mut JmapQuery, reply: &[u8]) -> JmapQueryError {
+    fn expect_complete_err(cor: &mut JmapQueryChanges, reply: &[u8]) -> JmapQueryChangesError {
         match cor.resume(Some(reply)) {
             JmapCoroutineState::Complete(Err(err)) => err,
             state => panic!("expected Complete(Err), got {state:?}"),

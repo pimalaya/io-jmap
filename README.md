@@ -4,8 +4,8 @@ JMAP client library, written in Rust.
 
 This library is composed of 3 feature-gated layers:
 
-- Low-level **I/O-free** coroutines: these `no_std`-compatible state machines contain the whole IMAP logic and can be used anywhere
-- Mid-level **light client**: a standard, blocking IMAP client using a `Stream: Read + Write`
+- Low-level **I/O-free** coroutines: these `no_std`-compatible state machines contain the whole JMAP logic and can be used anywhere
+- Mid-level **light client**: a standard, blocking JMAP client using a `Stream: Read + Write`
 - High-level **full client**: light client + TCP connections and TLS negotiations handled for you
 
 ## Table of contents
@@ -62,10 +62,10 @@ No features required: works in `#![no_std]`, no sockets, no async runtime. You o
 
 Fetch a JMAP session against a blocking rustls socket:
 
-```rust,ignore
+```rust,no_run
 use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
 
-use io_jmap::{coroutine::*, rfc8620::{redirect::JmapRedirectYield, session_get::*}};
+use io_jmap::{coroutine::*, rfc8620::{coroutine::JmapRedirectYield, session_get::*}};
 use rustls::{ClientConfig, ClientConnection, StreamOwned};
 use rustls_platform_verifier::ConfigVerifierExt;
 use secrecy::SecretString;
@@ -117,7 +117,7 @@ Enable the `client` feature. `JmapClientStd::new(stream, http_auth)` wraps any b
 io-jmap = { version = "0.0.1", default-features = false, features = ["client"] }
 ```
 
-```rust,ignore
+```rust,no_run
 use std::{net::TcpStream, sync::Arc};
 
 use io_jmap::client::JmapClientStd;
@@ -127,19 +127,19 @@ use secrecy::SecretString;
 use url::Url;
 
 let http_auth = SecretString::from("Bearer your-token-here");
-let session_url = Url::parse("https://api.fastmail.com/jmap/session/")?;
+let session_url = Url::parse("https://api.fastmail.com/jmap/session/").unwrap();
 
-let config = ClientConfig::with_platform_verifier()?;
-let server_name = session_url.host_str().unwrap().to_string().try_into()?;
-let conn = ClientConnection::new(Arc::new(config), server_name)?;
-let tcp = TcpStream::connect((session_url.host_str().unwrap(), 443))?;
+let config = ClientConfig::with_platform_verifier().unwrap();
+let server_name = session_url.host_str().unwrap().to_string().try_into().unwrap();
+let conn = ClientConnection::new(Arc::new(config), server_name).unwrap();
+let tcp = TcpStream::connect((session_url.host_str().unwrap(), 443)).unwrap();
 let stream = StreamOwned::new(conn, tcp);
 
 let mut client = JmapClientStd::new(stream, http_auth);
-let session = client.session_get(&session_url)?;
+let session = client.session_get(&session_url).unwrap();
 println!("Logged in as: {}", session.username);
 
-let mailboxes = client.mailbox_query(None, None, None, None, None)?;
+let mailboxes = client.mailbox_query(None, None, None, None, None).unwrap();
 for mailbox in &mailboxes.mailboxes {
     println!("{:?}: {:?}", mailbox.role, mailbox.name);
 }
@@ -154,21 +154,21 @@ Enable one of the TLS feature flags: `rustls-ring` (default), `rustls-aws`, or `
 io-jmap = "0.0.1" # rustls-ring is enabled by default
 ```
 
-```rust,ignore
+```rust,no_run
 use io_jmap::client::JmapClientStd;
 use pimalaya_stream::tls::Tls;
 use secrecy::SecretString;
 use url::Url;
 
 let http_auth = SecretString::from("Bearer your-token-here");
-let session_url = Url::parse("https://api.fastmail.com/jmap/session/")?;
+let session_url = Url::parse("https://api.fastmail.com/jmap/session/").unwrap();
 let tls = Tls::default();
 
-let mut client = JmapClientStd::connect(&session_url, &tls, http_auth)?;
-let session = client.session_get(&session_url)?;
+let mut client = JmapClientStd::connect(&session_url, &tls, http_auth).unwrap();
+let session = client.session_get(&session_url).unwrap();
 println!("Logged in as: {}", session.username);
 
-let mailboxes = client.mailbox_query(None, None, None, None, None)?;
+let mailboxes = client.mailbox_query(None, None, None, None, None).unwrap();
 for mailbox in &mailboxes.mailboxes {
     println!("{:?}: {:?}", mailbox.role, mailbox.name);
 }

@@ -36,20 +36,24 @@ use io_jmap::{
     coroutine::*,
     rfc8620::{
         blob_upload::{JmapBlobUpload, JmapBlobUploadOutput},
-        redirect::JmapRedirectYield,
+        coroutine::JmapRedirectYield,
         session_get::{JmapSessionGet, JmapSessionGetOutput},
     },
     rfc8621::{
-        email::{EmailFilter, EmailImport},
-        email_get::{JmapEmailGet, JmapEmailGetOutput},
-        email_import::{JmapEmailImport, JmapEmailImportOutput},
-        email_query::{JmapEmailQuery, JmapEmailQueryOutput},
-        email_set::{JmapEmailSet, JmapEmailSetArgs, JmapEmailSetOutput},
-        mailbox::{MailboxCreate, MailboxUpdate},
-        mailbox_get::{JmapMailboxGet, JmapMailboxGetOutput},
-        mailbox_query::{JmapMailboxQuery, JmapMailboxQueryOutput},
-        mailbox_set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetOutput},
-        thread_get::{JmapThreadGet, JmapThreadGetOutput},
+        email::{
+            EmailFilter, EmailImport,
+            get::{JmapEmailGet, JmapEmailGetOutput},
+            import::{JmapEmailImport, JmapEmailImportOutput},
+            query::{JmapEmailQuery, JmapEmailQueryOutput},
+            set::{JmapEmailSet, JmapEmailSetArgs, JmapEmailSetOutput},
+        },
+        mailbox::{
+            MailboxCreate, MailboxUpdate,
+            get::{JmapMailboxGet, JmapMailboxGetOutput},
+            query::{JmapMailboxQuery, JmapMailboxQueryOutput},
+            set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetOutput},
+        },
+        thread::get::{JmapThreadGet, JmapThreadGetOutput},
     },
 };
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};

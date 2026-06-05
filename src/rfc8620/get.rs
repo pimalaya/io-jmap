@@ -1,29 +1,86 @@
-//! Generic I/O-free coroutine for the `Foo/get` method (RFC 8620 §5.1).
+//! Generic JMAP `Foo/get` coroutine (RFC 8620 §5.1): wraps [`JmapSend`]
+//! with a single method-call batch and a typed response decoder.
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_jmap::{
+//!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
+//!     rfc8620::get::JmapGet,
+//! };
+//! use secrecy::SecretString;
+//! use serde::Deserialize;
+//! use url::Url;
+//!
+//! #[derive(Deserialize)]
+//! struct Mailbox { id: String, name: String }
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("api.example.com:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let api_url: Url = "https://api.example.com/jmap/".parse().unwrap();
+//! let auth = SecretString::from("Bearer xyz");
+//! let mut coroutine = JmapGet::<Mailbox>::new(
+//!     "a1".into(),
+//!     &auth,
+//!     &api_url,
+//!     "Mailbox/get",
+//!     vec!["urn:ietf:params:jmap:mail".into()],
+//!     None,
+//!     None,
+//! )
+//! .unwrap();
+//! let mut arg = None;
+//!
+//! let out = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         JmapCoroutineState::Yielded(JmapYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         JmapCoroutineState::Complete(Ok(out)) => break out,
+//!         JmapCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("got {} items", out.list.len());
+//! ```
 
-use core::marker::PhantomData;
+use core::{fmt, marker::PhantomData};
 
 use alloc::{string::String, vec::Vec};
 
+use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use url::Url;
 
 use crate::coroutine::*;
-use crate::rfc8620::{error::JmapMethodError, send::*};
+use crate::jmap_try;
+use crate::rfc8620::{JmapBatch, JmapMethodError, send::*};
 
-/// Errors that can occur during the coroutine progression.
+/// Failure causes during a JMAP `Foo/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapGetError {
-    #[error("Send JMAP request error: {0}")]
-    Send(#[from] JmapSendError),
-    #[error("Serialize Foo/get args error: {0}")]
-    SerializeArgs(#[source] serde_json::Error),
-    #[error("Parse Foo/get response error: {0}")]
-    ParseResponse(#[source] serde_json::Error),
-    #[error("Missing Foo/get response in method_responses")]
+    #[error("JMAP Foo/get failed: missing response in method_responses")]
     MissingResponse,
-    #[error("JMAP Foo/get method error: {0}")]
+    #[error("JMAP Foo/get failed: {0}")]
+    Send(#[from] JmapSendError),
+    #[error("JMAP Foo/get failed: serialize args: {0}")]
+    SerializeArgs(#[source] serde_json::Error),
+    #[error("JMAP Foo/get failed: parse response: {0}")]
+    ParseResponse(#[source] serde_json::Error),
+    #[error("JMAP Foo/get failed: {0}")]
     Method(#[from] JmapMethodError),
 }
 
@@ -36,33 +93,14 @@ pub struct JmapGetOutput<T> {
     pub keep_alive: bool,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GetArgs<'a> {
-    account_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ids: Option<&'a [String]>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    properties: Option<&'a [String]>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetResponse<T> {
-    list: Vec<T>,
-    #[serde(default)]
-    not_found: Vec<String>,
-    state: String,
-}
-
 /// Generic I/O-free coroutine for the JMAP `Foo/get` method (RFC 8620 §5.1).
 pub struct JmapGet<T> {
-    send: JmapSend,
+    state: State,
     _phantom: PhantomData<T>,
 }
 
 impl<T: DeserializeOwned> JmapGet<T> {
-    /// Creates a new coroutine.
+    /// Builds a single-call `Foo/get` batch and wraps it in [`JmapSend`].
     pub fn new(
         account_id: String,
         http_auth: &SecretString,
@@ -84,15 +122,16 @@ impl<T: DeserializeOwned> JmapGet<T> {
         let request = batch.into_request(capabilities);
 
         Ok(Self {
-            send: JmapSend::new(http_auth, api_url, request)?,
+            state: State::Send(JmapSend::new(http_auth, api_url, request)?),
             _phantom: PhantomData,
         })
     }
 
-    /// Creates a coroutine from a pre-built [`JmapSend`].
+    /// Wraps a pre-built [`JmapSend`] (advanced: lets callers compose
+    /// custom batches and still benefit from the typed response decode).
     pub fn from_send(send: JmapSend) -> Self {
         Self {
-            send,
+            state: State::Send(send),
             _phantom: PhantomData,
         }
     }
@@ -103,35 +142,211 @@ impl<T: DeserializeOwned> JmapCoroutine for JmapGet<T> {
     type Return = Result<JmapGetOutput<T>, JmapGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        let JmapSendOutput {
-            response,
-            keep_alive,
-        } = match self.send.resume(arg) {
-            JmapCoroutineState::Complete(Ok(out)) => out,
-            JmapCoroutineState::Complete(Err(err)) => {
-                return JmapCoroutineState::Complete(Err(err.into()));
+        trace!("get: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => {
+                let JmapSendOutput {
+                    response,
+                    keep_alive,
+                } = jmap_try!(send, arg);
+
+                let Some((name, args, _)) = response.method_responses.into_iter().next() else {
+                    return JmapCoroutineState::Complete(Err(JmapGetError::MissingResponse));
+                };
+
+                if name == "error" {
+                    let err = serde_json::from_value::<JmapMethodError>(args)
+                        .unwrap_or(JmapMethodError::Unknown);
+                    return JmapCoroutineState::Complete(Err(err.into()));
+                }
+
+                match serde_json::from_value::<GetResponse<T>>(args) {
+                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapGetOutput {
+                        list: r.list,
+                        not_found: r.not_found,
+                        state: r.state,
+                        keep_alive,
+                    })),
+                    Err(err) => JmapCoroutineState::Complete(Err(JmapGetError::ParseResponse(err))),
+                }
             }
-            JmapCoroutineState::Yielded(y) => return JmapCoroutineState::Yielded(y),
-        };
-
-        let Some((name, args, _)) = response.method_responses.into_iter().next() else {
-            return JmapCoroutineState::Complete(Err(JmapGetError::MissingResponse));
-        };
-
-        if name == "error" {
-            let err =
-                serde_json::from_value::<JmapMethodError>(args).unwrap_or(JmapMethodError::Unknown);
-            return JmapCoroutineState::Complete(Err(err.into()));
         }
+    }
+}
 
-        match serde_json::from_value::<GetResponse<T>>(args) {
-            Ok(r) => JmapCoroutineState::Complete(Ok(JmapGetOutput {
-                list: r.list,
-                not_found: r.not_found,
-                state: r.state,
-                keep_alive,
-            })),
-            Err(err) => JmapCoroutineState::Complete(Err(JmapGetError::ParseResponse(err))),
+enum State {
+    Send(JmapSend),
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GetArgs<'a> {
+    account_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ids: Option<&'a [String]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    properties: Option<&'a [String]>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetResponse<T> {
+    list: Vec<T>,
+    #[serde(default)]
+    not_found: Vec<String>,
+    state: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{format, string::ToString, vec};
+
+    use super::*;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct Probe {
+        id: String,
+    }
+
+    fn make_auth() -> SecretString {
+        SecretString::from("Bearer test")
+    }
+
+    fn make_url() -> Url {
+        "https://api.example.com/jmap/".parse().unwrap()
+    }
+
+    fn make_get() -> JmapGet<Probe> {
+        JmapGet::<Probe>::new(
+            "a1".to_string(),
+            &make_auth(),
+            &make_url(),
+            "Mailbox/get",
+            vec!["urn:ietf:params:jmap:mail".to_string()],
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn build_http_reply(status: u16, body: &[u8]) -> Vec<u8> {
+        let head = format!(
+            "HTTP/1.1 {} OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
+            status,
+            body.len()
+        );
+        let mut bytes = head.into_bytes();
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    #[test]
+    fn success_returns_ok() {
+        let mut cor = make_get();
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let body = br#"{
+            "methodResponses": [["Mailbox/get", {"list":[{"id":"m1"}],"notFound":[],"state":"s1"}, "c0"]],
+            "sessionState": "s1"
+        }"#;
+        let reply = build_http_reply(200, body);
+        let out = expect_complete_ok(&mut cor, &reply);
+        assert_eq!(out.list, vec![Probe { id: "m1".into() }]);
+        assert_eq!(out.state, "s1");
+    }
+
+    #[test]
+    fn method_error_returns_method_error() {
+        let mut cor = make_get();
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let body = br#"{
+            "methodResponses": [["error", {"type":"accountNotFound"}, "c0"]],
+            "sessionState": "s1"
+        }"#;
+        let reply = build_http_reply(200, body);
+        let err = expect_complete_err(&mut cor, &reply);
+        assert!(matches!(err, JmapGetError::Method(_)));
+    }
+
+    #[test]
+    fn missing_response_returns_missing_response() {
+        let mut cor = make_get();
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let body = br#"{"methodResponses": [], "sessionState": "s1"}"#;
+        let reply = build_http_reply(200, body);
+        let err = expect_complete_err(&mut cor, &reply);
+        assert!(matches!(err, JmapGetError::MissingResponse));
+    }
+
+    #[test]
+    fn parse_error_returns_parse_response() {
+        let mut cor = make_get();
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let body = br#"{
+            "methodResponses": [["Mailbox/get", {"list":"nope"}, "c0"]],
+            "sessionState": "s1"
+        }"#;
+        let reply = build_http_reply(200, body);
+        let err = expect_complete_err(&mut cor, &reply);
+        assert!(matches!(err, JmapGetError::ParseResponse(_)));
+    }
+
+    #[test]
+    fn http_error_surfaces_as_send_error() {
+        let mut cor = make_get();
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let reply = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+        let err = expect_complete_err(&mut cor, reply);
+        assert!(matches!(
+            err,
+            JmapGetError::Send(JmapSendError::HttpStatus(401))
+        ));
+    }
+
+    // --- utils
+
+    fn expect_wants_write(cor: &mut JmapGet<Probe>, arg: Option<&[u8]>) -> Vec<u8> {
+        match cor.resume(arg) {
+            JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => bytes,
+            state => panic!("expected WantsWrite, got {state:?}"),
+        }
+    }
+
+    fn expect_wants_read(cor: &mut JmapGet<Probe>) {
+        match cor.resume(None) {
+            JmapCoroutineState::Yielded(JmapYield::WantsRead) => {}
+            state => panic!("expected WantsRead, got {state:?}"),
+        }
+    }
+
+    fn expect_complete_ok(cor: &mut JmapGet<Probe>, reply: &[u8]) -> JmapGetOutput<Probe> {
+        match cor.resume(Some(reply)) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            state => panic!("expected Complete(Ok), got {state:?}"),
+        }
+    }
+
+    fn expect_complete_err(cor: &mut JmapGet<Probe>, reply: &[u8]) -> JmapGetError {
+        match cor.resume(Some(reply)) {
+            JmapCoroutineState::Complete(Err(err)) => err,
+            state => panic!("expected Complete(Err), got {state:?}"),
         }
     }
 }

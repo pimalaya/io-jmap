@@ -1,22 +1,12 @@
-//! # Standard, blocking JMAP client
+//! Standard, blocking JMAP client.
 //!
-//! Holds a single boxed stream (any blocking `Read + Write` impl)
-//! plus the bearer token and discovered [`JmapSession`], and exposes
-//! one method per common coroutine. The bare [`new`] constructor takes
-//! a pre-connected stream; callers handle TCP and TLS themselves. With
-//! one of the TLS feature flags enabled (`rustls-ring`, `rustls-aws`,
-//! `native-tls`), [`connect`] is also available and handles `https://`
-//! URLs end-to-end via
-//! [`pimalaya_stream::std::stream::StreamStd`].
+//! Wraps a single boxed stream plus the bearer token and discovered
+//! [`JmapSession`], with one method per common coroutine. [`JmapClientStd::new`]
+//! takes a pre-connected stream; with one of the TLS features enabled,
+//! [`JmapClientStd::connect`] handles `https://` URLs end-to-end.
 //!
-//! After construction, the caller must run [`session_get`] once to
-//! discover the JMAP session object (RFC 8620 §2). All subsequent
-//! method calls use that cached session for `accountId` resolution
-//! and the `apiUrl` endpoint.
-//!
-//! [`new`]: JmapClientStd::new
-//! [`connect`]: JmapClientStd::connect
-//! [`session_get`]: JmapClientStd::session_get
+//! Run [`JmapClientStd::session_get`] once after construction to populate the
+//! session; subsequent calls resolve `accountId` and `apiUrl` from it.
 
 use core::{any::Any, fmt, time::Duration};
 
@@ -43,35 +33,22 @@ use url::Url;
 use crate::coroutine::*;
 use crate::{
     rfc8620::{
-        blob_download::*, blob_upload::*, redirect::JmapRedirectYield, send::*,
-        session::JmapSession, session_get::*,
+        JmapRequest, JmapResponse, JmapSession, blob_download::*, blob_upload::*,
+        coroutine::JmapRedirectYield, send::*, session_get::*,
     },
     rfc8621::{
-        email::{EmailComparator, EmailCopy, EmailFilter, EmailImport, EmailProperty},
-        email_changes::*,
-        email_copy::*,
-        email_get::*,
-        email_import::*,
-        email_parse::*,
-        email_query::*,
-        email_set::*,
-        email_submission::*,
-        email_submission_cancel::*,
-        email_submission_get::*,
-        email_submission_query::*,
-        email_submission_set::*,
-        identity_get::*,
-        identity_set::*,
-        mailbox::{MailboxFilter, MailboxProperty, MailboxSortComparator},
-        mailbox_changes::*,
-        mailbox_get::*,
-        mailbox_query::*,
-        mailbox_set::*,
-        thread_changes::*,
-        thread_get::*,
-        vacation_response::*,
-        vacation_response_get::*,
-        vacation_response_set::*,
+        email::{
+            EmailComparator, EmailCopy, EmailFilter, EmailImport, EmailProperty, changes::*,
+            copy::*, get::*, import::*, parse::*, query::*, set::*,
+        },
+        email_submission::{cancel::*, get::*, query::*, set::*, *},
+        identity::{get::*, set::*},
+        mailbox::{
+            MailboxFilter, MailboxProperty, MailboxSortComparator, changes::*, get::*, query::*,
+            set::*,
+        },
+        thread::{changes::*, get::*},
+        vacation_response::{get::*, set::*, *},
     },
 };
 
@@ -170,11 +147,8 @@ pub enum JmapClientStdError {
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 
-/// Default ALPN protocol identifier offered during the TLS handshake
-/// for JMAP connections; JMAP rides on HTTP/1.1 so the IANA `http/1.1`
-/// token is used. Re-exported so config-driven callers can use it as a
-/// serde default and so wizard/discovery code shares a single source
-/// of truth.
+/// Default ALPN list for JMAP TLS handshakes: `["http/1.1"]` (JMAP rides on
+/// HTTP/1.1). Exposed so config-driven callers can share one source of truth.
 pub fn default_alpn() -> Vec<String> {
     vec![String::from("http/1.1")]
 }
@@ -187,9 +161,9 @@ pub struct JmapClientStd {
 }
 
 impl JmapClientStd {
-    /// Builds a client around `stream`. The caller is responsible for
-    /// opening the connection (TCP, TLS handshake if needed) and for
-    /// the bearer token / authorization header value.
+    /// Builds a client around `stream`. The caller is responsible for opening
+    /// the connection (TCP, TLS handshake if needed) and for the bearer token /
+    /// authorization header value.
     pub fn new<S: Read + Write + Send + 'static>(stream: S, http_auth: SecretString) -> Self {
         Self {
             stream: Box::new(stream),
@@ -198,17 +172,13 @@ impl JmapClientStd {
         }
     }
 
-    /// Drives any standard-shape coroutine (`Yield = JmapYield`,
-    /// `Return = Result<Output, Error>`) against the wrapped stream
-    /// until it terminates.
+    /// Drives any standard-shape coroutine (`Yield = JmapYield`) against the
+    /// wrapped stream until it terminates.
     ///
-    /// Coroutines that need richer Yield variants
-    /// ([`JmapSessionGet`], [`JmapBlobDownload`], [`JmapBlobUpload`]
-    /// with [`JmapRedirectYield::WantsRedirect`], or
-    /// [`JmapEventSource`](crate::rfc8620::event_source::JmapEventSource)
-    /// for streaming) get their own per-method client loops; see
-    /// [`Self::session_get`], [`Self::blob_upload`],
-    /// [`Self::blob_download`].
+    /// Redirect-aware coroutines ([`JmapSessionGet`], [`JmapBlobUpload`],
+    /// [`JmapBlobDownload`]) and the streaming
+    /// [`JmapEventSource`](crate::rfc8620::event_source::subscribe::JmapEventSource)
+    /// have their own per-method loops.
     pub fn run<C, T, E>(&mut self, mut coroutine: C) -> Result<T, JmapClientStdError>
     where
         C: JmapCoroutine<Yield = JmapYield, Return = Result<T, E>>,
@@ -233,12 +203,8 @@ impl JmapClientStd {
         }
     }
 
-    /// Builds a client from a pre-connected stream, the bearer / basic
-    /// HTTP credential and an already-discovered [`JmapSession`]. Skips
-    /// the [`session_get`] step; useful when an external runner has
-    /// already resolved `/.well-known/jmap`.
-    ///
-    /// [`session_get`]: JmapClientStd::session_get
+    /// Builds a client from a pre-connected stream and an already-discovered
+    /// [`JmapSession`]. Skips [`Self::session_get`].
     pub fn from_parts<S: Read + Write + Send + 'static>(
         stream: S,
         http_auth: SecretString,
@@ -251,10 +217,9 @@ impl JmapClientStd {
         }
     }
 
-    /// Connects to `url` and runs the TLS handshake when the scheme is
-    /// `https` or `jmaps`. `http` and `jmap` go through plain TCP.
-    /// ALPN is read from `tls.rustls.alpn` (use [`default_alpn`] for
-    /// the JMAP-conformant `["http/1.1"]`); an empty vec skips ALPN.
+    /// Connects to `url`, doing a TLS handshake for `https` / `jmaps` (plain
+    /// TCP for `http` / `jmap`). ALPN comes from `tls.rustls.alpn` (see
+    /// [`default_alpn`]); empty vec skips ALPN.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -280,12 +245,9 @@ impl JmapClientStd {
             }
         };
 
-        // Per-read timeout so the watch-mailbox loop polls its
-        // shutdown atomic every 5s instead of blocking forever on the
-        // SSE socket between push frames; mirrors the IMAP IDLE
-        // pattern (io-imap's connect does the same). Per-read (not
-        // per-operation), so large JMAP responses are fine as long as
-        // TCP packets keep arriving.
+        // NOTE: 5s per-read (not per-operation) timeout so the watch loop
+        // polls its shutdown atomic between SSE push frames; large JMAP
+        // responses keep working as long as TCP packets keep arriving.
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
 
         Ok(Self {
@@ -295,25 +257,19 @@ impl JmapClientStd {
         })
     }
 
-    /// Replaces the underlying stream; useful when JMAP redirects to a
-    /// different host, or when the session's `apiUrl`, `uploadUrl` or
-    /// `downloadUrl` lives on a different authority than where the
-    /// client first connected.
+    /// Replaces the underlying stream; useful when `apiUrl`, `uploadUrl` or
+    /// `downloadUrl` resolves to a different authority than the first
+    /// connection target, or after a redirect.
     pub fn set_stream<S: Read + Write + Send + 'static>(&mut self, stream: S) {
         self.stream = Box::new(stream);
     }
 
-    /// Returns the cached session, if [`session_get`] has run.
-    ///
-    /// [`session_get`]: JmapClientStd::session_get
+    /// Returns the cached session, if [`Self::session_get`] has run.
     pub fn session(&self) -> Option<&JmapSession> {
         self.session.as_ref()
     }
 
     /// Returns the pre-formatted HTTP `Authorization` header value.
-    /// Useful when the caller has to spin up an auxiliary client (e.g.
-    /// against the session's `downloadUrl` when it lives on a
-    /// different authority than the `apiUrl`).
     pub fn http_auth(&self) -> &SecretString {
         &self.http_auth
     }
@@ -326,13 +282,9 @@ impl JmapClientStd {
 
     /// Runs [`JmapSessionGet`] and caches the discovered session.
     ///
-    /// Pass either a base URL for `/.well-known/jmap` discovery
-    /// (`https://mail.example.com`) or a direct session endpoint
-    /// (`https://api.example.com/jmap/session/`).
-    ///
-    /// A redirect terminates the call with
-    /// [`JmapClientStdError::UnexpectedRedirect`]; the caller must
-    /// open a new connection to the redirect target and retry.
+    /// `url` is either a base URL for `/.well-known/jmap` discovery or a
+    /// direct session endpoint. A 3xx response terminates with
+    /// [`JmapClientStdError::UnexpectedRedirect`].
     pub fn session_get(&mut self, url: &Url) -> Result<&JmapSession, JmapClientStdError> {
         let mut coroutine = JmapSessionGet::new(&self.http_auth, url);
         let mut buf = [0u8; READ_BUFFER_SIZE];
@@ -360,9 +312,9 @@ impl JmapClientStd {
         }
     }
 
-    /// Sends a raw JMAP request and returns the raw [`JmapResponse`].
-    /// Lower level than the per-method helpers: useful for passthrough
-    /// CLIs and ad-hoc requests with custom `using` capabilities.
+    /// Sends a raw JMAP request and returns the raw [`JmapResponse`]. Useful
+    /// for passthrough CLIs and ad-hoc requests with custom `using`
+    /// capabilities.
     // TODO: move this to one level down
     pub fn send_raw(&mut self, request: JmapRequest) -> Result<JmapResponse, JmapClientStdError> {
         let session = self.session_or_err()?;
@@ -373,12 +325,9 @@ impl JmapClientStd {
 
     // ---- Blob (RFC 8620 §6) ----------------------------------------------
 
-    /// Uploads a blob to `upload_url` (RFC 8620 §6.1). The caller must
-    /// resolve the session's `uploadUrl` template (e.g. substitute
-    /// `{accountId}`) before passing it here.
-    ///
-    /// A redirect terminates the call with
-    /// [`JmapClientStdError::UnexpectedRedirect`].
+    /// Uploads a blob to `upload_url` (RFC 8620 §6.1). The caller must resolve
+    /// the session's `uploadUrl` template (e.g. substitute `{accountId}`).
+    /// A 3xx response terminates with [`JmapClientStdError::UnexpectedRedirect`].
     pub fn blob_upload(
         &mut self,
         upload_url: &Url,
@@ -408,12 +357,9 @@ impl JmapClientStd {
         }
     }
 
-    /// Downloads a blob from `download_url` (RFC 8620 §6.2). The
-    /// caller must resolve the session's `downloadUrl` template before
-    /// passing it here.
-    ///
-    /// A redirect terminates the call with
-    /// [`JmapClientStdError::UnexpectedRedirect`].
+    /// Downloads a blob from `download_url` (RFC 8620 §6.2). The caller must
+    /// resolve the session's `downloadUrl` template. A 3xx response terminates
+    /// with [`JmapClientStdError::UnexpectedRedirect`].
     pub fn blob_download(&mut self, download_url: &Url) -> Result<Vec<u8>, JmapClientStdError> {
         let mut coroutine = JmapBlobDownload::new(&self.http_auth, download_url);
         let mut buf = [0u8; READ_BUFFER_SIZE];
@@ -499,9 +445,7 @@ impl JmapClientStd {
 
     // ---- Email (RFC 8621 §4) ---------------------------------------------
 
-    /// Runs [`JmapEmailGet`] (`Email/get`). `properties` accepts the
-    /// typed [`EmailProperty`] enum; serde handles the wire-spelling
-    /// rename per the enum's `rename_all = "camelCase"` annotation.
+    /// Runs [`JmapEmailGet`] (`Email/get`).
     pub fn email_get(
         &mut self,
         ids: Vec<String>,
@@ -525,7 +469,7 @@ impl JmapClientStd {
     /// Runs [`JmapEmailQuery`] (batched `Email/query` + `Email/get`).
     pub fn email_query(
         &mut self,
-        filter: Option<crate::rfc8620::filter::Filter<EmailFilter>>,
+        filter: Option<crate::rfc8620::Filter<EmailFilter>>,
         sort: Option<Vec<EmailComparator>>,
         position: Option<u64>,
         limit: Option<u64>,
@@ -634,8 +578,7 @@ impl JmapClientStd {
 
     // ---- Identity (RFC 8621 §6) ------------------------------------------
 
-    /// Runs [`JmapIdentityGet`] (`Identity/get`). Pass `ids: None` to
-    /// fetch all identities.
+    /// Runs [`JmapIdentityGet`] (`Identity/get`); `ids: None` fetches all.
     pub fn identity_get(
         &mut self,
         ids: Option<Vec<String>>,
@@ -707,8 +650,7 @@ impl JmapClientStd {
 
     // ---- VacationResponse (RFC 8621 §8) ----------------------------------
 
-    /// Runs [`JmapVacationResponseGet`] (`VacationResponse/get`).
-    /// Returns the singleton vacation response, if any.
+    /// Runs [`JmapVacationResponseGet`]; returns the singleton, if any.
     pub fn vacation_response_get(
         &mut self,
     ) -> Result<Option<VacationResponse>, JmapClientStdError> {
@@ -716,8 +658,8 @@ impl JmapClientStd {
         Ok(self.run(coroutine)?.vacation_response)
     }
 
-    /// Runs [`JmapVacationResponseSet`] (`VacationResponse/set`).
-    /// Returns the updated singleton, if the server echoed it back.
+    /// Runs [`JmapVacationResponseSet`]; returns the updated singleton if the
+    /// server echoed it back.
     pub fn vacation_response_set(
         &mut self,
         patch: VacationResponseUpdate,
@@ -737,19 +679,10 @@ impl fmt::Debug for JmapClientStd {
     }
 }
 
-/// Marker for everything the client can run against; auto-implemented
-/// for any blocking `Read + Write + Send + 'static` impl. The `Send`
-/// supertrait flows the auto-trait through the `Box<dyn JmapStream>`
-/// type erasure so `JmapClientStd` can travel between threads in
-/// worker pools (e.g. neverest's per-mailbox dispatch). Every concrete
-/// stream the pimalaya stack hands in (`TcpStream`, `UnixStream`,
-/// rustls/native-tls wrappers, `StreamStd`) is already `Send`.
-/// [`as_any_mut`] lets specialized callers (e.g. byte-level proxies
-/// that need [`StreamStd::set_read_timeout`]) downcast the boxed
-/// stream back to its concrete type.
-///
-/// [`as_any_mut`]: JmapStream::as_any_mut
-/// [`StreamStd::set_read_timeout`]: pimalaya_stream::std::stream::StreamStd::set_read_timeout
+/// Erased stream the client can drive: auto-implemented for any blocking
+/// `Read + Write + Send + 'static`. `Send` flows through the `Box<dyn …>` so
+/// `JmapClientStd` can move between worker threads; [`Self::as_any_mut`] lets
+/// specialized callers downcast back to the concrete stream.
 pub trait JmapStream: Read + Write + Send + Any {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }

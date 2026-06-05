@@ -1,19 +1,21 @@
-//! Tests for RFC 8621 — JMAP for Mail.
+//! Tests for RFC 8621: JMAP for Mail.
 //!
 //! All tests drive JMAP coroutines against pre-crafted in-memory HTTP
 //! response buffers. No network connection is made.
 
 use io_jmap::{
     coroutine::*,
-    rfc8620::session::JmapSession,
+    rfc8620::JmapSession,
     rfc8621::{
-        email_get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOutput},
-        email_query::{JmapEmailQuery, JmapEmailQueryError, JmapEmailQueryOutput},
-        mailbox::MailboxCreate,
-        mailbox_get::{JmapMailboxGet, JmapMailboxGetError, JmapMailboxGetOutput},
-        mailbox_query::{JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOutput},
-        mailbox_set::{
-            JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError, JmapMailboxSetOutput,
+        email::{
+            get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOutput},
+            query::{JmapEmailQuery, JmapEmailQueryError, JmapEmailQueryOutput},
+        },
+        mailbox::{
+            MailboxCreate,
+            get::{JmapMailboxGet, JmapMailboxGetError, JmapMailboxGetOutput},
+            query::{JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOutput},
+            set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError, JmapMailboxSetOutput},
         },
     },
 };

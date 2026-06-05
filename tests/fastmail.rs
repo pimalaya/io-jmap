@@ -8,7 +8,7 @@
 //! cargo test --test fastmail -- --include-ignored
 //! ```
 //!
-//! The `FASTMAIL_BEARER_TOKEN` value must be the full `Authorization`
+//! The `FASTMAIL_API_TOKEN` value must be the full `Authorization`
 //! header value, e.g. `"Bearer <app-password-or-token>"`.
 
 mod common;
@@ -22,7 +22,7 @@ use io_http::rfc6750::bearer::BearerToken;
 /// Exercises session discovery, mailbox CRUD, email
 /// import/query/get/update, thread fetch, blob upload, and cleanup.
 #[test]
-#[ignore = "requires FASTMAIL_BEARER_TOKEN + FASTMAIL_EMAIL env vars and --include-ignored"]
+#[ignore = "requires FASTMAIL_API_TOKEN + FASTMAIL_EMAIL env vars and --include-ignored"]
 fn fastmail() {
     let email = env::var("FASTMAIL_EMAIL").expect("FASTMAIL_EMAIL not set");
     let token = env::var("FASTMAIL_API_TOKEN").expect("FASTMAIL_API_TOKEN not set");

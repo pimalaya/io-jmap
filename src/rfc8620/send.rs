@@ -1,6 +1,60 @@
-//! Base I/O-free coroutine to send a JMAP API request.
+//! Base coroutine all higher-level JMAP coroutines delegate to:
+//! serialises a [`JmapRequest`] as JSON, drives an HTTP/1.1 POST, and
+//! deserialises the [`JmapResponse`] body.
+//!
+//! 3xx redirects surface as [`JmapSendError::UnexpectedRedirect`];
+//! redirect-aware coroutines drive [`Http11Send`] directly instead.
+//!
+//! [`JmapRequest`]: crate::rfc8620::JmapRequest
+//! [`JmapResponse`]: crate::rfc8620::JmapResponse
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! use io_jmap::{
+//!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
+//!     rfc8620::{JmapBatch, send::JmapSend},
+//! };
+//! use secrecy::SecretString;
+//! use serde_json::json;
+//! use url::Url;
+//!
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("api.example.com:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let mut batch = JmapBatch::new();
+//! batch.add("Email/get", json!({ "accountId": "a1", "ids": null }));
+//! let request = batch.into_request(vec!["urn:ietf:params:jmap:core".into()]);
+//!
+//! let api_url: Url = "https://api.example.com/jmap/".parse().unwrap();
+//! let auth = SecretString::from("Bearer xyz");
+//! let mut coroutine = JmapSend::new(&auth, &api_url, request).unwrap();
+//! let mut arg = None;
+//!
+//! let out = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         JmapCoroutineState::Yielded(JmapYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         JmapCoroutineState::Complete(Ok(out)) => break out,
+//!         JmapCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("{:?}", out.response);
+//! ```
 
-use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
+use core::fmt;
 
 use io_http::{
     coroutine::*,
@@ -12,60 +66,25 @@ use io_http::{
 };
 use log::trace;
 use secrecy::{ExposeSecret, SecretString};
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use url::Url;
 
 use crate::coroutine::*;
+use crate::rfc8620::{JmapRequest, JmapResponse};
 
-/// The JMAP Request object (RFC 8620 §3.3).
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JmapRequest {
-    /// Capability URNs required by the methods in this request.
-    pub using: Vec<String>,
-
-    /// The method calls to execute, as `(methodName, args, callId)` tuples.
-    pub method_calls: Vec<(String, serde_json::Value, String)>,
-
-    /// Client-assigned IDs for newly created objects.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_ids: Option<BTreeMap<String, String>>,
-}
-
-/// The JMAP Response object (RFC 8620 §3.4).
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JmapResponse {
-    /// Method responses in `(methodName, result, callId)` format.
-    ///
-    /// If a method failed, `methodName` is `"error"` and `result`
-    /// is a [`JmapMethodError`] object.
-    ///
-    /// [`JmapMethodError`]: crate::rfc8620::error::JmapMethodError
-    pub method_responses: Vec<(String, serde_json::Value, String)>,
-
-    /// Server-assigned IDs for objects created by this request.
-    #[serde(default)]
-    pub created_ids: Option<BTreeMap<String, String>>,
-
-    /// The current state of the session after this request.
-    pub session_state: String,
-}
-
-/// Errors that can occur during the coroutine progression.
+/// Failure causes during the JMAP send flow.
 #[derive(Debug, Error)]
 pub enum JmapSendError {
-    #[error("Send HTTP request error: {0}")]
-    SendHttp(#[from] Http11SendError),
-    #[error("Serialize JMAP request error: {0}")]
-    SerializeRequest(#[source] serde_json::Error),
-    #[error("Parse JMAP response error: {0}")]
-    ParseResponse(#[source] serde_json::Error),
-    #[error("JMAP server returned HTTP {0}")]
+    #[error("JMAP send failed: HTTP {0}")]
     HttpStatus(u16),
-    #[error("JMAP server returned unexpected redirect")]
+    #[error("JMAP send failed: unexpected redirect")]
     UnexpectedRedirect,
+    #[error("JMAP send failed: {0}")]
+    Send(#[from] Http11SendError),
+    #[error("JMAP send failed: serialize request: {0}")]
+    SerializeRequest(#[source] serde_json::Error),
+    #[error("JMAP send failed: parse response: {0}")]
+    ParseResponse(#[source] serde_json::Error),
 }
 
 /// Successful terminal output of the [`JmapSend`] coroutine.
@@ -77,27 +96,13 @@ pub struct JmapSendOutput {
     pub keep_alive: bool,
 }
 
-/// I/O-free coroutine to send a JMAP API request and receive the response.
-///
-/// This is the base coroutine that all higher-level JMAP coroutines
-/// delegate to. It wraps [`Http11Send`] and adds JSON serialization of
-/// the request body and deserialization of the response body.
-///
-/// A 3xx response surfaces as
-/// [`JmapSendError::UnexpectedRedirect`]; redirect-aware coroutines
-/// ([`JmapSessionGet`](crate::rfc8620::session_get::JmapSessionGet),
-/// [`JmapBlobDownload`](crate::rfc8620::blob_download::JmapBlobDownload),
-/// [`JmapBlobUpload`](crate::rfc8620::blob_upload::JmapBlobUpload))
-/// drive [`Http11Send`] directly and forward the redirect to the
-/// caller.
+/// I/O-free coroutine sending one JMAP API request and parsing its response.
 pub struct JmapSend {
-    send: Http11Send,
+    state: State,
 }
 
 impl JmapSend {
-    /// Creates a new JMAP request coroutine.
-    ///
-    /// Serializes `request` as JSON and builds an HTTP POST to `api_url`
+    /// Serialises `request` as JSON and builds an HTTP POST to `api_url`
     /// with the bearer token from `http_auth`.
     pub fn new(
         http_auth: &SecretString,
@@ -120,7 +125,7 @@ impl JmapSend {
         trace!("send JMAP request to {api_url}");
 
         Ok(Self {
-            send: Http11Send::new(http_request),
+            state: State::Send(Http11Send::new(http_request)),
         })
     }
 }
@@ -130,92 +135,183 @@ impl JmapCoroutine for JmapSend {
     type Return = Result<JmapSendOutput, JmapSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        match self.send.resume(arg) {
-            HttpCoroutineState::Complete(Ok(HttpSendOutput {
-                response,
-                keep_alive,
-                ..
-            })) => {
-                if !response.status.is_success() {
-                    let err = JmapSendError::HttpStatus(*response.status);
-                    return JmapCoroutineState::Complete(Err(err));
+        trace!("send: {}", self.state);
+        match &mut self.state {
+            State::Send(send) => match send.resume(arg) {
+                HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
+                    JmapCoroutineState::Yielded(JmapYield::WantsRead)
                 }
+                HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
+                    JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes))
+                }
+                HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect { .. }) => {
+                    JmapCoroutineState::Complete(Err(JmapSendError::UnexpectedRedirect))
+                }
+                HttpCoroutineState::Complete(Err(err)) => {
+                    JmapCoroutineState::Complete(Err(err.into()))
+                }
+                HttpCoroutineState::Complete(Ok(HttpSendOutput {
+                    response,
+                    keep_alive,
+                    ..
+                })) => {
+                    if !response.status.is_success() {
+                        let err = JmapSendError::HttpStatus(*response.status);
+                        return JmapCoroutineState::Complete(Err(err));
+                    }
 
-                match serde_json::from_slice::<JmapResponse>(&response.body) {
-                    Ok(response) => JmapCoroutineState::Complete(Ok(JmapSendOutput {
-                        response,
-                        keep_alive,
-                    })),
-                    Err(err) => {
-                        JmapCoroutineState::Complete(Err(JmapSendError::ParseResponse(err)))
+                    match serde_json::from_slice::<JmapResponse>(&response.body) {
+                        Ok(response) => JmapCoroutineState::Complete(Ok(JmapSendOutput {
+                            response,
+                            keep_alive,
+                        })),
+                        Err(err) => {
+                            JmapCoroutineState::Complete(Err(JmapSendError::ParseResponse(err)))
+                        }
                     }
                 }
-            }
-            HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
-                JmapCoroutineState::Yielded(JmapYield::WantsRead)
-            }
-            HttpCoroutineState::Yielded(HttpSendYield::WantsWrite(bytes)) => {
-                JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes))
-            }
-            HttpCoroutineState::Yielded(HttpSendYield::WantsRedirect { .. }) => {
-                JmapCoroutineState::Complete(Err(JmapSendError::UnexpectedRedirect))
-            }
-            HttpCoroutineState::Complete(Err(err)) => JmapCoroutineState::Complete(Err(err.into())),
+            },
         }
     }
 }
 
-/// Builder for batched JMAP requests.
-///
-/// JMAP allows multiple method calls in a single HTTP request. This
-/// builder generates call IDs and supports back-references via the
-/// JMAP Result Reference (RFC 8620 §7.1).
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let mut batch = JmapBatch::new();
-/// let query_id = batch.add("Email/query", json!({ "accountId": "...", "filter": {} }));
-/// batch.add("Email/get", json!({
-///     "accountId": "...",
-///     "#ids": {
-///         "resultOf": query_id,
-///         "name": "Email/query",
-///         "path": "/ids"
-///     }
-/// }));
-/// let request = batch.into_request(vec!["urn:ietf:params:jmap:core".into(),
-///                                       "urn:ietf:params:jmap:mail".into()]);
-/// ```
-#[derive(Debug, Default)]
-pub struct JmapBatch {
-    calls: Vec<(String, serde_json::Value, String)>,
-    counter: usize,
+enum State {
+    Send(Http11Send),
 }
 
-impl JmapBatch {
-    /// Creates a new empty batch.
-    pub fn new() -> Self {
-        Self::default()
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Send(_) => f.write_str("send"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{format, string::ToString, vec, vec::Vec};
+
+    use super::*;
+    use crate::rfc8620::JmapBatch;
+
+    fn make_auth() -> SecretString {
+        SecretString::from("Bearer test")
     }
 
-    /// Adds a method call to the batch.
-    ///
-    /// Returns the call ID (`"c0"`, `"c1"`, …) for use in
-    /// back-references from later calls.
-    pub fn add(&mut self, method: impl Into<String>, args: serde_json::Value) -> String {
-        let call_id = format!("c{}", self.counter);
-        self.counter += 1;
-        self.calls.push((method.into(), args, call_id.clone()));
-        call_id
+    fn make_url() -> Url {
+        "https://api.example.com/jmap/".parse().unwrap()
     }
 
-    /// Consumes the batch and returns a [`JmapRequest`].
-    pub fn into_request(self, using: Vec<String>) -> JmapRequest {
-        JmapRequest {
-            using,
-            method_calls: self.calls,
-            created_ids: None,
+    fn make_request() -> JmapRequest {
+        let mut batch = JmapBatch::new();
+        batch.add("Mailbox/get", serde_json::json!({ "accountId": "a1" }));
+        batch.into_request(vec!["urn:ietf:params:jmap:core".to_string()])
+    }
+
+    fn make_response_body() -> Vec<u8> {
+        br#"{
+            "methodResponses": [["Mailbox/get", {"list":[],"notFound":[],"state":"s1"}, "c0"]],
+            "sessionState": "s1"
+        }"#
+        .to_vec()
+    }
+
+    fn build_http_reply(status: u16, body: &[u8]) -> Vec<u8> {
+        let head = format!(
+            "HTTP/1.1 {} OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
+            status,
+            body.len()
+        );
+        let mut bytes = head.into_bytes();
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    #[test]
+    fn success_returns_ok() {
+        let mut cor = JmapSend::new(&make_auth(), &make_url(), make_request()).unwrap();
+
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let reply = build_http_reply(200, &make_response_body());
+        let out = expect_complete_ok(&mut cor, &reply);
+        assert_eq!(out.response.method_responses.len(), 1);
+        assert_eq!(out.response.session_state, "s1");
+    }
+
+    #[test]
+    fn http_error_returns_status() {
+        let mut cor = JmapSend::new(&make_auth(), &make_url(), make_request()).unwrap();
+
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let reply = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
+        let err = expect_complete_err(&mut cor, reply);
+        assert!(matches!(err, JmapSendError::HttpStatus(401)));
+    }
+
+    #[test]
+    fn redirect_returns_unexpected_redirect() {
+        let mut cor = JmapSend::new(&make_auth(), &make_url(), make_request()).unwrap();
+
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let reply = b"HTTP/1.1 301 Moved\r\nLocation: https://other.example.com/jmap/\r\nContent-Length: 0\r\n\r\n";
+        let err = expect_complete_err(&mut cor, reply);
+        assert!(matches!(err, JmapSendError::UnexpectedRedirect));
+    }
+
+    #[test]
+    fn invalid_json_returns_parse_error() {
+        let mut cor = JmapSend::new(&make_auth(), &make_url(), make_request()).unwrap();
+
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let reply = build_http_reply(200, b"{not json");
+        let err = expect_complete_err(&mut cor, &reply);
+        assert!(matches!(err, JmapSendError::ParseResponse(_)));
+    }
+
+    #[test]
+    fn batch_assigns_sequential_ids() {
+        let mut batch = JmapBatch::new();
+        let a = batch.add("A", serde_json::json!({}));
+        let b = batch.add("B", serde_json::json!({}));
+        assert_eq!(a, "c0");
+        assert_eq!(b, "c1");
+    }
+
+    // --- utils
+
+    fn expect_wants_write(cor: &mut JmapSend, arg: Option<&[u8]>) -> Vec<u8> {
+        match cor.resume(arg) {
+            JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => bytes,
+            state => panic!("expected WantsWrite, got {state:?}"),
+        }
+    }
+
+    fn expect_wants_read(cor: &mut JmapSend) {
+        match cor.resume(None) {
+            JmapCoroutineState::Yielded(JmapYield::WantsRead) => {}
+            state => panic!("expected WantsRead, got {state:?}"),
+        }
+    }
+
+    fn expect_complete_ok(cor: &mut JmapSend, reply: &[u8]) -> JmapSendOutput {
+        match cor.resume(Some(reply)) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            state => panic!("expected Complete(Ok), got {state:?}"),
+        }
+    }
+
+    fn expect_complete_err(cor: &mut JmapSend, reply: &[u8]) -> JmapSendError {
+        match cor.resume(Some(reply)) {
+            JmapCoroutineState::Complete(Err(err)) => err,
+            state => panic!("expected Complete(Err), got {state:?}"),
         }
     }
 }

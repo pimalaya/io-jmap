@@ -13,11 +13,10 @@ documentation = "https://docs.rs/io-jmap/latest/io_jmap"
 repository = "https://github.com/pimalaya/io-jmap"
 
 [package.metadata.docs.rs]
-all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["client"]
+default = ["rustls-ring"]
 client = []
 rustls-ring = ["client", "pimalaya-stream/rustls-ring", "dep:anyhow", "dep:pimalaya-stream"]
 rustls-aws = ["client", "pimalaya-stream/rustls-aws", "dep:anyhow", "dep:pimalaya-stream"]
@@ -34,7 +33,7 @@ url = { version = "2.5", default-features = false }
 
 [dependencies]
 anyhow = { version = "1", optional = true }
-io-http = { version = "0.0.3", default-features = false }
+io-http = { version = "0.1", default-features = false }
 log = { version = "0.4", default-features = false }
 pimalaya-stream = { version = "0.0.1", default-features = false, optional = true }
 secrecy = { version = "0.10", default-features = false }
@@ -43,10 +42,8 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, features = ["serde"] }
 
-# [patch.crates-io]
-# io-http.path = "../io-http"
-# pimalaya-stream.path = "../stream"
-
 [patch.crates-io]
-io-http.git = "https://github.com/pimalaya/io-http"
-pimalaya-stream.git = "https://github.com/pimalaya/stream"
+# io-http.path = "../io-http"
+# io-http.git = "https://github.com/pimalaya/io-http"
+# pimalaya-stream.path = "../stream"
+# pimalaya-stream.git = "https://github.com/pimalaya/stream"
