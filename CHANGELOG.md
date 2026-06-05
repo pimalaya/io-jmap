@@ -7,34 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Fixed `JmapEventSource` mis-routing the head reader's leftover bytes (the start of the chunked body that arrives in the same socket read as the HTTP head) straight into the SSE parser. Those bytes are chunk-encoded; the parser saw `<hex chunk size>\r\n` lines as unknown SSE fields and silently split multi-chunk field values at the size-header boundary, truncating `data:` payloads and breaking JSON decoding. Leftover bytes now go through `Http11ReadChunksStream` first.
-
-- Fixed cooperative shutdown for long-lived `JmapClientStd::watch_mailbox` callers: `JmapClientStd::connect` now sets a 5s per-read timeout on the underlying `StreamStd`, mirroring `io-imap`'s pattern. The watch driver already treated `WouldBlock` / `TimedOut` as "no new bytes", but without a timeout the SSE socket blocked indefinitely between push frames, so a Ctrl+C-driven shutdown atomic could not be polled until the server sent its next ping/state. The timeout is per-read (not per-operation), so non-watch HTTP responses remain unaffected as long as TCP packets keep arriving.
-
 ### Added
 
-- Added basic I/O-free coroutines.
+- Added the `JmapCoroutine` mirroring `core::ops::Coroutine`.
 
-- Added standard, blocking client.
+  The trait is composed of `Yield` and `Return` associated types, as well as a two-variant `JmapCoroutineState<Y, R>` (`Yielded(Y)` and `Complete(R)`). Standard coroutines pick the shared `JmapYield { WantsRead, WantsWrite(Vec<u8>) }`; the three redirect-capable coroutines (`JmapSessionGet`, `JmapBlobUpload`, `JmapBlobDownload`) declare their own `JmapRedirectYield` with an extra `WantsRedirect { url, keep_alive, same_origin }` variant.
 
-- Added JMAP Event Source types and parser (`rfc8620::event_source`): `StateChange`, `TypeStates`, `parse_state_change()`, and `subscribe_url()` for composing the SSE endpoint URL from the session. Pairs with `io-http`'s `sse` module to drive RFC 8620 §7.2 push.
+- Added the `jmap_try!` macro: coroutine equivalent of `?`.
 
-### Changed
+  Advances one inner resume step, re-yields intermediate `Yielded(y)` (via `Into`), and short-circuits on `Complete(Err(_))`.
 
-- Unified all standard-shape coroutines under a single `JmapCoroutine` trait (in `crate::coroutine`) with associated `Output` and `Error`. `resume` now returns `JmapCoroutineState<Output, Error>` directly; the per-coroutine `Jmap*Result` enums are gone, replaced by small `Jmap*Ok` output structs. `JmapClientStd::run<C: JmapCoroutine>` drives any coroutine to completion. Exempt (kept as-is with their own result enum because they carry a `WantsRedirect` variant): `JmapSessionGet`, `JmapBlobDownload`, `JmapBlobUpload`. Internal helpers (`JmapSend`, `JmapGet<T>`, `JmapSet<T>`) keep their own result enums.
+- Added I/O-free JMAP Core coroutines following RFC 8620.
 
-- Migrated the coroutine trait to the generator shape mirrored from io-http: associated `Yield` and `Return` types; `resume` returns a two-variant `JmapCoroutineState<Y, R>` (`Yielded(Y)` / `Complete(R)`); the standard I/O-only yield is `JmapYield` (`WantsRead` / `WantsWrite(Vec<u8>)`); per-coroutine `Jmap*Output` structs replace anonymous multi-field `Ok { … }` variants. The three redirect-capable coroutines (`JmapSessionGet`, `JmapBlobDownload`, `JmapBlobUpload`) now also implement `JmapCoroutine` with a shared `JmapRedirectYield` (adds `WantsRedirect { url, keep_alive, same_origin }`) instead of their bespoke result enums. `JmapClientStd::run<C, T, E>` is now generic over the coroutine and constrained to `Yield = JmapYield`; per-method loops handle the redirect-aware coroutines. `JmapEventSource` follows the same shape with its own `JmapEventSourceYield` (adds `Frame(StateChange)`).
+  session-get (with `/.well-known/jmap` discovery), send (single `JmapRequest` over HTTP/1.1), get, set, query, changes, query-changes (generic over the JMAP method name and capabilities), blob-upload and blob-download.
 
-- Aligned every coroutine with the canonical io-imap / io-smtp / io-http template: normalized error messages to the `"JMAP <Method> failed: <detail>"` prefix; added a `jmap_try!` macro in `crate::coroutine` mirroring `imap_try!` / `http_try!`, plus `From<HttpSendYield> for JmapRedirectYield` so wrapping coroutines collapse their inner `match send.resume(...)` boilerplate to one line. Every coroutine now wraps its inner state in a private `State` enum with a `fmt::Display` impl and traces it on entry to `resume` for consistent low-level logs. Each module gained a runnable `# Example` block in its `//!` doc, the file layout is now strictly top-down (error → output → coroutine struct → impl → State → tests), and `rfc8620/{session_get, send, blob_download, blob_upload, get, set, query, changes, query_changes}` ship a canonical 5-test unit suite (success, HTTP error, redirect/parse error, parse failure, method-specific edge case) with shared `expect_*` helpers.
+- Added I/O-free JMAP for Mail coroutines following RFC 8621.
 
-- Renamed the kebab-case `rfc8620/` file names to snake_case to drop the `#[path = "…"]` indirection: `blob-download.rs` → `blob_download.rs`, `blob-upload.rs` → `blob_upload.rs`, `query-changes.rs` → `query_changes.rs`, `session-get.rs` → `session_get.rs`. Public module paths (`rfc8620::blob_download`, etc.) are unchanged.
+  `Mailbox/get`, `Mailbox/set`, `Mailbox/query` (batched with `Mailbox/get` via Result Reference), `Mailbox/changes`, `Email/get`, `Email/set`, `Email/query` (batched with `Email/get`), `Email/changes`, `Email/copy`, `Email/import`, `Email/parse`, `Thread/get`, `Thread/changes`, `Identity/get`, `Identity/set`, `EmailSubmission/get`, `EmailSubmission/set`, `EmailSubmission/query` (batched), `EmailSubmission/set` cancel, `VacationResponse/get`, `VacationResponse/set`.
 
-- Split `rfc8621/` into per-domain folders: `email/`, `email_submission/`, `identity/`, `mailbox/`, `thread/`, `vacation_response/`. Each folder bundles a private `types.rs` (re-exported via `#[doc(inline)] pub use types::*;`) and one `pub mod` per JMAP method. Public paths move from `rfc8621::email_get::JmapEmailGet` to `rfc8621::email::get::JmapEmailGet`; type re-exports keep `rfc8621::email::Email` working. Capability URN constants moved with their domain: `SUBMISSION_CAPABILITY` now lives in `rfc8621::email_submission`, `VACATION_RESPONSE_CAPABILITY` in `rfc8621::vacation_response`, `MAIL_CAPABILITY` at the `rfc8621` root; `CORE_CAPABILITY` at the `rfc8620` root.
+- Added I/O-free JMAP Event Source streaming coroutine following RFC 8620 §7.2.
 
-- Consolidated `rfc8620/` data types into a single private `rfc8620/types.rs` re-exported via `#[doc(inline)] pub use types::*;`, leaving the directory with only coroutine files plus a `coroutine.rs` for shared coroutine plumbing (currently `JmapRedirectYield`). `JmapMethodError`, `SetError`, `Filter` / `FilterOperator` / `FilterOperatorKind`, `JmapSession` / `JmapAccountInfo`, `ResultReference`, `JmapRequest` / `JmapResponse` / `JmapBatch`, and `AddedItem` are now accessible at the `rfc8620::` root (e.g. `rfc8620::JmapSession`, `rfc8620::JmapBatch`). The dedicated `error.rs`, `filter.rs`, `redirect.rs`, `result_reference.rs`, `session.rs` files are gone.
+  Composes `Http11ReadHeaders` + `Http11ReadChunksStream` + `SseFrameParser` + `parse_state_change` into a single state machine. Yields one `JmapStateChange` per push frame; empty SSE frames surface as the default state change (keep-alive). Supports cooperative shutdown via a shared `AtomicBool`.
 
-- Restructured `rfc8620/event_source/` into a sub-module with `mod.rs`, private `types.rs` (re-exported), `coroutine.rs` (`JmapEventSourceYield`), `subscribe.rs` (`JmapEventSource` + `JmapEventSourceError`), and `utils.rs` (`parse_state_change`, `subscribe_url`). Public paths move from `rfc8620::event_source::JmapEventSource` to `rfc8620::event_source::subscribe::JmapEventSource`; type re-exports keep `rfc8620::event_source::StateChange` working.
+- Added the `client` cargo feature enabling `JmapClientStd::new(stream, http_auth)`.
+
+  Blocking light client wrapping any `Read + Write` stream and exposing one method per JMAP coroutine. Caches the discovered `JmapSession` after the first `session_get` and resolves `accountId` and `apiUrl` from it on subsequent calls.
+
+- Added the `rustls-ring` cargo feature (default) enabling `JmapClientStd::connect(url, tls, http_auth)`.
+
+  Opens `http://` / `https://` (or `jmap://` / `jmaps://`) URLs via [pimalaya/stream](https://github.com/pimalaya/stream) with rustls + ring crypto provider, runs the TLS handshake when needed, and sets a 5 s per-read timeout so long-lived watch loops can poll their shutdown atomic between push frames.
+
+- Added the `rustls-aws` cargo feature.
+
+  Same full client as `rustls-ring` but with the aws-lc-rs crypto provider.
+
+- Added the `native-tls` cargo feature.
+
+  Same full client backed by the platform's `native-tls` implementation.
+
+- Added the `vendored` cargo feature.
+
+  Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
 [unreleased]: https://github.com/pimalaya/io-jmap/compare/root..HEAD
