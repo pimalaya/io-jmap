@@ -4,17 +4,52 @@
 //! # Example
 //!
 //! ```rust,no_run
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
 //! use io_jmap::{
+//!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
 //!     rfc8620::JmapSession,
 //!     rfc8621::thread::get::JmapThreadGet,
 //! };
 //! use secrecy::SecretString;
 //!
-//! # fn demo(session: &JmapSession) {
+//! // Ready stream needed (TCP-connected, TLS-negociated)
+//! let mut stream = TcpStream::connect("api.example.com:443").unwrap();
+//! let mut buf = [0u8; 4096];
+//!
+//! let session: JmapSession = serde_json::from_str(r#"{
+//!     "username": "",
+//!     "accounts": {},
+//!     "primaryAccounts": {"urn:ietf:params:jmap:mail": "a1"},
+//!     "capabilities": {},
+//!     "apiUrl": "https://api.example.com/jmap/",
+//!     "downloadUrl": "",
+//!     "uploadUrl": "",
+//!     "eventSourceUrl": "",
+//!     "state": ""
+//! }"#).unwrap();
 //! let auth = SecretString::from("Bearer xyz");
-//! let coroutine = JmapThreadGet::new(session, &auth, vec!["t1".into()]).unwrap();
-//! # let _ = coroutine;
-//! # }
+//! let mut coroutine = JmapThreadGet::new(&session, &auth, vec!["t1".into()]).unwrap();
+//! let mut arg = None;
+//!
+//! let out = loop {
+//!     match coroutine.resume(arg.take()) {
+//!         JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => {
+//!             stream.write_all(&bytes).unwrap();
+//!         }
+//!         JmapCoroutineState::Yielded(JmapYield::WantsRead) => {
+//!             let n = stream.read(&mut buf).unwrap();
+//!             arg = Some(&buf[..n]);
+//!         }
+//!         JmapCoroutineState::Complete(Ok(out)) => break out,
+//!         JmapCoroutineState::Complete(Err(err)) => panic!("{err}"),
+//!     }
+//! };
+//!
+//! println!("{} threads", out.threads.len());
 //! ```
 
 use core::fmt;

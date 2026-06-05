@@ -139,20 +139,16 @@ impl JmapCoroutine for JmapSessionGet {
                 HttpCoroutineState::Complete(Err(err)) => {
                     JmapCoroutineState::Complete(Err(err.into()))
                 }
-                HttpCoroutineState::Complete(Ok(HttpSendOutput {
-                    response,
-                    keep_alive,
-                    ..
-                })) => {
-                    if !response.status.is_success() {
-                        let err = JmapSessionGetError::HttpStatus(*response.status);
+                HttpCoroutineState::Complete(Ok(out)) => {
+                    if !out.response.status.is_success() {
+                        let err = JmapSessionGetError::HttpStatus(*out.response.status);
                         return JmapCoroutineState::Complete(Err(err));
                     }
 
-                    match serde_json::from_slice::<JmapSession>(&response.body) {
+                    match serde_json::from_slice::<JmapSession>(&out.response.body) {
                         Ok(session) => JmapCoroutineState::Complete(Ok(JmapSessionGetOutput {
                             session,
-                            keep_alive,
+                            keep_alive: out.keep_alive,
                         })),
                         Err(err) => JmapCoroutineState::Complete(Err(
                             JmapSessionGetError::ParseSession(err),

@@ -25,14 +25,25 @@
 //! };
 //! use secrecy::SecretString;
 //!
-//! # fn demo(session: &JmapSession) {
+//! // Ready stream needed (TCP-connected, TLS-negociated)
 //! let mut stream = TcpStream::connect("api.example.com:443").unwrap();
 //! let mut buf = [0u8; 4096];
 //!
+//! let session: JmapSession = serde_json::from_str(r#"{
+//!     "username": "",
+//!     "accounts": {},
+//!     "primaryAccounts": {"urn:ietf:params:jmap:mail": "a1"},
+//!     "capabilities": {},
+//!     "apiUrl": "https://api.example.com/jmap/",
+//!     "downloadUrl": "",
+//!     "uploadUrl": "",
+//!     "eventSourceUrl": "https://api.example.com/jmap/eventsource/",
+//!     "state": ""
+//! }"#).unwrap();
 //! let auth = SecretString::from("Bearer xyz");
 //! let shutdown = Arc::new(AtomicBool::new(false));
 //! let mut coroutine =
-//!     JmapEventSource::new(session, &auth, &["Email"], 30, JmapCloseAfter::State, shutdown)
+//!     JmapEventSource::new(&session, &auth, &["Email"], 30, JmapCloseAfter::State, shutdown)
 //!         .unwrap();
 //! let mut arg = None;
 //!
@@ -52,7 +63,6 @@
 //!         JmapCoroutineState::Complete(Err(err)) => panic!("{err}"),
 //!     }
 //! }
-//! # }
 //! ```
 
 use core::{
