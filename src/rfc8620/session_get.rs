@@ -51,7 +51,7 @@ use core::fmt;
 
 use io_http::{
     coroutine::*,
-    rfc9110::{request::HttpRequest, send::HttpSendOutput},
+    rfc9110::request::HttpRequest,
     rfc9112::send::{Http11Send, Http11SendError},
 };
 use log::trace;

@@ -114,7 +114,7 @@ Enable the `client` feature. `JmapClientStd::new(stream, http_auth)` wraps any b
 
 ```toml,ignore
 [dependencies]
-io-jmap = { version = "0.0.1", default-features = false, features = ["client"] }
+io-jmap = { version = "0.1.0", default-features = false, features = ["client"] }
 ```
 
 ```rust,no_run
@@ -154,7 +154,7 @@ Enable one of the TLS feature flags: `rustls-ring` (default), `rustls-aws`, or `
 
 ```toml,ignore
 [dependencies]
-io-jmap = "0.0.1" # rustls-ring is enabled by default
+io-jmap = "0.1.0" # rustls-ring is enabled by default
 ```
 
 ```rust,no_run
@@ -211,7 +211,7 @@ AI-generated code; the code is adjusted to fit correct behaviour.
 but nonexistent APIs, stale RFC references. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken
 seriously.
 
-- **Last reviewed**: 30/05/2026
+- **Last reviewed**: 05/06/2026
 
 ## License
 
