@@ -41,9 +41,11 @@ This library is composed of 3 feature-gated layers:
 |----------|-----------------------------------------------------------------------------------------------------|
 | [8620]   | JMAP core: session discovery, API requests, `Foo/get`, `Foo/set`, `Foo/query`, `Foo/changes`, blobs |
 | [8621]   | JMAP for Mail: Mailbox, Email, Thread, Identity, EmailSubmission, VacationResponse                  |
+| [9610]   | JMAP for Contacts: AddressBook, ContactCard (JSContact payload kept as raw JSON)                    |
 
 [8620]: https://www.rfc-editor.org/rfc/rfc8620
 [8621]: https://www.rfc-editor.org/rfc/rfc8621
+[9610]: https://www.rfc-editor.org/rfc/rfc9610
 
 ## Usage
 
@@ -203,13 +205,9 @@ This project is developed with AI assistance. This section documents how, so use
 
 - **Not used for**: Engineering, critical code, git manipulation (commit, merge, rebase…), real-world tests.
 
-- **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit (`nix develop --command cargo check / cargo test / cargo
-fmt`). Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit
-AI-generated code; the code is adjusted to fit correct behaviour.
+- **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit (`nix develop --command cargo check / cargo test / cargo fmt`). Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit AI-generated code; the code is adjusted to fit correct behaviour.
 
-- **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong: off-by-one errors, missed edge cases, plausible
-but nonexistent APIs, stale RFC references. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken
-seriously.
+- **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong: off-by-one errors, missed edge cases, plausible but nonexistent APIs, stale RFC references. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken seriously.
 
 - **Last reviewed**: 05/06/2026
 

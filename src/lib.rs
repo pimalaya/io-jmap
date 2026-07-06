@@ -11,3 +11,4 @@ pub mod client;
 pub mod coroutine;
 pub mod rfc8620;
 pub mod rfc8621;
+pub mod rfc9610;
