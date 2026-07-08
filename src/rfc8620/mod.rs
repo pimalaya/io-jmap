@@ -6,6 +6,7 @@ pub mod changes;
 pub mod coroutine;
 pub mod event_source;
 pub mod get;
+pub mod push_subscription;
 pub mod query;
 pub mod query_changes;
 pub mod send;

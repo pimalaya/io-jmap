@@ -50,8 +50,14 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc8620::{
-        JmapRequest, JmapResponse, JmapSession, blob_download::*, blob_upload::*,
-        changes::JmapChangesOutput, coroutine::JmapRedirectYield, send::*, session_get::*,
+        JmapRequest, JmapResponse, JmapSession,
+        blob_download::*,
+        blob_upload::*,
+        changes::JmapChangesOutput,
+        coroutine::JmapRedirectYield,
+        push_subscription::{get::*, set::*},
+        send::*,
+        session_get::*,
     },
     rfc8621::{
         email::{
@@ -77,6 +83,11 @@ pub enum JmapClientStdError {
     BlobUpload(#[from] JmapBlobUploadError),
     #[error(transparent)]
     BlobDownload(#[from] JmapBlobDownloadError),
+
+    #[error(transparent)]
+    PushSubscriptionGet(#[from] JmapPushSubscriptionGetError),
+    #[error(transparent)]
+    PushSubscriptionSet(#[from] JmapPushSubscriptionSetError),
 
     #[error(transparent)]
     MailboxGet(#[from] JmapMailboxGetError),
@@ -396,6 +407,28 @@ impl JmapClientStd {
                 }
             }
         }
+    }
+
+    // ---- PushSubscription (RFC 8620 §7.2) ----------------------------------
+
+    /// Runs [`JmapPushSubscriptionGet`] (`PushSubscription/get`).
+    pub fn push_subscription_get(
+        &mut self,
+        opts: JmapPushSubscriptionGetOptions,
+    ) -> Result<JmapPushSubscriptionGetOutput, JmapClientStdError> {
+        let coroutine =
+            JmapPushSubscriptionGet::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapPushSubscriptionSet`] (`PushSubscription/set`).
+    pub fn push_subscription_set(
+        &mut self,
+        args: JmapPushSubscriptionSetArgs,
+    ) -> Result<JmapPushSubscriptionSetOutput, JmapClientStdError> {
+        let coroutine =
+            JmapPushSubscriptionSet::new(self.session_or_err()?, &self.http_auth, args)?;
+        self.run(coroutine)
     }
 
     // ---- Mailbox (RFC 8621 §2) -------------------------------------------

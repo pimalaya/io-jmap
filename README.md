@@ -39,7 +39,7 @@ This library is composed of 3 feature-gated layers:
 
 | Module   | What it covers                                                                                      |
 |----------|-----------------------------------------------------------------------------------------------------|
-| [8620]   | JMAP core: session discovery, API requests, `Foo/get`, `Foo/set`, `Foo/query`, `Foo/changes`, blobs |
+| [8620]   | JMAP core: session discovery, API requests, `Foo/get`, `Foo/set`, `Foo/query`, `Foo/changes`, blobs, push (Event Source, PushSubscription) |
 | [8621]   | JMAP for Mail: Mailbox, Email, Thread, Identity, EmailSubmission, VacationResponse                  |
 | [9610]   | JMAP for Contacts: AddressBook, ContactCard (JSContact payload kept as raw JSON)                    |
 

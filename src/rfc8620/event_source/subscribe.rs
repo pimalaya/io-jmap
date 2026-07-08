@@ -1,5 +1,5 @@
 //! I/O-free streaming coroutine that subscribes to a JMAP Event Source channel
-//! (RFC 8620 §7.2) and yields one [`JmapStateChange`] per push frame.
+//! (RFC 8620 §7.3) and yields one [`JmapStateChange`] per push frame.
 //!
 //! Composes [`Http11ReadHeaders`] + [`Http11ReadChunksStream`] +
 //! [`SseFrameParser`] + [`parse_state_change`] into one state machine.

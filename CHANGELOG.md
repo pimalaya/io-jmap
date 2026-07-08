@@ -9,9 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added I/O-free `PushSubscription/get` and `PushSubscription/set` coroutines following RFC 8620 §7.2.
+
+  `JmapPushSubscriptionGet` and `JmapPushSubscriptionSet` build custom batches instead of reusing the generic `JmapGet`/`JmapSet`, as PushSubscription methods take no `accountId` or `ifInState` and return no state strings. The new `rfc8620::push_subscription` module also ships the `JmapPushSubscription` object, its create/update shapes, the Web Push encryption keys object and the `JmapPushVerification` payload the server POSTs to the subscription URL. `JmapClientStd` gained the matching `push_subscription_get` and `push_subscription_set` methods, and `JmapMethodError` a `Forbidden` variant.
+
 - Added I/O-free JMAP for Contacts coroutines following RFC 9610.
 
   `AddressBook/get`, `AddressBook/changes`, `AddressBook/set` (with the `onDestroyRemoveContents` and `onSuccessSetIsDefault` extra arguments and the `addressBookHasContents` set error), `ContactCard/get`, `ContactCard/changes`, `ContactCard/query` (batched with `ContactCard/get` via Result Reference), `ContactCard/set`, `ContactCard/copy`. The ContactCard's JSContact payload (RFC 9553) is kept as raw JSON next to the typed `id` and `addressBookIds` properties.
+
+### Fixed
+
+- Fixed the RFC 8620 section numbers cited by the Event Source docs: Event Source is §7.3 and StateChange is §7.1, not §7.2/§7.2.1 (which cover PushSubscription).
 
 ## [0.1.0] - 2026-06-05
 

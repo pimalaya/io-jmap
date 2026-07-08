@@ -1,4 +1,4 @@
-//! JMAP Event Source data types (RFC 8620 §7.2.1): push payload, per-account
+//! JMAP Event Source data types (RFC 8620 §7.1 & §7.3): push payload, per-account
 //! type-state map, `closeafter` value, and the parser-level error.
 
 use alloc::{collections::BTreeMap, string::String};
@@ -13,7 +13,7 @@ use super::utils::default_type_tag;
 /// against their stored checkpoint and call `<Type>/changes` on a mismatch.
 pub type JmapTypeStates = BTreeMap<String, String>;
 
-/// JMAP `JmapStateChange` push notification (RFC 8620 §7.2.1).
+/// JMAP `JmapStateChange` push notification (RFC 8620 §7.1).
 ///
 /// `changed` is keyed by account id, then JMAP type, then opaque new state.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,7 +34,7 @@ pub enum JmapStateChangeParseError {
     UnexpectedType(String),
 }
 
-/// JMAP EventSource `closeafter` query value (RFC 8620 §7.2): when the server
+/// JMAP EventSource `closeafter` query value (RFC 8620 §7.3): when the server
 /// closes the streaming response.
 #[derive(Clone, Copy, Debug)]
 pub enum JmapCloseAfter {

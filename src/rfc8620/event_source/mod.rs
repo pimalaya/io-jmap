@@ -1,4 +1,4 @@
-//! JMAP Event Source push channel (RFC 8620 §7.2 & §7.2.1).
+//! JMAP Event Source push channel (RFC 8620 §7.3 & §7.1).
 //!
 //! A streaming GET against
 //! [`JmapSession::event_source_url`](crate::rfc8620::JmapSession::event_source_url)

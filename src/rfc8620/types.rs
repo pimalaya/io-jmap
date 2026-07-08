@@ -72,6 +72,11 @@ pub enum JmapMethodError {
     InvalidArguments {
         description: Option<String>,
     },
+    /// Access denied for this method call (RFC 8620 §3.6.2), e.g. requesting
+    /// the `url` or `keys` properties in `PushSubscription/get` (§7.2.1).
+    Forbidden {
+        description: Option<String>,
+    },
     RequestTooLarge,
     NotFound,
     InvalidPatch {
@@ -146,6 +151,13 @@ impl fmt::Display for JmapMethodError {
             }
             Self::InvalidArguments { description } => {
                 write!(f, "JMAP invalidArguments")?;
+                if let Some(d) = description {
+                    write!(f, ": {d}")?;
+                }
+                Ok(())
+            }
+            Self::Forbidden { description } => {
+                write!(f, "JMAP forbidden")?;
                 if let Some(d) = description {
                     write!(f, ": {d}")?;
                 }
