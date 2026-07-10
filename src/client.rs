@@ -70,6 +70,10 @@ use crate::{
         thread::{changes::*, get::*},
         vacation_response::{get::*, set::*, *},
     },
+    rfc9610::{
+        address_book::{changes::*, get::*, set::*},
+        contact_card::{JmapContactCardCopyArgs, changes::*, copy::*, get::*, query::*, set::*},
+    },
 };
 
 /// Errors returned by [`JmapClientStd`].
@@ -136,6 +140,24 @@ pub enum JmapClientStdError {
     VacationResponseGet(#[from] JmapVacationResponseGetError),
     #[error(transparent)]
     VacationResponseSet(#[from] JmapVacationResponseSetError),
+
+    #[error(transparent)]
+    AddressBookGet(#[from] JmapAddressBookGetError),
+    #[error(transparent)]
+    AddressBookSet(#[from] JmapAddressBookSetError),
+    #[error(transparent)]
+    AddressBookChanges(#[from] JmapAddressBookChangesError),
+
+    #[error(transparent)]
+    ContactCardGet(#[from] JmapContactCardGetError),
+    #[error(transparent)]
+    ContactCardQuery(#[from] JmapContactCardQueryError),
+    #[error(transparent)]
+    ContactCardSet(#[from] JmapContactCardSetError),
+    #[error(transparent)]
+    ContactCardChanges(#[from] JmapContactCardChangesError),
+    #[error(transparent)]
+    ContactCardCopy(#[from] JmapContactCardCopyError),
 
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -652,6 +674,101 @@ impl JmapClientStd {
         let coroutine =
             JmapVacationResponseSet::new(self.session_or_err()?, &self.http_auth, patch)?;
         Ok(self.run(coroutine)?.updated)
+    }
+
+    // ---- AddressBook (RFC 9610 §2) -----------------------------------------
+
+    /// Runs [`JmapAddressBookGet`] (`AddressBook/get`).
+    pub fn address_book_get(
+        &mut self,
+        opts: JmapAddressBookGetOptions,
+    ) -> Result<JmapAddressBookGetOutput, JmapClientStdError> {
+        let coroutine = JmapAddressBookGet::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapAddressBookSet`] (`AddressBook/set`).
+    pub fn address_book_set(
+        &mut self,
+        args: JmapAddressBookSetArgs,
+    ) -> Result<JmapAddressBookSetOutput, JmapClientStdError> {
+        let coroutine = JmapAddressBookSet::new(self.session_or_err()?, &self.http_auth, args)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapAddressBookChanges`] (`AddressBook/changes`).
+    pub fn address_book_changes(
+        &mut self,
+        since_state: impl Into<String>,
+        opts: JmapAddressBookChangesOptions,
+    ) -> Result<JmapChangesOutput, JmapClientStdError> {
+        let coroutine = JmapAddressBookChanges::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            since_state,
+            opts,
+        )?;
+        self.run(coroutine)
+    }
+
+    // ---- ContactCard (RFC 9610 §3) -----------------------------------------
+
+    /// Runs [`JmapContactCardGet`] (`ContactCard/get`).
+    pub fn contact_card_get(
+        &mut self,
+        opts: JmapContactCardGetOptions,
+    ) -> Result<JmapContactCardGetOutput, JmapClientStdError> {
+        let coroutine = JmapContactCardGet::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapContactCardQuery`] (batched `ContactCard/query` +
+    /// `ContactCard/get`).
+    pub fn contact_card_query(
+        &mut self,
+        opts: JmapContactCardQueryOptions,
+    ) -> Result<JmapContactCardQueryOutput, JmapClientStdError> {
+        let coroutine = JmapContactCardQuery::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapContactCardSet`] (`ContactCard/set`).
+    pub fn contact_card_set(
+        &mut self,
+        args: JmapContactCardSetArgs,
+    ) -> Result<JmapContactCardSetOutput, JmapClientStdError> {
+        let coroutine = JmapContactCardSet::new(self.session_or_err()?, &self.http_auth, args)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapContactCardChanges`] (`ContactCard/changes`).
+    pub fn contact_card_changes(
+        &mut self,
+        since_state: impl Into<String>,
+        opts: JmapContactCardChangesOptions,
+    ) -> Result<JmapChangesOutput, JmapClientStdError> {
+        let coroutine = JmapContactCardChanges::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            since_state,
+            opts,
+        )?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapContactCardCopy`] (`ContactCard/copy`).
+    pub fn contact_card_copy(
+        &mut self,
+        from_account_id: impl Into<String>,
+        cards: BTreeMap<String, JmapContactCardCopyArgs>,
+    ) -> Result<JmapContactCardCopyOutput, JmapClientStdError> {
+        let coroutine = JmapContactCardCopy::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            from_account_id,
+            cards,
+        )?;
+        self.run(coroutine)
     }
 }
 
