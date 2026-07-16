@@ -32,11 +32,10 @@
 //! # let _ = coroutine;
 //! ```
 
-use core::{fmt, marker::PhantomData};
+use core::marker::PhantomData;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
@@ -51,14 +50,19 @@ use crate::{
 /// Failure causes during a JMAP `Foo/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapSetError {
+    /// The response carried no method response.
     #[error("JMAP Foo/set failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Foo/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Foo/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Foo/set failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Foo/set failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -91,13 +95,22 @@ impl<C: Serialize, U: Serialize> Default for JmapSetOptions<C, U> {
 /// Successful terminal output of the [`JmapSet`] coroutine.
 #[derive(Clone, Debug)]
 pub struct JmapSetOutput<T> {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created objects, keyed by client id.
     pub created: BTreeMap<String, T>,
+    /// The updated objects, keyed by id; the value carries the changed
+    /// properties when the server echoes them back.
     pub updated: BTreeMap<String, Option<T>>,
+    /// Ids of the destroyed objects.
     pub destroyed: Vec<String>,
+    /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, serde_json::Value>,
+    /// The failed updates, keyed by id.
     pub not_updated: BTreeMap<String, serde_json::Value>,
+    /// The failed destroys, keyed by id.
     pub not_destroyed: BTreeMap<String, serde_json::Value>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -152,7 +165,6 @@ impl<T: DeserializeOwned> JmapCoroutine for JmapSet<T> {
     type Return = Result<JmapSetOutput<T>, JmapSetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("set: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -192,14 +204,6 @@ enum State {
     Send(JmapSend),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SetArgs<C: Serialize, U: Serialize> {
@@ -230,7 +234,7 @@ struct SetResponse<T> {
 mod tests {
     use alloc::{format, string::ToString, vec};
 
-    use super::*;
+    use crate::rfc8620::set::*;
 
     #[derive(Debug, Deserialize, Serialize, PartialEq)]
     struct Probe {
@@ -353,8 +357,6 @@ mod tests {
         let out = expect_complete_ok(&mut cor, &reply);
         assert!(out.not_created.contains_key("c1"));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapSet<Probe>, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

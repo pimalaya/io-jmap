@@ -1,4 +1,4 @@
-//! Generator-shape coroutine driver.
+//! Generator-shape coroutine contract.
 //!
 //! Mirrors `core::ops::Coroutine`: a `Yield` associated type for intermediate
 //! progress, a `Return` for terminal output, and a two-variant
@@ -14,7 +14,7 @@ use alloc::vec::Vec;
 /// State yielded by a [`JmapCoroutine::resume`] step.
 #[derive(Debug)]
 pub enum JmapCoroutineState<Y, R> {
-    /// Intermediate yield: the driver reacts and resumes.
+    /// Intermediate yield: the caller reacts and resumes.
     Yielded(Y),
     /// Terminal yield. By convention `R = Result<Output, Error>`.
     Complete(R),
@@ -38,9 +38,9 @@ pub trait JmapCoroutine {
 /// Standard I/O-only Yield for coroutines that only read/write socket bytes.
 #[derive(Debug)]
 pub enum JmapYield {
-    /// Driver should read more bytes and feed them back on the next resume.
+    /// The caller reads more bytes and feeds them back on the next resume.
     WantsRead,
-    /// Driver should write these bytes; the next resume typically takes `None`.
+    /// The caller writes these bytes; the next resume typically takes `None`.
     WantsWrite(Vec<u8>),
 }
 

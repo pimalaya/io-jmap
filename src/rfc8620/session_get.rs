@@ -47,14 +47,12 @@
 //! println!("{:?}", out.session);
 //! ```
 
-use core::fmt;
-
 use io_http::{
     coroutine::*,
     rfc9110::request::HttpRequest,
     rfc9112::send::{Http11Send, Http11SendError},
 };
-use log::trace;
+use log::{debug, trace};
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
@@ -67,12 +65,16 @@ use crate::{
 /// Failure causes during the JMAP session-get flow.
 #[derive(Debug, Error)]
 pub enum JmapSessionGetError {
+    /// The server answered with a non-2xx status.
     #[error("JMAP session-get failed: HTTP {0}")]
     HttpStatus(u16),
+    /// The session advertises no primary mail account.
     #[error("JMAP session-get failed: no primary account for the mail capability")]
     NoPrimaryMailAccount,
+    /// The inner HTTP/1.1 send coroutine failed.
     #[error("JMAP session-get failed: {0}")]
     Send(#[from] Http11SendError),
+    /// The session object could not be parsed.
     #[error("JMAP session-get failed: parse session: {0}")]
     ParseSession(#[source] serde_json::Error),
 }
@@ -80,7 +82,9 @@ pub enum JmapSessionGetError {
 /// Successful terminal output of [`JmapSessionGet`].
 #[derive(Clone, Debug)]
 pub struct JmapSessionGetOutput {
+    /// The discovered session object.
     pub session: JmapSession,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -114,7 +118,8 @@ impl JmapSessionGet {
             _ => url.clone(),
         };
 
-        trace!("fetch JMAP session from {session_url}");
+        debug!("prepare session fetch request");
+        trace!("session url: {session_url}");
 
         let http_request = HttpRequest::get(session_url)
             .header("Host", host)
@@ -132,7 +137,6 @@ impl JmapCoroutine for JmapSessionGet {
     type Return = Result<JmapSessionGetOutput, JmapSessionGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("session-get: {}", self.state);
         match &mut self.state {
             State::Send(send) => match send.resume(arg) {
                 HttpCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y.into()),
@@ -164,19 +168,11 @@ enum State {
     Send(Http11Send),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::{format, vec::Vec};
 
-    use super::*;
+    use crate::rfc8620::session_get::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -268,8 +264,6 @@ mod tests {
         let req = core::str::from_utf8(&bytes).expect("utf8 request");
         assert!(req.contains("/.well-known/jmap"));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapSessionGet, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

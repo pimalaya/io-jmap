@@ -53,20 +53,17 @@
 //! println!("{} address books", out.address_books.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapSession, get::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapSession, get::*},
     rfc9610::{
-        CONTACTS_CAPABILITY,
+        JMAP_CONTACTS_CAPABILITY,
         address_book::{JmapAddressBook, JmapAddressBookProperty},
     },
 };
@@ -74,6 +71,7 @@ use crate::{
 /// Failure causes during a JMAP `AddressBook/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapAddressBookGetError {
+    /// The inner generic get coroutine failed.
     #[error("JMAP AddressBook/get failed: {0}")]
     Get(#[from] JmapGetError),
 }
@@ -90,9 +88,13 @@ pub struct JmapAddressBookGetOptions {
 /// Successful terminal output of [`JmapAddressBookGet`].
 #[derive(Clone, Debug)]
 pub struct JmapAddressBookGetOutput {
+    /// The fetched address books.
     pub address_books: Vec<JmapAddressBook>,
+    /// The requested ids the server did not find.
     pub not_found: Vec<String>,
+    /// The new server state after the call.
     pub new_state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -102,6 +104,7 @@ pub struct JmapAddressBookGet {
 }
 
 impl JmapAddressBookGet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -109,7 +112,7 @@ impl JmapAddressBookGet {
     ) -> Result<Self, JmapAddressBookGetError> {
         let account_id = session
             .primary_accounts
-            .get(CONTACTS_CAPABILITY)
+            .get(JMAP_CONTACTS_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -131,7 +134,7 @@ impl JmapAddressBookGet {
                 http_auth,
                 api_url,
                 "AddressBook/get",
-                vec![CORE_CAPABILITY.into(), CONTACTS_CAPABILITY.into()],
+                vec![JMAP_CORE_CAPABILITY.into(), JMAP_CONTACTS_CAPABILITY.into()],
                 JmapGetOptions {
                     ids: opts.ids,
                     properties: props,
@@ -146,7 +149,6 @@ impl JmapCoroutine for JmapAddressBookGet {
     type Return = Result<JmapAddressBookGetOutput, JmapAddressBookGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("AddressBook/get: {}", self.state);
         match &mut self.state {
             State::Get(get) => {
                 let JmapGetOutput {
@@ -168,12 +170,4 @@ impl JmapCoroutine for JmapAddressBookGet {
 
 enum State {
     Get(JmapGet<JmapAddressBook>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Get(_) => f.write_str("get"),
-        }
-    }
 }

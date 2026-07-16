@@ -1,47 +1,47 @@
 # I/O JMAP [![Documentation](https://img.shields.io/docsrs/io-jmap?style=flat&logo=docs.rs&logoColor=white)](https://docs.rs/io-jmap/latest/io_jmap) [![Matrix](https://img.shields.io/badge/chat-%23pimalaya-blue?style=flat&logo=matrix&logoColor=white)](https://matrix.to/#/#pimalaya:matrix.org) [![Mastodon](https://img.shields.io/badge/news-%40pimalaya-blue?style=flat&logo=mastodon&logoColor=white)](https://fosstodon.org/@pimalaya)
 
-JMAP client library, written in Rust.
+JMAP client library for Rust
 
 This library is composed of 3 feature-gated layers:
 
-- Low-level **I/O-free** coroutines: these `no_std`-compatible state machines contain the whole JMAP logic and can be used anywhere
-- Mid-level **light client**: a standard, blocking JMAP client using a `Stream: Read + Write`
-- High-level **full client**: light client + TCP connections and TLS negotiations handled for you
+- Low-level **I/O-free** coroutines: no_std-compatible state machines containing the whole JMAP logic, usable anywhere
+- Mid-level **light client**: a standard, blocking client wrapping a stream you opened yourself
+- High-level **full client**: the light client plus TCP connections and TLS negotiations handled for you
 
 ## Table of contents
 
 - [Features](#features)
 - [RFC coverage](#rfc-coverage)
 - [Usage](#usage)
-  - [I/O-free coroutines](#io-free-coroutines)
-  - [Light client](#light-client)
-  - [Full client](#full-client)
 - [Examples](#examples)
 - [AI disclosure](#ai-disclosure)
 - [License](#license)
 - [Social](#social)
+- [Contributing](#contributing)
 - [Sponsoring](#sponsoring)
 
 ## Features
 
-- **I/O-free** coroutines: `no_std` state machines; no sockets, no async runtime, no `std` required, drive against any blocking, async, or fuzz harness.
-- Light standard, blocking client (requires `client` feature)
+- **Session discovery**: resolves the JMAP session from a base URL or the well-known endpoint, surfacing redirects to the caller instead of following them.
+- **Core protocol**: batched method calls, generic get, set, query and changes flows, blob upload and download.
+- **Push notifications**: push subscription management and the streaming Event Source channel, yielding one state change per push frame with cooperative shutdown.
+- **Mail**: mailboxes, emails, threads, identities, email submissions and vacation responses.
+- **Contacts**: address books and contact cards, the JSContact payload kept as raw JSON.
 - Full standard, blocking client with **TLS** support:
-  - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature)
+  - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
   - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
   - [Native TLS](https://crates.io/crates/native-tls) (requires `native-tls` feature)
-- **HTTP Auth mechanisms**: `BASIC`, `BEARER`
 
 > [!TIP]
-> I/O JMAP is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate backend support. The default feature set is declared in [Cargo.toml](./Cargo.toml) or on [docs.rs](https://docs.rs/crate/io-jmap/latest/features).
+> I/O JMAP is written in [Rust](https://www.rust-lang.org/) and uses [cargo features](https://doc.rust-lang.org/cargo/reference/features.html) to gate the client layers. The default feature set is declared in [Cargo.toml](./Cargo.toml) or on [docs.rs](https://docs.rs/crate/io-jmap/latest/features).
 
 ## RFC coverage
 
-| Module   | What it covers                                                                                      |
-|----------|-----------------------------------------------------------------------------------------------------|
-| [8620]   | JMAP core: session discovery, API requests, `Foo/get`, `Foo/set`, `Foo/query`, `Foo/changes`, blobs, push (Event Source, PushSubscription) |
-| [8621]   | JMAP for Mail: Mailbox, Email, Thread, Identity, EmailSubmission, VacationResponse                  |
-| [9610]   | JMAP for Contacts: AddressBook, ContactCard (JSContact payload kept as raw JSON)                    |
+| RFC    | What is covered                                                                                                                             |
+|--------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| [8620] | JMAP core: session discovery, batched API requests, generic get, set, query and changes methods, blobs, push (Event Source, PushSubscription) |
+| [8621] | JMAP for Mail: Mailbox, Email, Thread, Identity, EmailSubmission, VacationResponse                                                          |
+| [9610] | JMAP for Contacts: AddressBook, ContactCard (JSContact payload kept as raw JSON)                                                            |
 
 [8620]: https://www.rfc-editor.org/rfc/rfc8620
 [8621]: https://www.rfc-editor.org/rfc/rfc8621
@@ -49,167 +49,22 @@ This library is composed of 3 feature-gated layers:
 
 ## Usage
 
-I/O JMAP can be consumed three ways, depending on how much of the I/O stack you want to own. Each mode is gated by cargo features.
-
-Whichever mode you pick, every standard-shape coroutine implements the `JmapCoroutine` trait with two associated types: `Yield` (intermediate progress) and `Return` (terminal value, by convention `Result<Output, Error>`). Its `resume(arg: Option<&[u8]>)` method returns a `JmapCoroutineState<Yield, Return>` with two variants:
-
-- `Yielded(Yield)`: intermediate yield. Most coroutines pick the standard `JmapYield` with `WantsRead` / `WantsWrite(Vec<u8>)`. Pass `Some(&[])` after `WantsRead` to signal EOF.
-- `Complete(Return)`: terminal yield, carrying `Ok(Output)` on success or `Err(Error)` on failure.
-
-Three coroutines (`JmapSessionGet`, `JmapBlobDownload`, `JmapBlobUpload`) declare their own `JmapRedirectYield` which extends the standard variants with `WantsRedirect { url, keep_alive, same_origin }`: the server responded with a 3xx and the caller chooses whether to open a new connection to `url` and retry, or surface the redirect as an error.
-
-### I/O-free coroutines
-
-No features required: works in `#![no_std]`, no sockets, no async runtime. You own the loop and the bytes; the library only produces request bytes and consumes server responses.
-
-Fetch a JMAP session against a blocking rustls socket:
-
-```rust,no_run
-use std::{io::{Read, Write}, net::TcpStream, sync::Arc};
-
-use io_jmap::{coroutine::*, rfc8620::{coroutine::JmapRedirectYield, session_get::*}};
-use rustls::{ClientConfig, ClientConnection, StreamOwned};
-use rustls_platform_verifier::ConfigVerifierExt;
-use secrecy::SecretString;
-use url::Url;
-
-let http_auth = SecretString::from("Bearer your-token-here");
-let base_url = Url::parse("https://api.fastmail.com/jmap/session/").unwrap();
-
-let config = ClientConfig::with_platform_verifier().unwrap();
-let server_name = base_url.host_str().unwrap().to_string().try_into().unwrap();
-let conn = ClientConnection::new(Arc::new(config), server_name).unwrap();
-let tcp = TcpStream::connect((base_url.host_str().unwrap(), 443)).unwrap();
-let mut stream = StreamOwned::new(conn, tcp);
-
-let mut coroutine = JmapSessionGet::new(&http_auth, &base_url);
-let mut arg: Option<&[u8]> = None;
-let mut buf = [0u8; 8192];
-let mut read_buf = Vec::<u8>::new();
-
-let session = loop {
-    match coroutine.resume(arg.take()) {
-        JmapCoroutineState::Complete(Ok(JmapSessionGetOutput { session, .. })) => break session,
-        JmapCoroutineState::Yielded(JmapRedirectYield::WantsRead) => {
-            let n = stream.read(&mut buf).unwrap();
-            read_buf.clear();
-            read_buf.extend_from_slice(&buf[..n]);
-            arg = Some(&read_buf);
-        }
-        JmapCoroutineState::Yielded(JmapRedirectYield::WantsWrite(bytes)) => {
-            stream.write_all(&bytes).unwrap();
-        }
-        JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect { url, .. }) => {
-            todo!("reconnect to {url}");
-        }
-        JmapCoroutineState::Complete(Err(err)) => panic!("{err}"),
-    }
-};
-
-println!("Logged in as: {}", session.username);
-println!("API URL: {}", session.api_url);
-```
-
-### Light client
-
-Enable the `client` feature. `JmapClientStd::new(stream, http_auth)` wraps any blocking `Read + Write` and exposes one method per JMAP coroutine. You still open the TCP socket and run TLS yourself, and hand over a ready-to-talk stream; the client takes it from there.
-
-```toml,ignore
-[dependencies]
-io-jmap = { version = "0.1.0", default-features = false, features = ["client"] }
-```
-
-```rust,no_run
-use std::{net::TcpStream, sync::Arc};
-
-use io_jmap::{
-    client::JmapClientStd,
-    rfc8621::mailbox::query::JmapMailboxQueryOptions,
-};
-use rustls::{ClientConfig, ClientConnection, StreamOwned};
-use rustls_platform_verifier::ConfigVerifierExt;
-use secrecy::SecretString;
-use url::Url;
-
-let http_auth = SecretString::from("Bearer your-token-here");
-let session_url = Url::parse("https://api.fastmail.com/jmap/session/").unwrap();
-
-let config = ClientConfig::with_platform_verifier().unwrap();
-let server_name = session_url.host_str().unwrap().to_string().try_into().unwrap();
-let conn = ClientConnection::new(Arc::new(config), server_name).unwrap();
-let tcp = TcpStream::connect((session_url.host_str().unwrap(), 443)).unwrap();
-let stream = StreamOwned::new(conn, tcp);
-
-let mut client = JmapClientStd::new(stream, http_auth);
-let session = client.session_get(&session_url).unwrap();
-println!("Logged in as: {}", session.username);
-
-let mailboxes = client.mailbox_query(JmapMailboxQueryOptions::default()).unwrap();
-for mailbox in &mailboxes.mailboxes {
-    println!("{:?}: {:?}", mailbox.role, mailbox.name);
-}
-```
-
-### Full client
-
-Enable one of the TLS feature flags: `rustls-ring` (default), `rustls-aws`, or `native-tls`. `JmapClientStd::connect(url, tls, http_auth)` opens `http://` / `https://` (or `jmap://` / `jmaps://`) URLs via [pimalaya/stream](https://github.com/pimalaya/stream).
-
-```toml,ignore
-[dependencies]
-io-jmap = "0.1.0" # rustls-ring is enabled by default
-```
-
-```rust,no_run
-use io_jmap::{
-    client::JmapClientStd,
-    rfc8621::mailbox::query::JmapMailboxQueryOptions,
-};
-use pimalaya_stream::tls::Tls;
-use secrecy::SecretString;
-use url::Url;
-
-let http_auth = SecretString::from("Bearer your-token-here");
-let session_url = Url::parse("https://api.fastmail.com/jmap/session/").unwrap();
-let tls = Tls::default();
-
-let mut client = JmapClientStd::connect(&session_url, &tls, http_auth).unwrap();
-let session = client.session_get(&session_url).unwrap();
-println!("Logged in as: {}", session.username);
-
-let mailboxes = client.mailbox_query(JmapMailboxQueryOptions::default()).unwrap();
-for mailbox in &mailboxes.mailboxes {
-    println!("{:?}: {:?}", mailbox.role, mailbox.name);
-}
-```
-
-JMAP typically reuses a single connection for the entire session, so the client wraps one stream. When the `apiUrl`, `uploadUrl` or `downloadUrl` resolves to a different authority than where you first connected, use `JmapClientStd::set_stream` to swap in a new transport.
+The whole API is documented on [docs.rs](https://docs.rs/io-jmap/latest/io_jmap), including runnable snippets for every coroutine and client.
 
 ## Examples
 
-See complete examples at [./examples](https://github.com/pimalaya/io-jmap/blob/master/examples).
-
-Have also a look at real-world projects built on top of this library:
-
-- [Himalaya CLI](https://github.com/pimalaya/himalaya): CLI to manage emails
-- [Himalaya TUI](https://github.com/pimalaya/himalaya-tui): TUI to manage emails
-- [Neverest](https://github.com/pimalaya/neverest): CLI to synchronize emails
-- [Mirador](https://github.com/pimalaya/mirador): CLI to watch mailbox changes and fire hooks on every event
+Complete runnable programs live in [./examples](./examples); the tests also demonstrate real usage against live JMAP servers.
 
 ## AI disclosure
 
 This project is developed with AI assistance. This section documents how, so users and downstream packagers can make informed decisions.
 
-- **Tools**: Claude Code (Anthropic), Opus 4.7, invoked locally with a persistent project-scoped memory and a small set of repo-specific rules.
-
+- **Tools**: Claude Code (Anthropic), invoked locally with a persistent project-scoped memory and a small set of repo-specific rules.
 - **Used for**: Refactors, mechanical multi-file edits, boilerplate (feature gates, error enums, derive macros, trait impls), test scaffolding, doc polish, exploratory design conversations.
-
 - **Not used for**: Engineering, critical code, git manipulation (commit, merge, rebase…), real-world tests.
-
-- **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit (`nix develop --command cargo check / cargo test / cargo fmt`). Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit AI-generated code; the code is adjusted to fit correct behaviour.
-
-- **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong: off-by-one errors, missed edge cases, plausible but nonexistent APIs, stale RFC references. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken seriously.
-
-- **Last reviewed**: 05/06/2026
+- **Verification**: Every AI-assisted change is read, compiled, tested, and formatted before commit. Behavioural correctness is verified against the relevant RFC or upstream spec, not assumed from the model output. Tests are never adjusted to fit AI-generated code; the code is adjusted to fit correct behaviour.
+- **Limitations**: AI models occasionally produce code that compiles and passes tests but is subtly wrong. The verification workflow catches most of this; it does not catch all of it. Bug reports are welcome and taken seriously.
+- **Last reviewed**: 15/07/2026
 
 ## License
 
@@ -225,6 +80,10 @@ at your option.
 - Chat on [Matrix](https://matrix.to/#/#pimalaya:matrix.org)
 - News on [Mastodon](https://fosstodon.org/@pimalaya) or [RSS](https://fosstodon.org/@pimalaya.rss)
 - Mail at [pimalaya.org@posteo.net](mailto:pimalaya.org@posteo.net)
+
+## Contributing
+
+Contributions are welcome: start with [CONTRIBUTING.md](./CONTRIBUTING.md), which opens with the Pimalaya-wide guides to read first.
 
 ## Sponsoring
 

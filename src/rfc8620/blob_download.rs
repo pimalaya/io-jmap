@@ -49,8 +49,6 @@
 //! println!("{} bytes", out.data.len());
 //! ```
 
-use core::fmt;
-
 use alloc::vec::Vec;
 
 use io_http::{
@@ -58,7 +56,7 @@ use io_http::{
     rfc9110::{request::HttpRequest, send::HttpSendOutput},
     rfc9112::send::{Http11Send, Http11SendError},
 };
-use log::trace;
+use log::{debug, trace};
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
@@ -68,8 +66,10 @@ use crate::{coroutine::*, rfc8620::coroutine::JmapRedirectYield};
 /// Failure causes during the JMAP blob-download flow.
 #[derive(Debug, Error)]
 pub enum JmapBlobDownloadError {
+    /// The server answered with a non-2xx status.
     #[error("JMAP blob-download failed: HTTP {0}")]
     HttpStatus(u16),
+    /// The inner HTTP/1.1 send coroutine failed.
     #[error("JMAP blob-download failed: {0}")]
     Send(#[from] Http11SendError),
 }
@@ -77,7 +77,9 @@ pub enum JmapBlobDownloadError {
 /// Successful terminal output of [`JmapBlobDownload`].
 #[derive(Clone, Debug)]
 pub struct JmapBlobDownloadOutput {
+    /// The downloaded blob bytes.
     pub data: Vec<u8>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -96,7 +98,8 @@ impl JmapBlobDownload {
             .header("Host", host)
             .header("Authorization", http_auth.expose_secret());
 
-        trace!("download JMAP blob from {download_url}");
+        debug!("prepare blob download request");
+        trace!("download url: {download_url}");
 
         Self {
             state: State::Send(Http11Send::new(http_request)),
@@ -109,7 +112,6 @@ impl JmapCoroutine for JmapBlobDownload {
     type Return = Result<JmapBlobDownloadOutput, JmapBlobDownloadError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("blob-download: {}", self.state);
         match &mut self.state {
             State::Send(send) => match send.resume(arg) {
                 HttpCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y.into()),
@@ -140,19 +142,11 @@ enum State {
     Send(Http11Send),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::format;
 
-    use super::*;
+    use crate::rfc8620::blob_download::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -234,8 +228,6 @@ mod tests {
         let req = core::str::from_utf8(&bytes).expect("utf8 request");
         assert!(req.starts_with("GET "));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapBlobDownload, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

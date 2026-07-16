@@ -21,23 +21,19 @@ pub struct JmapPushSubscription {
     /// updated echoes, which carry only the server-changed properties.
     #[serde(default)]
     pub id: String,
-
     /// An ID unique to the client + device that created the subscription,
     /// letting clients recognize their own subscriptions after losing local
     /// state (RFC 8620 §7.2).
     #[serde(default)]
     pub device_client_id: Option<String>,
-
     /// The verification code proving the client controls the URL, copied by
     /// the client from the pushed [`JmapPushVerification`].
     #[serde(default)]
     pub verification_code: Option<String>,
-
     /// RFC 3339 time this subscription expires; the server may set or clamp
     /// it.
     #[serde(default)]
     pub expires: Option<String>,
-
     /// Type names pushes are restricted to; `None` pushes all types.
     #[serde(default)]
     pub types: Option<Vec<String>>,
@@ -55,19 +51,15 @@ pub struct JmapPushSubscriptionCreate {
     /// An ID unique to the client + device, containing no unobfuscated
     /// device ID (RFC 8620 §7.2).
     pub device_client_id: String,
-
     /// Absolute `https://` URL the server will POST push messages to.
     pub url: String,
-
     /// Client-generated encryption keys; when supplied, the server MUST
     /// encrypt all pushed data with them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keys: Option<JmapPushSubscriptionKeys>,
-
     /// RFC 3339 expiry time; the server may clamp it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
-
     /// Type names to restrict pushes to; `None` pushes all types.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub types: Option<Vec<String>>,
@@ -85,12 +77,10 @@ pub struct JmapPushSubscriptionUpdate {
     /// rejected with an `invalidProperties` set error.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_code: Option<String>,
-
     /// New RFC 3339 expiry time extending (or shortening) the subscription
     /// lifetime; the server may clamp it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
-
     /// Type names to restrict pushes to.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub types: Option<Vec<String>>,
@@ -102,7 +92,6 @@ pub struct JmapPushSubscriptionUpdate {
 pub struct JmapPushSubscriptionKeys {
     /// The P-256 ECDH public key.
     pub p256dh: String,
-
     /// The authentication secret.
     pub auth: String,
 }
@@ -117,10 +106,8 @@ pub struct JmapPushVerification {
     /// The type tag: always the string `PushVerification`.
     #[serde(rename = "@type", default = "default_type_tag")]
     pub r#type: String,
-
     /// The ID of the push subscription that was created.
     pub push_subscription_id: String,
-
     /// The code to copy back into the subscription.
     pub verification_code: String,
 }

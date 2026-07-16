@@ -53,24 +53,24 @@
 //! println!("{} identities", out.identities.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapSession, get::*},
-    rfc8621::{MAIL_CAPABILITY, email_submission::SUBMISSION_CAPABILITY, identity::JmapIdentity},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapSession, get::*},
+    rfc8621::{
+        JMAP_MAIL_CAPABILITY, email_submission::JMAP_SUBMISSION_CAPABILITY, identity::JmapIdentity,
+    },
 };
 
 /// Failure causes during a JMAP `Identity/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapIdentityGetError {
+    /// The inner generic get coroutine failed.
     #[error("JMAP Identity/get failed: {0}")]
     Get(#[from] JmapGetError),
 }
@@ -85,9 +85,13 @@ pub struct JmapIdentityGetOptions {
 /// Successful terminal output of [`JmapIdentityGet`].
 #[derive(Clone, Debug)]
 pub struct JmapIdentityGetOutput {
+    /// The fetched identities.
     pub identities: Vec<JmapIdentity>,
+    /// The requested ids the server did not find.
     pub not_found: Vec<String>,
+    /// The new server state after the call.
     pub new_state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -97,6 +101,7 @@ pub struct JmapIdentityGet {
 }
 
 impl JmapIdentityGet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -104,7 +109,7 @@ impl JmapIdentityGet {
     ) -> Result<Self, JmapIdentityGetError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -116,9 +121,9 @@ impl JmapIdentityGet {
                 api_url,
                 "Identity/get",
                 vec![
-                    CORE_CAPABILITY.into(),
-                    MAIL_CAPABILITY.into(),
-                    SUBMISSION_CAPABILITY.into(),
+                    JMAP_CORE_CAPABILITY.into(),
+                    JMAP_MAIL_CAPABILITY.into(),
+                    JMAP_SUBMISSION_CAPABILITY.into(),
                 ],
                 JmapGetOptions {
                     ids: opts.ids,
@@ -134,7 +139,6 @@ impl JmapCoroutine for JmapIdentityGet {
     type Return = Result<JmapIdentityGetOutput, JmapIdentityGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Identity/get: {}", self.state);
         match &mut self.state {
             State::Get(get) => {
                 let JmapGetOutput {
@@ -156,12 +160,4 @@ impl JmapCoroutine for JmapIdentityGet {
 
 enum State {
     Get(JmapGet<JmapIdentity>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Get(_) => f.write_str("get"),
-        }
-    }
 }

@@ -25,7 +25,13 @@
 //! println!("logged in as {}", session.username);
 //! ```
 
-use core::{any::Any, fmt, time::Duration};
+#[cfg(any(
+    feature = "rustls-aws",
+    feature = "rustls-ring",
+    feature = "native-tls"
+))]
+use core::time::Duration;
+use core::{any::Any, fmt};
 
 #[cfg(any(
     feature = "rustls-aws",
@@ -79,89 +85,115 @@ use crate::{
 /// Errors returned by [`JmapClientStd`].
 #[derive(Debug, Error)]
 pub enum JmapClientStdError {
+    /// The raw send coroutine failed.
     #[error(transparent)]
     Send(#[from] JmapSendError),
+    /// The session fetch coroutine failed.
     #[error(transparent)]
     SessionGet(#[from] JmapSessionGetError),
+    /// The blob upload coroutine failed.
     #[error(transparent)]
     BlobUpload(#[from] JmapBlobUploadError),
+    /// The blob download coroutine failed.
     #[error(transparent)]
     BlobDownload(#[from] JmapBlobDownloadError),
-
+    /// The `PushSubscription/get` coroutine failed.
     #[error(transparent)]
     PushSubscriptionGet(#[from] JmapPushSubscriptionGetError),
+    /// The `PushSubscription/set` coroutine failed.
     #[error(transparent)]
     PushSubscriptionSet(#[from] JmapPushSubscriptionSetError),
-
+    /// The `Mailbox/get` coroutine failed.
     #[error(transparent)]
     MailboxGet(#[from] JmapMailboxGetError),
+    /// The `Mailbox/query` coroutine failed.
     #[error(transparent)]
     MailboxQuery(#[from] JmapMailboxQueryError),
+    /// The `Mailbox/set` coroutine failed.
     #[error(transparent)]
     MailboxSet(#[from] JmapMailboxSetError),
+    /// The `Mailbox/changes` coroutine failed.
     #[error(transparent)]
     MailboxChanges(#[from] JmapMailboxChangesError),
-
+    /// The `Email/get` coroutine failed.
     #[error(transparent)]
     EmailGet(#[from] JmapEmailGetError),
+    /// The `Email/query` coroutine failed.
     #[error(transparent)]
     EmailQuery(#[from] JmapEmailQueryError),
+    /// The `Email/set` coroutine failed.
     #[error(transparent)]
     EmailSet(#[from] JmapEmailSetError),
+    /// The `Email/changes` coroutine failed.
     #[error(transparent)]
     EmailChanges(#[from] JmapEmailChangesError),
+    /// The `Email/copy` coroutine failed.
     #[error(transparent)]
-    JmapEmailCopyArgs(#[from] JmapEmailCopyError),
+    EmailCopy(#[from] JmapEmailCopyError),
+    /// The `Email/import` coroutine failed.
     #[error(transparent)]
-    JmapEmailImportArgs(#[from] JmapEmailImportError),
+    EmailImport(#[from] JmapEmailImportError),
+    /// The `Email/parse` coroutine failed.
     #[error(transparent)]
     EmailParse(#[from] JmapEmailParseError),
-
+    /// The `Thread/get` coroutine failed.
     #[error(transparent)]
     ThreadGet(#[from] JmapThreadGetError),
+    /// The `Thread/changes` coroutine failed.
     #[error(transparent)]
     ThreadChanges(#[from] JmapThreadChangesError),
-
+    /// The `Identity/get` coroutine failed.
     #[error(transparent)]
     IdentityGet(#[from] JmapIdentityGetError),
+    /// The `Identity/set` coroutine failed.
     #[error(transparent)]
     IdentitySet(#[from] JmapIdentitySetError),
-
+    /// The `EmailSubmission/get` coroutine failed.
     #[error(transparent)]
     EmailSubmissionGet(#[from] JmapEmailSubmissionGetError),
+    /// The `EmailSubmission/query` coroutine failed.
     #[error(transparent)]
     EmailSubmissionQuery(#[from] JmapEmailSubmissionQueryError),
+    /// The `EmailSubmission/set` coroutine failed.
     #[error(transparent)]
     EmailSubmissionSet(#[from] JmapEmailSubmissionSetError),
+    /// The `EmailSubmission/set` cancel coroutine failed.
     #[error(transparent)]
     EmailSubmissionCancel(#[from] JmapEmailSubmissionCancelError),
-
+    /// The `VacationResponse/get` coroutine failed.
     #[error(transparent)]
     VacationResponseGet(#[from] JmapVacationResponseGetError),
+    /// The `VacationResponse/set` coroutine failed.
     #[error(transparent)]
     VacationResponseSet(#[from] JmapVacationResponseSetError),
-
+    /// The `AddressBook/get` coroutine failed.
     #[error(transparent)]
     AddressBookGet(#[from] JmapAddressBookGetError),
+    /// The `AddressBook/set` coroutine failed.
     #[error(transparent)]
     AddressBookSet(#[from] JmapAddressBookSetError),
+    /// The `AddressBook/changes` coroutine failed.
     #[error(transparent)]
     AddressBookChanges(#[from] JmapAddressBookChangesError),
-
+    /// The `ContactCard/get` coroutine failed.
     #[error(transparent)]
     ContactCardGet(#[from] JmapContactCardGetError),
+    /// The `ContactCard/query` coroutine failed.
     #[error(transparent)]
     ContactCardQuery(#[from] JmapContactCardQueryError),
+    /// The `ContactCard/set` coroutine failed.
     #[error(transparent)]
     ContactCardSet(#[from] JmapContactCardSetError),
+    /// The `ContactCard/changes` coroutine failed.
     #[error(transparent)]
     ContactCardChanges(#[from] JmapContactCardChangesError),
+    /// The `ContactCard/copy` coroutine failed.
     #[error(transparent)]
     ContactCardCopy(#[from] JmapContactCardCopyError),
-
+    /// The underlying stream failed to read or write.
     #[error(transparent)]
     Io(#[from] io::Error),
-
+    /// The TCP connection or the TLS negotiation failed.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -169,6 +201,7 @@ pub enum JmapClientStdError {
     ))]
     #[error(transparent)]
     Tls(#[from] anyhow::Error),
+    /// The URL to connect to carries no host.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -176,34 +209,39 @@ pub enum JmapClientStdError {
     ))]
     #[error("JMAP URL `{0}` has no host")]
     UrlMissingHost(String),
+    /// The URL to connect to carries a scheme the client cannot open.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
         feature = "native-tls"
     ))]
     #[error(
-        "JMAP URL `{0}` has unsupported scheme `{1}` (expected `http`, `https`, `jmap` or `jmaps`)"
+        "JMAP URL `{url}` has unsupported scheme `{scheme}` (expected `http`, `https`, `jmap` or `jmaps`)"
     )]
-    UrlUnsupportedScheme(String, String),
-
+    UrlUnsupportedScheme {
+        /// The URL the client was asked to open.
+        url: String,
+        /// The unsupported scheme of that URL.
+        scheme: String,
+    },
+    /// The server answered with a redirect during a non-redirectable
+    /// operation.
     #[error("JMAP server redirected to `{0}` during a non-redirectable operation")]
     UnexpectedRedirect(Url),
+    /// A method requiring the session ran before [`JmapClientStd::session_get`].
     #[error("JMAP client missing session; call `session_get` first")]
     MissingSession,
 }
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 
-/// Default ALPN list for JMAP TLS handshakes: `["http/1.1"]` (JMAP rides on
-/// HTTP/1.1). Exposed so config-driven callers can share one source of truth.
-pub fn default_alpn() -> Vec<String> {
-    vec![String::from("http/1.1")]
-}
-
 /// Std-blocking JMAP client wrapping a single boxed stream.
 pub struct JmapClientStd {
+    /// The wrapped stream the coroutines read from and write to.
     pub stream: Box<dyn JmapStream>,
+    /// The pre-formatted HTTP `Authorization` header value.
     pub http_auth: SecretString,
+    /// The session discovered by [`Self::session_get`], if any.
     pub session: Option<JmapSession>,
 }
 
@@ -219,7 +257,14 @@ impl JmapClientStd {
         }
     }
 
-    /// Drives any standard-shape coroutine (`Yield = JmapYield`) against the
+    /// Default ALPN list for JMAP TLS handshakes: `["http/1.1"]` (JMAP rides
+    /// on HTTP/1.1). Exposed so config-based callers can share one source of
+    /// truth.
+    pub fn default_alpn() -> Vec<String> {
+        vec![String::from("http/1.1")]
+    }
+
+    /// Resumes any standard-shape coroutine (`Yield = JmapYield`) against the
     /// wrapped stream until it terminates.
     ///
     /// Redirect-aware coroutines ([`JmapSessionGet`], [`JmapBlobUpload`],
@@ -266,7 +311,7 @@ impl JmapClientStd {
 
     /// Connects to `url`, doing a TLS handshake for `https` / `jmaps` (plain
     /// TCP for `http` / `jmap`). ALPN comes from `tls.rustls.alpn` (see
-    /// [`default_alpn`]); empty vec skips ALPN.
+    /// [`Self::default_alpn`]); empty vec skips ALPN.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -285,10 +330,10 @@ impl JmapClientStd {
             "http" | "jmap" => StreamStd::connect_tcp(host, url.port().unwrap_or(80))?,
             "https" | "jmaps" => StreamStd::connect_tls(host, url.port().unwrap_or(443), tls)?,
             scheme => {
-                return Err(JmapClientStdError::UrlUnsupportedScheme(
-                    url.to_string(),
-                    scheme.to_string(),
-                ));
+                return Err(JmapClientStdError::UrlUnsupportedScheme {
+                    url: url.to_string(),
+                    scheme: scheme.to_string(),
+                });
             }
         };
 
@@ -362,15 +407,12 @@ impl JmapClientStd {
     /// Sends a raw JMAP request and returns the raw [`JmapResponse`]. Useful
     /// for passthrough CLIs and ad-hoc requests with custom `using`
     /// capabilities.
-    // TODO: move this to one level down
     pub fn send_raw(&mut self, request: JmapRequest) -> Result<JmapResponse, JmapClientStdError> {
         let session = self.session_or_err()?;
         let coroutine = JmapSend::new(&self.http_auth, &session.api_url, request)?;
         let out = self.run(coroutine)?;
         Ok(out.response)
     }
-
-    // ---- Blob (RFC 8620 §6) ----------------------------------------------
 
     /// Uploads a blob to `upload_url` (RFC 8620 §6.1). The caller must resolve
     /// the session's `uploadUrl` template (e.g. substitute `{accountId}`).
@@ -431,8 +473,6 @@ impl JmapClientStd {
         }
     }
 
-    // ---- PushSubscription (RFC 8620 §7.2) ----------------------------------
-
     /// Runs [`JmapPushSubscriptionGet`] (`PushSubscription/get`).
     pub fn push_subscription_get(
         &mut self,
@@ -452,8 +492,6 @@ impl JmapClientStd {
             JmapPushSubscriptionSet::new(self.session_or_err()?, &self.http_auth, args)?;
         self.run(coroutine)
     }
-
-    // ---- Mailbox (RFC 8621 §2) -------------------------------------------
 
     /// Runs [`JmapMailboxGet`] (`Mailbox/get`).
     pub fn mailbox_get(
@@ -493,8 +531,6 @@ impl JmapClientStd {
             JmapMailboxChanges::new(self.session_or_err()?, &self.http_auth, since_state, opts)?;
         self.run(coroutine)
     }
-
-    // ---- Email (RFC 8621 §4) ---------------------------------------------
 
     /// Runs [`JmapEmailGet`] (`Email/get`).
     pub fn email_get(
@@ -570,8 +606,6 @@ impl JmapClientStd {
         self.run(coroutine)
     }
 
-    // ---- Thread (RFC 8621 §3) --------------------------------------------
-
     /// Runs [`JmapThreadGet`] (`Thread/get`).
     pub fn thread_get(
         &mut self,
@@ -592,8 +626,6 @@ impl JmapClientStd {
         self.run(coroutine)
     }
 
-    // ---- Identity (RFC 8621 §6) ------------------------------------------
-
     /// Runs [`JmapIdentityGet`] (`Identity/get`).
     pub fn identity_get(
         &mut self,
@@ -611,8 +643,6 @@ impl JmapClientStd {
         let coroutine = JmapIdentitySet::new(self.session_or_err()?, &self.http_auth, args)?;
         self.run(coroutine)
     }
-
-    // ---- EmailSubmission (RFC 8621 §7) -----------------------------------
 
     /// Runs [`JmapEmailSubmissionGet`] (`EmailSubmission/get`).
     pub fn email_submission_get(
@@ -655,8 +685,6 @@ impl JmapClientStd {
         self.run(coroutine)
     }
 
-    // ---- VacationResponse (RFC 8621 §8) ----------------------------------
-
     /// Runs [`JmapVacationResponseGet`]; returns the singleton, if any.
     pub fn vacation_response_get(
         &mut self,
@@ -675,8 +703,6 @@ impl JmapClientStd {
             JmapVacationResponseSet::new(self.session_or_err()?, &self.http_auth, patch)?;
         Ok(self.run(coroutine)?.updated)
     }
-
-    // ---- AddressBook (RFC 9610 §2) -----------------------------------------
 
     /// Runs [`JmapAddressBookGet`] (`AddressBook/get`).
     pub fn address_book_get(
@@ -710,8 +736,6 @@ impl JmapClientStd {
         )?;
         self.run(coroutine)
     }
-
-    // ---- ContactCard (RFC 9610 §3) -----------------------------------------
 
     /// Runs [`JmapContactCardGet`] (`ContactCard/get`).
     pub fn contact_card_get(
@@ -781,11 +805,13 @@ impl fmt::Debug for JmapClientStd {
     }
 }
 
-/// Erased stream the client can drive: auto-implemented for any blocking
-/// `Read + Write + Send + 'static`. `Send` flows through the `Box<dyn …>` so
-/// `JmapClientStd` can move between worker threads; [`Self::as_any_mut`] lets
-/// specialized callers downcast back to the concrete stream.
+/// Erased stream the client resumes coroutines against: auto-implemented for
+/// any blocking `Read + Write + Send + 'static`. `Send` flows through the
+/// `Box<dyn …>` so [`JmapClientStd`] can move between worker threads;
+/// [`Self::as_any_mut`] lets specialized callers downcast back to the
+/// concrete stream.
 pub trait JmapStream: Read + Write + Send + Any {
+    /// Upcasts the stream to [`Any`] for downcasting to the concrete type.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 

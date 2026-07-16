@@ -25,11 +25,8 @@
 //! # let _ = coroutine;
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -44,14 +41,19 @@ use crate::{
 /// Failure causes during a JMAP `Foo/queryChanges` flow.
 #[derive(Debug, Error)]
 pub enum JmapQueryChangesError {
+    /// The response carried no method response.
     #[error("JMAP Foo/queryChanges failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Foo/queryChanges failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Foo/queryChanges failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Foo/queryChanges failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Foo/queryChanges failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -59,9 +61,13 @@ pub enum JmapQueryChangesError {
 /// Options for [`JmapQueryChanges::new`].
 #[derive(Clone, Debug)]
 pub struct JmapQueryChangesOptions<F: Serialize, S: Serialize> {
+    /// The filter conditions the objects must match.
     pub filter: Option<F>,
+    /// The sort comparators applied to the results.
     pub sort: Option<Vec<S>>,
+    /// Server-side cap on the number of changes returned.
     pub max_changes: Option<u64>,
+    /// Only report changes up to this id in the sorted results.
     pub up_to_id: Option<String>,
     /// Ask the server to compute `total`. Off by default.
     pub calculate_total: bool,
@@ -82,10 +88,16 @@ impl<F: Serialize, S: Serialize> Default for JmapQueryChangesOptions<F, S> {
 /// Successful terminal output of [`JmapQueryChanges`].
 #[derive(Clone, Debug)]
 pub struct JmapQueryChangesOutput {
+    /// The new query state after the call.
     pub new_query_state: String,
+    /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
+    /// Ids removed from the query results since the requested state.
     pub removed: Vec<String>,
+    /// Items added to the query results since the requested state, with
+    /// their positions.
     pub added: Vec<JmapAddedItem>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -134,7 +146,6 @@ impl JmapCoroutine for JmapQueryChanges {
     type Return = Result<JmapQueryChangesOutput, JmapQueryChangesError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("query-changes: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -175,14 +186,6 @@ enum State {
     Send(JmapSend),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct QueryChangesArgs<'a, F: Serialize, S: Serialize> {
@@ -213,7 +216,7 @@ struct QueryChangesResponse {
 mod tests {
     use alloc::{format, string::ToString, vec};
 
-    use super::*;
+    use crate::rfc8620::query_changes::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -318,8 +321,6 @@ mod tests {
         let out = expect_complete_ok(&mut cor, &reply);
         assert_eq!(out.total, Some(7));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapQueryChanges, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

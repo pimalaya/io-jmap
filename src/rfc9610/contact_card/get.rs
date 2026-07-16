@@ -53,24 +53,22 @@
 //! println!("{} cards", out.cards.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapSession, get::*},
-    rfc9610::{CONTACTS_CAPABILITY, contact_card::JmapContactCard},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapSession, get::*},
+    rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
 
 /// Failure causes during a JMAP `ContactCard/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardGetError {
+    /// The inner generic get coroutine failed.
     #[error("JMAP ContactCard/get failed: {0}")]
     Get(#[from] JmapGetError),
 }
@@ -88,9 +86,13 @@ pub struct JmapContactCardGetOptions {
 /// Successful terminal output of [`JmapContactCardGet`].
 #[derive(Clone, Debug)]
 pub struct JmapContactCardGetOutput {
+    /// The fetched contact cards.
     pub cards: Vec<JmapContactCard>,
+    /// The requested ids the server did not find.
     pub not_found: Vec<String>,
+    /// The new server state after the call.
     pub new_state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -100,6 +102,7 @@ pub struct JmapContactCardGet {
 }
 
 impl JmapContactCardGet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -107,7 +110,7 @@ impl JmapContactCardGet {
     ) -> Result<Self, JmapContactCardGetError> {
         let account_id = session
             .primary_accounts
-            .get(CONTACTS_CAPABILITY)
+            .get(JMAP_CONTACTS_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -118,7 +121,7 @@ impl JmapContactCardGet {
                 http_auth,
                 api_url,
                 "ContactCard/get",
-                vec![CORE_CAPABILITY.into(), CONTACTS_CAPABILITY.into()],
+                vec![JMAP_CORE_CAPABILITY.into(), JMAP_CONTACTS_CAPABILITY.into()],
                 JmapGetOptions {
                     ids: opts.ids,
                     properties: opts.properties,
@@ -133,7 +136,6 @@ impl JmapCoroutine for JmapContactCardGet {
     type Return = Result<JmapContactCardGetOutput, JmapContactCardGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("ContactCard/get: {}", self.state);
         match &mut self.state {
             State::Get(get) => {
                 let JmapGetOutput {
@@ -155,12 +157,4 @@ impl JmapCoroutine for JmapContactCardGet {
 
 enum State {
     Get(JmapGet<JmapContactCard>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Get(_) => f.write_str("get"),
-        }
-    }
 }

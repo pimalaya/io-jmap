@@ -56,11 +56,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -68,9 +65,9 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
     rfc9610::{
-        CONTACTS_CAPABILITY,
+        JMAP_CONTACTS_CAPABILITY,
         address_book::{
             JmapAddressBook, JmapAddressBookCreate, JmapAddressBookSetItemError,
             JmapAddressBookUpdate,
@@ -81,10 +78,13 @@ use crate::{
 /// Failure causes during a JMAP `AddressBook/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapAddressBookSetError {
+    /// The inner send coroutine failed.
     #[error("JMAP AddressBook/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP AddressBook/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The inner generic set coroutine failed.
     #[error("JMAP AddressBook/set failed: {0}")]
     Set(#[from] JmapSetError),
 }
@@ -96,21 +96,17 @@ pub struct JmapAddressBookSetArgs {
     /// Objects to create (client ID → partial AddressBook object).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create: Option<BTreeMap<String, JmapAddressBookCreate>>,
-
     /// Objects to update (AddressBook ID → patch object).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update: Option<BTreeMap<String, JmapAddressBookUpdate>>,
-
     /// IDs of objects to destroy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destroy: Option<Vec<String>>,
-
     /// Whether to remove contained ContactCards when destroying an
     /// AddressBook; a card left in no AddressBook is destroyed
     /// (RFC 9610 §2.3).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_destroy_remove_contents: Option<bool>,
-
     /// AddressBook ID (or `#`-prefixed creation ID) to make the default
     /// when all changes succeed (RFC 9610 §2.3).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -120,13 +116,21 @@ pub struct JmapAddressBookSetArgs {
 /// Successful terminal output of [`JmapAddressBookSet`].
 #[derive(Clone, Debug)]
 pub struct JmapAddressBookSetOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created address books, keyed by client id.
     pub created: BTreeMap<String, JmapAddressBook>,
+    /// The updated address books, keyed by id.
     pub updated: BTreeMap<String, Option<JmapAddressBook>>,
+    /// Ids of the destroyed objects.
     pub destroyed: Vec<String>,
+    /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, JmapAddressBookSetItemError>,
+    /// The failed updates, keyed by id.
     pub not_updated: BTreeMap<String, JmapAddressBookSetItemError>,
+    /// The failed destroys, keyed by id.
     pub not_destroyed: BTreeMap<String, JmapAddressBookSetItemError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -136,6 +140,7 @@ pub struct JmapAddressBookSet {
 }
 
 impl JmapAddressBookSet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -143,7 +148,7 @@ impl JmapAddressBookSet {
     ) -> Result<Self, JmapAddressBookSetError> {
         let account_id = session
             .primary_accounts
-            .get(CONTACTS_CAPABILITY)
+            .get(JMAP_CONTACTS_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -153,7 +158,10 @@ impl JmapAddressBookSet {
 
         let mut batch = JmapBatch::new();
         batch.add("AddressBook/set", json_args);
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), CONTACTS_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_CONTACTS_CAPABILITY.into(),
+        ]);
 
         let send = JmapSend::new(http_auth, api_url, request)?;
         Ok(Self {
@@ -167,7 +175,6 @@ impl JmapCoroutine for JmapAddressBookSet {
     type Return = Result<JmapAddressBookSetOutput, JmapAddressBookSetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("AddressBook/set: {}", self.state);
         match &mut self.state {
             State::Set(set) => {
                 let JmapSetOutput {
@@ -206,14 +213,6 @@ impl JmapCoroutine for JmapAddressBookSet {
 
 enum State {
     Set(JmapSet<JmapAddressBook>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Set(_) => f.write_str("set"),
-        }
-    }
 }
 
 #[derive(Serialize)]

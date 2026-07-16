@@ -17,9 +17,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `AddressBook/get`, `AddressBook/changes`, `AddressBook/set` (with the `onDestroyRemoveContents` and `onSuccessSetIsDefault` extra arguments and the `addressBookHasContents` set error), `ContactCard/get`, `ContactCard/changes`, `ContactCard/query` (batched with `ContactCard/get` via Result Reference), `ContactCard/set`, `ContactCard/copy`. The ContactCard's JSContact payload (RFC 9553) is kept as raw JSON next to the typed `id` and `addressBookIds` properties.
 
+### Changed
+
+- Renamed the capability constants with the strict `Jmap` domain prefix.
+
+  `rfc8620::CORE_CAPABILITY` became `JMAP_CORE_CAPABILITY`, `rfc8621::MAIL_CAPABILITY` became `JMAP_MAIL_CAPABILITY`, `rfc8621::email_submission::SUBMISSION_CAPABILITY` became `JMAP_SUBMISSION_CAPABILITY`, `rfc8621::vacation_response::VACATION_RESPONSE_CAPABILITY` became `JMAP_VACATION_RESPONSE_CAPABILITY` and `rfc9610::CONTACTS_CAPABILITY` became `JMAP_CONTACTS_CAPABILITY`.
+
+- Renamed the standard email keyword constants and flattened them into the email module.
+
+  The `rfc8621::email::keywords` module is gone; its `SEEN`, `FLAGGED`, `ANSWERED` and `DRAFT` constants are now `rfc8621::email::JMAP_KEYWORD_SEEN`, `JMAP_KEYWORD_FLAGGED`, `JMAP_KEYWORD_ANSWERED` and `JMAP_KEYWORD_DRAFT`.
+
+- Moved the free function `rfc8620::event_source::parse_state_change` to the associated function `JmapStateChange::parse`.
+
+- Moved the free function `rfc8620::event_source::subscribe_url` to the associated function `JmapEventSource::subscribe_url`.
+
+- Moved the free function `client::default_alpn` to the associated function `JmapClientStd::default_alpn`.
+
+- Renamed the `JmapClientStdError::JmapEmailCopyArgs` and `JmapClientStdError::JmapEmailImportArgs` variants to `EmailCopy` and `EmailImport`.
+
+- Changed `JmapClientStdError::UrlUnsupportedScheme` from a tuple variant to a struct variant with `url` and `scheme` fields.
+
+- Documented every public item, including struct fields and enum variants; docs.rs now builds with all features enabled.
+
+- Reworked the library logging to the shared debug-plus-trace pattern and removed the per-resume state traces, along with the now-unused internal state Display implementations.
+
+- Bumped io-http to 0.3 (adapting the event source coroutine to the renamed reader coroutines) and pimalaya-stream to 0.1, and removed the io-http git patch pinning an unpublished revision.
+
 ### Fixed
 
 - Fixed the RFC 8620 section numbers cited by the Event Source docs: Event Source is §7.3 and StateChange is §7.1, not §7.2/§7.2.1 (which cover PushSubscription).
+
+- Fixed the live provider tests against the io-http 0.2 auth renames (`HttpAuthBasic`, `HttpAuthBearer`).
 
 ## [0.1.0] - 2026-06-05
 

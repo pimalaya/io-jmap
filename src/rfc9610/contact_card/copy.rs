@@ -54,11 +54,8 @@
 //! println!("{} created", out.created.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -66,9 +63,9 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc9610::{
-        CONTACTS_CAPABILITY,
+        JMAP_CONTACTS_CAPABILITY,
         contact_card::{JmapContactCard, JmapContactCardCopyArgs, JmapContactCardCopyItemError},
     },
 };
@@ -76,14 +73,19 @@ use crate::{
 /// Failure causes during a JMAP `ContactCard/copy` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardCopyError {
+    /// The response carried no method response.
     #[error("JMAP ContactCard/copy failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP ContactCard/copy failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP ContactCard/copy failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP ContactCard/copy failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP ContactCard/copy failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -91,9 +93,13 @@ pub enum JmapContactCardCopyError {
 /// Successful terminal output of [`JmapContactCardCopy`].
 #[derive(Clone, Debug)]
 pub struct JmapContactCardCopyOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created cards, keyed by client id.
     pub created: BTreeMap<String, JmapContactCard>,
+    /// The failed copies, keyed by client id.
     pub not_created: BTreeMap<String, JmapContactCardCopyItemError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -103,6 +109,7 @@ pub struct JmapContactCardCopy {
 }
 
 impl JmapContactCardCopy {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -111,7 +118,7 @@ impl JmapContactCardCopy {
     ) -> Result<Self, JmapContactCardCopyError> {
         let account_id = session
             .primary_accounts
-            .get(CONTACTS_CAPABILITY)
+            .get(JMAP_CONTACTS_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -125,7 +132,10 @@ impl JmapContactCardCopy {
 
         let mut batch = JmapBatch::new();
         batch.add("ContactCard/copy", args);
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), CONTACTS_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_CONTACTS_CAPABILITY.into(),
+        ]);
 
         Ok(Self {
             state: State::Send(JmapSend::new(http_auth, api_url, request)?),
@@ -138,7 +148,6 @@ impl JmapCoroutine for JmapContactCardCopy {
     type Return = Result<JmapContactCardCopyOutput, JmapContactCardCopyError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("ContactCard/copy: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -176,14 +185,6 @@ impl JmapCoroutine for JmapContactCardCopy {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

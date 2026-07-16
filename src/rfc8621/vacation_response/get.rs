@@ -52,15 +52,12 @@
 //! println!("vacation enabled: {:?}", out.vacation_response);
 //! ```
 
-use core::fmt;
-
 use alloc::{
     string::{String, ToString},
     vec,
     vec::Vec,
 };
 
-use log::trace;
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -68,20 +65,23 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, get::*, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, get::*, send::*},
     rfc8621::{
-        MAIL_CAPABILITY,
-        vacation_response::{JmapVacationResponse, VACATION_RESPONSE_CAPABILITY},
+        JMAP_MAIL_CAPABILITY,
+        vacation_response::{JMAP_VACATION_RESPONSE_CAPABILITY, JmapVacationResponse},
     },
 };
 
 /// Failure causes during a JMAP `VacationResponse/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapVacationResponseGetError {
+    /// The inner send coroutine failed.
     #[error("JMAP VacationResponse/get failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP VacationResponse/get failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The inner generic get coroutine failed.
     #[error("JMAP VacationResponse/get failed: {0}")]
     Get(#[from] JmapGetError),
 }
@@ -89,8 +89,11 @@ pub enum JmapVacationResponseGetError {
 /// Successful terminal output of [`JmapVacationResponseGet`].
 #[derive(Clone, Debug)]
 pub struct JmapVacationResponseGetOutput {
+    /// The vacation response singleton, when the server returned it.
     pub vacation_response: Option<JmapVacationResponse>,
+    /// The new server state after the call.
     pub new_state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -100,14 +103,15 @@ pub struct JmapVacationResponseGet {
 }
 
 impl JmapVacationResponseGet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
     ) -> Result<Self, JmapVacationResponseGetError> {
         let account_id = session
             .primary_accounts
-            .get(VACATION_RESPONSE_CAPABILITY)
-            .or_else(|| session.primary_accounts.get(MAIL_CAPABILITY))
+            .get(JMAP_VACATION_RESPONSE_CAPABILITY)
+            .or_else(|| session.primary_accounts.get(JMAP_MAIL_CAPABILITY))
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -118,12 +122,12 @@ impl JmapVacationResponseGet {
         })
         .map_err(JmapVacationResponseGetError::SerializeArgs)?;
 
-        let mut using = vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()];
+        let mut using = vec![JMAP_CORE_CAPABILITY.into(), JMAP_MAIL_CAPABILITY.into()];
         if session
             .capabilities
-            .contains_key(VACATION_RESPONSE_CAPABILITY)
+            .contains_key(JMAP_VACATION_RESPONSE_CAPABILITY)
         {
-            using.push(VACATION_RESPONSE_CAPABILITY.into());
+            using.push(JMAP_VACATION_RESPONSE_CAPABILITY.into());
         }
 
         let mut batch = JmapBatch::new();
@@ -142,7 +146,6 @@ impl JmapCoroutine for JmapVacationResponseGet {
     type Return = Result<JmapVacationResponseGetOutput, JmapVacationResponseGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("VacationResponse/get: {}", self.state);
         match &mut self.state {
             State::Get(get) => {
                 let JmapGetOutput {
@@ -163,14 +166,6 @@ impl JmapCoroutine for JmapVacationResponseGet {
 
 enum State {
     Get(JmapGet<JmapVacationResponse>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Get(_) => f.write_str("get"),
-        }
-    }
 }
 
 #[derive(Serialize)]

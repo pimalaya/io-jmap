@@ -58,11 +58,8 @@
 //! println!("{} parsed", out.parsed.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -70,9 +67,9 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
-        MAIL_CAPABILITY,
+        JMAP_MAIL_CAPABILITY,
         email::{JmapEmail, JmapEmailProperty},
     },
 };
@@ -80,14 +77,19 @@ use crate::{
 /// Failure causes during a JMAP `Email/parse` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailParseError {
+    /// The response carried no method response.
     #[error("JMAP Email/parse failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Email/parse failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Email/parse failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Email/parse failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Email/parse failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -102,9 +104,13 @@ pub struct JmapEmailParseOptions {
 /// Successful terminal output of [`JmapEmailParse`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailParseOutput {
+    /// The parsed emails, keyed by blob id.
     pub parsed: BTreeMap<String, JmapEmail>,
+    /// Blob ids that could not be parsed as messages.
     pub not_parsable: Vec<String>,
+    /// The requested ids the server did not find.
     pub not_found: Vec<String>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -114,6 +120,7 @@ pub struct JmapEmailParse {
 }
 
 impl JmapEmailParse {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -122,7 +129,7 @@ impl JmapEmailParse {
     ) -> Result<Self, JmapEmailParseError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -141,7 +148,10 @@ impl JmapEmailParse {
             "Email/parse",
             serde_json::to_value(&parse_args).map_err(JmapEmailParseError::SerializeArgs)?,
         );
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_MAIL_CAPABILITY.into(),
+        ]);
 
         Ok(Self {
             state: State::Send(JmapSend::new(http_auth, api_url, request)?),
@@ -154,7 +164,6 @@ impl JmapCoroutine for JmapEmailParse {
     type Return = Result<JmapEmailParseOutput, JmapEmailParseError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Email/parse: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -190,14 +199,6 @@ impl JmapCoroutine for JmapEmailParse {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

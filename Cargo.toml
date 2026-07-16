@@ -1,18 +1,19 @@
 [package]
 name = "io-jmap"
-description = "JMAP client library"
+description = "JMAP client library for Rust"
 version = "0.1.0"
 authors = ["soywod <pimalaya.org@posteo.net>"]
 rust-version = "1.87"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-categories = ["api-bindings", "email"]
-keywords = ["io-free", "coroutine", "jmap", "rfc8620", "rfc8621"]
+categories = ["api-bindings", "email", "no-std"]
+keywords = ["io-free", "no-std", "coroutine", "jmap", "email"]
 homepage = "https://pimalaya.org"
 documentation = "https://docs.rs/io-jmap/latest/io_jmap"
 repository = "https://github.com/pimalaya/io-jmap"
 
 [package.metadata.docs.rs]
+all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
@@ -22,6 +23,16 @@ rustls-ring = ["client", "pimalaya-stream/rustls-ring", "dep:anyhow", "dep:pimal
 rustls-aws = ["client", "pimalaya-stream/rustls-aws", "dep:anyhow", "dep:pimalaya-stream"]
 native-tls = ["client", "pimalaya-stream/native-tls", "dep:anyhow", "dep:pimalaya-stream"]
 vendored = ["pimalaya-stream?/vendored"]
+
+[[example]]
+name = "session"
+path = "examples/session.rs"
+required-features = ["rustls-ring"]
+
+[[example]]
+name = "push_subscription"
+path = "examples/push_subscription.rs"
+required-features = ["rustls-ring"]
 
 [dev-dependencies]
 env_logger = "0.11"
@@ -33,14 +44,11 @@ url = { version = "2.5", default-features = false }
 
 [dependencies]
 anyhow = { version = "1", optional = true }
-io-http = { version = "0.2", default-features = false }
+io-http = { version = "0.3", default-features = false }
 log = { version = "0.4", default-features = false }
-pimalaya-stream = { version = "0.0.1", default-features = false, optional = true }
+pimalaya-stream = { version = "0.1", default-features = false, optional = true }
 secrecy = { version = "0.10", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, features = ["serde"] }
-
-[patch.crates-io]
-io-http.git = "https://github.com/pimalaya/io-http"

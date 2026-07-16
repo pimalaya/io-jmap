@@ -23,11 +23,8 @@
 //! # let _ = coroutine;
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -42,14 +39,19 @@ use crate::{
 /// Failure causes during a JMAP `Foo/query` flow.
 #[derive(Debug, Error)]
 pub enum JmapQueryError {
+    /// The response carried no method response.
     #[error("JMAP Foo/query failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Foo/query failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Foo/query failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Foo/query failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Foo/query failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -57,11 +59,17 @@ pub enum JmapQueryError {
 /// Options for [`JmapQuery::new`].
 #[derive(Clone, Debug)]
 pub struct JmapQueryOptions<F: Serialize, S: Serialize> {
+    /// The filter conditions the objects must match.
     pub filter: Option<F>,
+    /// The sort comparators applied to the results.
     pub sort: Option<Vec<S>>,
+    /// Zero-based index of the first result to return.
     pub position: Option<u64>,
+    /// Id of the object to anchor the result window on.
     pub anchor: Option<String>,
+    /// Offset of the result window relative to the anchor.
     pub anchor_offset: Option<i64>,
+    /// Maximum number of results to return.
     pub limit: Option<u64>,
     /// Ask the server to compute `total`. Off by default.
     pub calculate_total: bool,
@@ -84,12 +92,19 @@ impl<F: Serialize, S: Serialize> Default for JmapQueryOptions<F, S> {
 /// Successful terminal output of [`JmapQuery`].
 #[derive(Clone, Debug)]
 pub struct JmapQueryOutput {
+    /// The state the query results were computed at.
     pub query_state: String,
+    /// Whether the server can compute query changes from this state.
     pub can_calculate_changes: bool,
+    /// Zero-based index of the first returned id.
     pub position: u64,
+    /// The matching object ids in sorted order.
     pub ids: Vec<String>,
+    /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
+    /// Maximum number of results to return.
     pub limit: Option<u64>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -142,7 +157,6 @@ impl JmapCoroutine for JmapQuery {
     type Return = Result<JmapQueryOutput, JmapQueryError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("query: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -183,14 +197,6 @@ enum State {
     Send(JmapSend),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct QueryArgs<'a, F: Serialize, S: Serialize> {
@@ -229,7 +235,7 @@ struct QueryResponse {
 mod tests {
     use alloc::{format, string::ToString, vec};
 
-    use super::*;
+    use crate::rfc8620::query::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -334,8 +340,6 @@ mod tests {
         let out = expect_complete_ok(&mut cor, &reply);
         assert_eq!(out.total, Some(42));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapQuery, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

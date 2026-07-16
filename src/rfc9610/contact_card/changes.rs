@@ -58,24 +58,22 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec};
 
-use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapSession, changes::*},
-    rfc9610::CONTACTS_CAPABILITY,
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapSession, changes::*},
+    rfc9610::JMAP_CONTACTS_CAPABILITY,
 };
 
 /// Failure causes during a JMAP `ContactCard/changes` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardChangesError {
+    /// The inner generic changes coroutine failed.
     #[error("JMAP ContactCard/changes failed: {0}")]
     Changes(#[from] JmapChangesError),
 }
@@ -93,6 +91,7 @@ pub struct JmapContactCardChanges {
 }
 
 impl JmapContactCardChanges {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -101,7 +100,7 @@ impl JmapContactCardChanges {
     ) -> Result<Self, JmapContactCardChangesError> {
         let account_id = session
             .primary_accounts
-            .get(CONTACTS_CAPABILITY)
+            .get(JMAP_CONTACTS_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -112,7 +111,7 @@ impl JmapContactCardChanges {
                 http_auth,
                 api_url,
                 "ContactCard/changes",
-                vec![CORE_CAPABILITY.into(), CONTACTS_CAPABILITY.into()],
+                vec![JMAP_CORE_CAPABILITY.into(), JMAP_CONTACTS_CAPABILITY.into()],
                 since_state,
                 JmapChangesOptions {
                     max_changes: opts.max_changes,
@@ -127,7 +126,6 @@ impl JmapCoroutine for JmapContactCardChanges {
     type Return = Result<JmapChangesOutput, JmapContactCardChangesError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("ContactCard/changes: {}", self.state);
         match &mut self.state {
             State::Changes(changes) => {
                 let out = jmap_try!(changes, arg);
@@ -139,12 +137,4 @@ impl JmapCoroutine for JmapContactCardChanges {
 
 enum State {
     Changes(JmapChanges),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Changes(_) => f.write_str("changes"),
-        }
-    }
 }

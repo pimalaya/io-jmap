@@ -1,6 +1,6 @@
 //! Shared helpers for provider integration tests.
 //!
-//! Each test drives the raw coroutine loop against a live JMAP server.
+//! Each test resumes the raw coroutine loop against a live JMAP server.
 //! Call [`run_jmap`] for plain HTTP (e.g. a local Stalwart instance) or
 //! [`run_jmaps`] for HTTPS (e.g. Fastmail).
 //!
@@ -34,26 +34,11 @@ use std::{
 
 use io_jmap::{
     coroutine::*,
-    rfc8620::{
-        blob_upload::{JmapBlobUpload, JmapBlobUploadOutput},
-        coroutine::JmapRedirectYield,
-        session_get::{JmapSessionGet, JmapSessionGetOutput},
-    },
+    rfc8620::{blob_upload::*, coroutine::JmapRedirectYield, session_get::*},
     rfc8621::{
-        email::{
-            JmapEmailFilter, JmapEmailImportArgs,
-            get::{JmapEmailGet, JmapEmailGetOptions, JmapEmailGetOutput},
-            import::{JmapEmailImport, JmapEmailImportOutput},
-            query::{JmapEmailQuery, JmapEmailQueryOptions, JmapEmailQueryOutput},
-            set::{JmapEmailSet, JmapEmailSetArgs, JmapEmailSetOutput},
-        },
-        mailbox::{
-            JmapMailboxCreate, JmapMailboxUpdate,
-            get::{JmapMailboxGet, JmapMailboxGetOptions, JmapMailboxGetOutput},
-            query::{JmapMailboxQuery, JmapMailboxQueryOptions, JmapMailboxQueryOutput},
-            set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetOutput},
-        },
-        thread::get::{JmapThreadGet, JmapThreadGetOutput},
+        email::{JmapEmailFilter, JmapEmailImportArgs, get::*, import::*, query::*, set::*},
+        mailbox::{JmapMailboxCreate, JmapMailboxUpdate, get::*, query::*, set::*},
+        thread::get::*,
     },
 };
 use rustls::{ClientConfig, ClientConnection, StreamOwned, pki_types::ServerName};

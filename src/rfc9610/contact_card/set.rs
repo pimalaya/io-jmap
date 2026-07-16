@@ -54,11 +54,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -66,9 +63,9 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
     rfc9610::{
-        CONTACTS_CAPABILITY,
+        JMAP_CONTACTS_CAPABILITY,
         contact_card::{JmapContactCard, JmapContactCardPatch, JmapContactCardSetItemError},
     },
 };
@@ -76,10 +73,13 @@ use crate::{
 /// Failure causes during a JMAP `ContactCard/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardSetError {
+    /// The inner send coroutine failed.
     #[error("JMAP ContactCard/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP ContactCard/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The inner generic set coroutine failed.
     #[error("JMAP ContactCard/set failed: {0}")]
     Set(#[from] JmapSetError),
 }
@@ -91,11 +91,9 @@ pub struct JmapContactCardSetArgs {
     /// Objects to create (client ID → ContactCard object).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create: Option<BTreeMap<String, JmapContactCard>>,
-
     /// Objects to update (ContactCard ID → patch object).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update: Option<BTreeMap<String, JmapContactCardPatch>>,
-
     /// IDs of objects to destroy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destroy: Option<Vec<String>>,
@@ -104,13 +102,21 @@ pub struct JmapContactCardSetArgs {
 /// Successful terminal output of [`JmapContactCardSet`].
 #[derive(Clone, Debug)]
 pub struct JmapContactCardSetOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created cards, keyed by client id.
     pub created: BTreeMap<String, JmapContactCard>,
+    /// The updated cards, keyed by id.
     pub updated: BTreeMap<String, Option<JmapContactCard>>,
+    /// Ids of the destroyed objects.
     pub destroyed: Vec<String>,
+    /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, JmapContactCardSetItemError>,
+    /// The failed updates, keyed by id.
     pub not_updated: BTreeMap<String, JmapContactCardSetItemError>,
+    /// The failed destroys, keyed by id.
     pub not_destroyed: BTreeMap<String, JmapContactCardSetItemError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -120,6 +126,7 @@ pub struct JmapContactCardSet {
 }
 
 impl JmapContactCardSet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -127,7 +134,7 @@ impl JmapContactCardSet {
     ) -> Result<Self, JmapContactCardSetError> {
         let account_id = session
             .primary_accounts
-            .get(CONTACTS_CAPABILITY)
+            .get(JMAP_CONTACTS_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -137,7 +144,10 @@ impl JmapContactCardSet {
 
         let mut batch = JmapBatch::new();
         batch.add("ContactCard/set", json_args);
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), CONTACTS_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_CONTACTS_CAPABILITY.into(),
+        ]);
 
         let send = JmapSend::new(http_auth, api_url, request)?;
         Ok(Self {
@@ -151,7 +161,6 @@ impl JmapCoroutine for JmapContactCardSet {
     type Return = Result<JmapContactCardSetOutput, JmapContactCardSetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("ContactCard/set: {}", self.state);
         match &mut self.state {
             State::Set(set) => {
                 let JmapSetOutput {
@@ -190,14 +199,6 @@ impl JmapCoroutine for JmapContactCardSet {
 
 enum State {
     Set(JmapSet<JmapContactCard>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Set(_) => f.write_str("set"),
-        }
-    }
 }
 
 #[derive(Serialize)]

@@ -55,11 +55,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::Serialize;
 use thiserror::Error;
@@ -67,9 +64,9 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
     rfc8621::{
-        MAIL_CAPABILITY,
+        JMAP_MAIL_CAPABILITY,
         email::{JmapEmail, JmapEmailPatch, JmapEmailPatchOp, JmapEmailSetItemError},
     },
 };
@@ -77,10 +74,13 @@ use crate::{
 /// Failure causes during a JMAP `Email/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailSetError {
+    /// The inner send coroutine failed.
     #[error("JMAP Email/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Email/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The inner generic set coroutine failed.
     #[error("JMAP Email/set failed: {0}")]
     Set(#[from] JmapSetError),
 }
@@ -92,11 +92,9 @@ pub struct JmapEmailSetArgs {
     /// Objects to create (client ID → partial email object).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub create: Option<BTreeMap<String, JmapEmail>>,
-
     /// Objects to update (email ID → patch).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update: Option<BTreeMap<String, JmapEmailPatch>>,
-
     /// IDs to destroy (delete).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub destroy: Option<Vec<String>>,
@@ -119,6 +117,7 @@ impl JmapEmailSetArgs {
         self
     }
 
+    /// Queues a patch setting a keyword on the email with the given id.
     pub fn set_keyword(&mut self, id: impl Into<String>, keyword: impl Into<String>) -> &mut Self {
         self.patch(id)
             .0
@@ -126,6 +125,7 @@ impl JmapEmailSetArgs {
         self
     }
 
+    /// Queues a patch unsetting a keyword on the email with the given id.
     pub fn unset_keyword(
         &mut self,
         id: impl Into<String>,
@@ -137,6 +137,7 @@ impl JmapEmailSetArgs {
         self
     }
 
+    /// Queues a patch replacing all keywords of the email with the given id.
     pub fn replace_keywords(
         &mut self,
         id: impl Into<String>,
@@ -148,6 +149,7 @@ impl JmapEmailSetArgs {
         self
     }
 
+    /// Queues a patch adding the email with the given id to a mailbox.
     pub fn add_to_mailbox(
         &mut self,
         id: impl Into<String>,
@@ -159,6 +161,7 @@ impl JmapEmailSetArgs {
         self
     }
 
+    /// Queues a patch removing the email with the given id from a mailbox.
     pub fn remove_from_mailbox(
         &mut self,
         id: impl Into<String>,
@@ -170,6 +173,8 @@ impl JmapEmailSetArgs {
         self
     }
 
+    /// Queues a patch replacing the mailbox membership of the email with
+    /// the given id.
     pub fn replace_mailbox_ids(
         &mut self,
         id: impl Into<String>,
@@ -192,13 +197,21 @@ impl JmapEmailSetArgs {
 /// Successful terminal output of [`JmapEmailSet`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailSetOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created emails, keyed by client id.
     pub created: BTreeMap<String, JmapEmail>,
+    /// The updated emails, keyed by id.
     pub updated: BTreeMap<String, Option<JmapEmail>>,
+    /// Ids of the destroyed objects.
     pub destroyed: Vec<String>,
+    /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, JmapEmailSetItemError>,
+    /// The failed updates, keyed by id.
     pub not_updated: BTreeMap<String, JmapEmailSetItemError>,
+    /// The failed destroys, keyed by id.
     pub not_destroyed: BTreeMap<String, JmapEmailSetItemError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -208,6 +221,7 @@ pub struct JmapEmailSet {
 }
 
 impl JmapEmailSet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -215,7 +229,7 @@ impl JmapEmailSet {
     ) -> Result<Self, JmapEmailSetError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -225,7 +239,10 @@ impl JmapEmailSet {
 
         let mut batch = JmapBatch::new();
         batch.add("Email/set", json_args);
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_MAIL_CAPABILITY.into(),
+        ]);
 
         let send = JmapSend::new(http_auth, api_url, request)?;
         Ok(Self {
@@ -239,7 +256,6 @@ impl JmapCoroutine for JmapEmailSet {
     type Return = Result<JmapEmailSetOutput, JmapEmailSetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Email/set: {}", self.state);
         match &mut self.state {
             State::Set(set) => {
                 let JmapSetOutput {
@@ -278,14 +294,6 @@ impl JmapCoroutine for JmapEmailSet {
 
 enum State {
     Set(JmapSet<JmapEmail>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Set(_) => f.write_str("set"),
-        }
-    }
 }
 
 #[derive(Serialize)]

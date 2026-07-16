@@ -15,7 +15,7 @@ mod common;
 
 use std::env;
 
-use io_http::rfc6750::bearer::BearerToken;
+use io_http::rfc6750::bearer::HttpAuthBearer;
 
 /// Full end-to-end JMAP test against Fastmail over HTTPS.
 ///
@@ -26,7 +26,9 @@ use io_http::rfc6750::bearer::BearerToken;
 fn fastmail() {
     let email = env::var("FASTMAIL_EMAIL").expect("FASTMAIL_EMAIL not set");
     let token = env::var("FASTMAIL_API_TOKEN").expect("FASTMAIL_API_TOKEN not set");
-    let token = BearerToken::new(token).to_authorization();
+    let token = HttpAuthBearer::from_authorization(&token)
+        .expect("FASTMAIL_API_TOKEN must be a full `Bearer <token>` header value")
+        .to_authorization();
 
     common::run_jmaps("api.fastmail.com", 443, &token, &email);
 }

@@ -12,9 +12,9 @@ use url::Url;
 /// plus [`Self::WantsRedirect`].
 #[derive(Debug)]
 pub enum JmapRedirectYield {
-    /// Driver should read more bytes and feed them back on the next resume.
+    /// The caller reads more bytes and feeds them back on the next resume.
     WantsRead,
-    /// Driver should write these bytes; the next resume typically takes `None`.
+    /// The caller writes these bytes; the next resume typically takes `None`.
     WantsWrite(Vec<u8>),
     /// Server responded with a 3xx. The caller opens a new connection when
     /// `!keep_alive || !same_origin` and builds a fresh coroutine for `url`.

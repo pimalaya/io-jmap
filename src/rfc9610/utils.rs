@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 /// JMAP for Contacts capability (RFC 9610 §1.4.1).
-pub const CONTACTS_CAPABILITY: &str = "urn:ietf:params:jmap:contacts";
+pub const JMAP_CONTACTS_CAPABILITY: &str = "urn:ietf:params:jmap:contacts";
 
 /// Value of the contacts capability in an account's `accountCapabilities`
 /// property (RFC 9610 §1.4.1).

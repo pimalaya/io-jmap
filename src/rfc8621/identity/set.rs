@@ -55,11 +55,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -67,10 +64,10 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
-        MAIL_CAPABILITY,
-        email_submission::SUBMISSION_CAPABILITY,
+        JMAP_MAIL_CAPABILITY,
+        email_submission::JMAP_SUBMISSION_CAPABILITY,
         identity::{
             JmapIdentity, JmapIdentityCreate, JmapIdentitySetItemError, JmapIdentityUpdate,
         },
@@ -80,14 +77,19 @@ use crate::{
 /// Failure causes during a JMAP `Identity/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapIdentitySetError {
+    /// The response carried no method response.
     #[error("JMAP Identity/set failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Identity/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Identity/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Identity/set failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Identity/set failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -95,12 +97,16 @@ pub enum JmapIdentitySetError {
 /// Arguments for an `Identity/set` request.
 #[derive(Clone, Debug, Default)]
 pub struct JmapIdentitySetArgs {
+    /// The identities to create, keyed by client id.
     pub create: BTreeMap<String, JmapIdentityCreate>,
+    /// The patches to apply, keyed by identity id.
     pub update: BTreeMap<String, JmapIdentityUpdate>,
+    /// The ids of the objects to destroy.
     pub destroy: Vec<String>,
 }
 
 impl JmapIdentitySetArgs {
+    /// Queues an object to create under the given client id.
     pub fn create(
         &mut self,
         client_id: impl Into<String>,
@@ -110,11 +116,13 @@ impl JmapIdentitySetArgs {
         self
     }
 
+    /// Queues a patch for the identity with the given id.
     pub fn update(&mut self, id: impl Into<String>, patch: JmapIdentityUpdate) -> &mut Self {
         self.update.insert(id.into(), patch);
         self
     }
 
+    /// Queues the object with the given id for destruction.
     pub fn destroy(&mut self, id: impl Into<String>) -> &mut Self {
         self.destroy.push(id.into());
         self
@@ -124,13 +132,21 @@ impl JmapIdentitySetArgs {
 /// Successful terminal output of [`JmapIdentitySet`].
 #[derive(Clone, Debug)]
 pub struct JmapIdentitySetOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created identities, keyed by client id.
     pub created: BTreeMap<String, JmapIdentity>,
+    /// The updated identities, keyed by id.
     pub updated: BTreeMap<String, Option<JmapIdentity>>,
+    /// Ids of the destroyed objects.
     pub destroyed: Vec<String>,
+    /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, JmapIdentitySetItemError>,
+    /// The failed updates, keyed by id.
     pub not_updated: BTreeMap<String, JmapIdentitySetItemError>,
+    /// The failed destroys, keyed by id.
     pub not_destroyed: BTreeMap<String, JmapIdentitySetItemError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -140,6 +156,7 @@ pub struct JmapIdentitySet {
 }
 
 impl JmapIdentitySet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -147,7 +164,7 @@ impl JmapIdentitySet {
     ) -> Result<Self, JmapIdentitySetError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -163,9 +180,9 @@ impl JmapIdentitySet {
         let mut batch = JmapBatch::new();
         batch.add("Identity/set", json_args);
         let request = batch.into_request(vec![
-            CORE_CAPABILITY.into(),
-            MAIL_CAPABILITY.into(),
-            SUBMISSION_CAPABILITY.into(),
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_MAIL_CAPABILITY.into(),
+            JMAP_SUBMISSION_CAPABILITY.into(),
         ]);
 
         Ok(Self {
@@ -179,7 +196,6 @@ impl JmapCoroutine for JmapIdentitySet {
     type Return = Result<JmapIdentitySetOutput, JmapIdentitySetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Identity/set: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -221,14 +237,6 @@ impl JmapCoroutine for JmapIdentitySet {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

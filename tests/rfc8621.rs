@@ -1,6 +1,6 @@
 //! Tests for RFC 8621: JMAP for Mail.
 //!
-//! All tests drive JMAP coroutines against pre-crafted in-memory HTTP
+//! All tests resume JMAP coroutines against pre-crafted in-memory HTTP
 //! response buffers. No network connection is made.
 
 use io_jmap::{

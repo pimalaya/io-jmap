@@ -1,6 +1,7 @@
 //! JMAP Thread types (RFC 8621 §3).
 
 use alloc::{string::String, vec::Vec};
+
 use serde::{Deserialize, Serialize};
 
 /// A JMAP Thread object (RFC 8621 §3.1).
@@ -12,7 +13,6 @@ use serde::{Deserialize, Serialize};
 pub struct JmapThread {
     /// The server-assigned ID for this thread.
     pub id: String,
-
     /// Ordered list of email IDs in this thread, oldest first.
     pub email_ids: Vec<String>,
 }

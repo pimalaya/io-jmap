@@ -1,9 +1,9 @@
 //! Base coroutine all higher-level JMAP coroutines delegate to: serialises a
-//! [`JmapRequest`] as JSON, drives an HTTP/1.1 POST, and deserialises the
+//! [`JmapRequest`] as JSON, runs an HTTP/1.1 POST, and deserialises the
 //! [`JmapResponse`] body.
 //!
 //! 3xx redirects surface as [`JmapSendError::UnexpectedRedirect`];
-//! redirect-aware coroutines drive [`Http11Send`] directly instead.
+//! redirect-aware coroutines resume [`Http11Send`] directly instead.
 //!
 //! [`JmapRequest`]: crate::rfc8620::JmapRequest
 //! [`JmapResponse`]: crate::rfc8620::JmapResponse
@@ -54,8 +54,6 @@
 //! println!("{:?}", out.response);
 //! ```
 
-use core::fmt;
-
 use io_http::{
     coroutine::*,
     rfc9110::{
@@ -64,7 +62,7 @@ use io_http::{
     },
     rfc9112::send::{Http11Send, Http11SendError},
 };
-use log::trace;
+use log::{debug, trace};
 use secrecy::{ExposeSecret, SecretString};
 use thiserror::Error;
 use url::Url;
@@ -77,14 +75,19 @@ use crate::{
 /// Failure causes during the JMAP send flow.
 #[derive(Debug, Error)]
 pub enum JmapSendError {
+    /// The server answered with a non-2xx status.
     #[error("JMAP send failed: HTTP {0}")]
     HttpStatus(u16),
+    /// The server answered with an unexpected redirect.
     #[error("JMAP send failed: unexpected redirect")]
     UnexpectedRedirect,
+    /// The inner HTTP/1.1 send coroutine failed.
     #[error("JMAP send failed: {0}")]
     Send(#[from] Http11SendError),
+    /// The request could not be serialized.
     #[error("JMAP send failed: serialize request: {0}")]
     SerializeRequest(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP send failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
 }
@@ -124,7 +127,8 @@ impl JmapSend {
 
         http_request.method = "POST".into();
 
-        trace!("send JMAP request to {api_url}");
+        debug!("prepare request to send");
+        trace!("api url: {api_url}");
 
         Ok(Self {
             state: State::Send(Http11Send::new(http_request)),
@@ -137,7 +141,6 @@ impl JmapCoroutine for JmapSend {
     type Return = Result<JmapSendOutput, JmapSendError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("send: {}", self.state);
         match &mut self.state {
             State::Send(send) => match send.resume(arg) {
                 HttpCoroutineState::Yielded(HttpSendYield::WantsRead) => {
@@ -181,20 +184,12 @@ enum State {
     Send(Http11Send),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::{format, string::ToString, vec, vec::Vec};
 
-    use super::*;
     use crate::rfc8620::JmapBatch;
+    use crate::rfc8620::send::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -286,8 +281,6 @@ mod tests {
         assert_eq!(a, "c0");
         assert_eq!(b, "c1");
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapSend, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

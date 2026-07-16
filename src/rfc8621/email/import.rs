@@ -64,11 +64,8 @@
 //! println!("{} created", out.created.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -76,9 +73,9 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
-        MAIL_CAPABILITY,
+        JMAP_MAIL_CAPABILITY,
         email::{JmapEmail, JmapEmailImportArgs, JmapEmailImportItemError},
     },
 };
@@ -86,14 +83,19 @@ use crate::{
 /// Failure causes during a JMAP `Email/import` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailImportError {
+    /// The response carried no method response.
     #[error("JMAP Email/import failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Email/import failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Email/import failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Email/import failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Email/import failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -101,9 +103,13 @@ pub enum JmapEmailImportError {
 /// Successful terminal output of [`JmapEmailImport`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailImportOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created emails, keyed by client id.
     pub created: BTreeMap<String, JmapEmail>,
+    /// The failed imports, keyed by client id.
     pub not_created: BTreeMap<String, JmapEmailImportItemError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -121,7 +127,7 @@ impl JmapEmailImport {
     ) -> Result<Self, JmapEmailImportError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -131,7 +137,10 @@ impl JmapEmailImport {
 
         let mut batch = JmapBatch::new();
         batch.add("Email/import", args);
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_MAIL_CAPABILITY.into(),
+        ]);
 
         Ok(Self {
             state: State::Send(JmapSend::new(http_auth, api_url, request)?),
@@ -144,7 +153,6 @@ impl JmapCoroutine for JmapEmailImport {
     type Return = Result<JmapEmailImportOutput, JmapEmailImportError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Email/import: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -182,14 +190,6 @@ impl JmapCoroutine for JmapEmailImport {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

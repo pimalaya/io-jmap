@@ -62,11 +62,8 @@
 //! println!("{} created", out.created.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -74,12 +71,12 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
-        MAIL_CAPABILITY,
+        JMAP_MAIL_CAPABILITY,
         email_submission::{
-            JmapEmailSubmission, JmapEmailSubmissionCreate, JmapEmailSubmissionSetItemError,
-            SUBMISSION_CAPABILITY,
+            JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapEmailSubmissionCreate,
+            JmapEmailSubmissionSetItemError,
         },
     },
 };
@@ -87,14 +84,19 @@ use crate::{
 /// Failure causes during a JMAP `EmailSubmission/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailSubmissionSetError {
+    /// The response carried no method response.
     #[error("JMAP EmailSubmission/set failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP EmailSubmission/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP EmailSubmission/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP EmailSubmission/set failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP EmailSubmission/set failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -102,9 +104,13 @@ pub enum JmapEmailSubmissionSetError {
 /// Successful terminal output of [`JmapEmailSubmissionSet`].
 #[derive(Clone, Debug)]
 pub struct JmapEmailSubmissionSetOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The created submissions, keyed by client id.
     pub created: BTreeMap<String, JmapEmailSubmission>,
+    /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, JmapEmailSubmissionSetItemError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -122,7 +128,7 @@ impl JmapEmailSubmissionSet {
     ) -> Result<Self, JmapEmailSubmissionSetError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -136,9 +142,9 @@ impl JmapEmailSubmissionSet {
         let mut batch = JmapBatch::new();
         batch.add("EmailSubmission/set", args);
         let request = batch.into_request(vec![
-            CORE_CAPABILITY.into(),
-            MAIL_CAPABILITY.into(),
-            SUBMISSION_CAPABILITY.into(),
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_MAIL_CAPABILITY.into(),
+            JMAP_SUBMISSION_CAPABILITY.into(),
         ]);
 
         Ok(Self {
@@ -152,7 +158,6 @@ impl JmapCoroutine for JmapEmailSubmissionSet {
     type Return = Result<JmapEmailSubmissionSetOutput, JmapEmailSubmissionSetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("EmailSubmission/set: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -190,14 +195,6 @@ impl JmapCoroutine for JmapEmailSubmissionSet {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

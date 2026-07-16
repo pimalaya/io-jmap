@@ -55,11 +55,8 @@
 //! println!("{} cards", out.cards.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -68,10 +65,10 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
+        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
     },
     rfc9610::{
-        CONTACTS_CAPABILITY,
+        JMAP_CONTACTS_CAPABILITY,
         contact_card::{JmapContactCard, JmapContactCardFilter, JmapContactCardSortComparator},
     },
 };
@@ -80,22 +77,30 @@ use crate::{
 /// `ContactCard/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardQueryError {
+    /// The response carried no query response.
     #[error(
         "JMAP ContactCard/query failed: missing ContactCard/query response in method_responses"
     )]
     MissingQueryResponse,
+    /// The response carried no get response.
     #[error("JMAP ContactCard/query failed: missing ContactCard/get response in method_responses")]
     MissingGetResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP ContactCard/query failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP ContactCard/query failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The query response could not be parsed.
     #[error("JMAP ContactCard/query failed: parse ContactCard/query response: {0}")]
     ParseQueryResponse(#[source] serde_json::Error),
+    /// The get response could not be parsed.
     #[error("JMAP ContactCard/query failed: parse ContactCard/get response: {0}")]
     ParseGetResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error for the query call.
     #[error("JMAP ContactCard/query failed: ContactCard/query: {0}")]
     QueryMethod(JmapMethodError),
+    /// The server returned a method-level error for the get call.
     #[error("JMAP ContactCard/query failed: ContactCard/get: {0}")]
     GetMethod(JmapMethodError),
 }
@@ -119,10 +124,15 @@ pub struct JmapContactCardQueryOptions {
 /// Successful terminal output of [`JmapContactCardQuery`].
 #[derive(Clone, Debug)]
 pub struct JmapContactCardQueryOutput {
+    /// The fetched contact cards.
     pub cards: Vec<JmapContactCard>,
+    /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
+    /// Zero-based index of the first returned id.
     pub position: u64,
+    /// The state the query results were computed at.
     pub query_state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -133,6 +143,7 @@ pub struct JmapContactCardQuery {
 }
 
 impl JmapContactCardQuery {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -140,7 +151,7 @@ impl JmapContactCardQuery {
     ) -> Result<Self, JmapContactCardQueryError> {
         let account_id = session
             .primary_accounts
-            .get(CONTACTS_CAPABILITY)
+            .get(JMAP_CONTACTS_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -175,7 +186,10 @@ impl JmapContactCardQuery {
             serde_json::to_value(&get_args).map_err(JmapContactCardQueryError::SerializeArgs)?,
         );
 
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), CONTACTS_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_CONTACTS_CAPABILITY.into(),
+        ]);
 
         Ok(Self {
             state: State::Send(JmapSend::new(http_auth, api_url, request)?),
@@ -188,7 +202,6 @@ impl JmapCoroutine for JmapContactCardQuery {
     type Return = Result<JmapContactCardQueryOutput, JmapContactCardQueryError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("ContactCard/query: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -255,14 +268,6 @@ impl JmapCoroutine for JmapContactCardQuery {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

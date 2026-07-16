@@ -57,11 +57,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -69,11 +66,11 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
     rfc8621::{
-        MAIL_CAPABILITY,
+        JMAP_MAIL_CAPABILITY,
         vacation_response::{
-            JmapVacationResponse, JmapVacationResponseUpdate, VACATION_RESPONSE_CAPABILITY,
+            JMAP_VACATION_RESPONSE_CAPABILITY, JmapVacationResponse, JmapVacationResponseUpdate,
         },
     },
 };
@@ -81,14 +78,19 @@ use crate::{
 /// Failure causes during a JMAP `VacationResponse/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapVacationResponseSetError {
+    /// The response carried no method response.
     #[error("JMAP VacationResponse/set failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP VacationResponse/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP VacationResponse/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP VacationResponse/set failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP VacationResponse/set failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -96,8 +98,11 @@ pub enum JmapVacationResponseSetError {
 /// Successful terminal output of [`JmapVacationResponseSet`].
 #[derive(Clone, Debug)]
 pub struct JmapVacationResponseSetOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// The updated singleton, when the server echoed it back.
     pub updated: Option<JmapVacationResponse>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -107,6 +112,7 @@ pub struct JmapVacationResponseSet {
 }
 
 impl JmapVacationResponseSet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -114,8 +120,8 @@ impl JmapVacationResponseSet {
     ) -> Result<Self, JmapVacationResponseSetError> {
         let account_id = session
             .primary_accounts
-            .get(VACATION_RESPONSE_CAPABILITY)
-            .or_else(|| session.primary_accounts.get(MAIL_CAPABILITY))
+            .get(JMAP_VACATION_RESPONSE_CAPABILITY)
+            .or_else(|| session.primary_accounts.get(JMAP_MAIL_CAPABILITY))
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -126,12 +132,12 @@ impl JmapVacationResponseSet {
         })
         .map_err(JmapVacationResponseSetError::SerializeArgs)?;
 
-        let mut using = vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()];
+        let mut using = vec![JMAP_CORE_CAPABILITY.into(), JMAP_MAIL_CAPABILITY.into()];
         if session
             .capabilities
-            .contains_key(VACATION_RESPONSE_CAPABILITY)
+            .contains_key(JMAP_VACATION_RESPONSE_CAPABILITY)
         {
-            using.push(VACATION_RESPONSE_CAPABILITY.into());
+            using.push(JMAP_VACATION_RESPONSE_CAPABILITY.into());
         }
 
         let mut batch = JmapBatch::new();
@@ -149,7 +155,6 @@ impl JmapCoroutine for JmapVacationResponseSet {
     type Return = Result<JmapVacationResponseSetOutput, JmapVacationResponseSetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("VacationResponse/set: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -186,14 +191,6 @@ impl JmapCoroutine for JmapVacationResponseSet {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

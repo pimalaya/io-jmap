@@ -50,8 +50,6 @@
 //! println!("uploaded blob {}", out.blob_id);
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec::Vec};
 
 use io_http::{
@@ -59,7 +57,7 @@ use io_http::{
     rfc9110::{request::HttpRequest, send::HttpSendOutput},
     rfc9112::send::{Http11Send, Http11SendError},
 };
-use log::trace;
+use log::{debug, trace};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use thiserror::Error;
@@ -70,10 +68,13 @@ use crate::{coroutine::*, rfc8620::coroutine::JmapRedirectYield};
 /// Failure causes during the JMAP blob-upload flow.
 #[derive(Debug, Error)]
 pub enum JmapBlobUploadError {
+    /// The server answered with a non-2xx status.
     #[error("JMAP blob-upload failed: HTTP {0}")]
     HttpStatus(u16),
+    /// The inner HTTP/1.1 send coroutine failed.
     #[error("JMAP blob-upload failed: {0}")]
     Send(#[from] Http11SendError),
+    /// The method response could not be parsed.
     #[error("JMAP blob-upload failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
 }
@@ -81,9 +82,13 @@ pub enum JmapBlobUploadError {
 /// Successful terminal output of [`JmapBlobUpload`].
 #[derive(Clone, Debug)]
 pub struct JmapBlobUploadOutput {
+    /// The server-assigned blob id.
     pub blob_id: String,
+    /// The media type of the blob, as detected by the server.
     pub blob_type: String,
+    /// The size of the blob, in bytes.
     pub size: u64,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -119,7 +124,8 @@ impl JmapBlobUpload {
             .body(data);
         http_request.method = "POST".into();
 
-        trace!("upload JMAP blob to {upload_url}");
+        debug!("prepare blob upload request");
+        trace!("upload url: {upload_url}");
 
         Self {
             state: State::Send(Http11Send::new(http_request)),
@@ -132,7 +138,6 @@ impl JmapCoroutine for JmapBlobUpload {
     type Return = Result<JmapBlobUploadOutput, JmapBlobUploadError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("blob-upload: {}", self.state);
         match &mut self.state {
             State::Send(send) => match send.resume(arg) {
                 HttpCoroutineState::Yielded(y) => JmapCoroutineState::Yielded(y.into()),
@@ -170,19 +175,11 @@ enum State {
     Send(Http11Send),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::format;
 
-    use super::*;
+    use crate::rfc8620::blob_upload::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -265,8 +262,6 @@ mod tests {
         let req = core::str::from_utf8(&bytes).expect("utf8 request");
         assert!(req.starts_with("POST "));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapBlobUpload, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

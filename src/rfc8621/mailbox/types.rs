@@ -1,10 +1,11 @@
 //! JMAP Mailbox types (RFC 8621 §2).
 
+use core::fmt;
+
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -12,23 +13,33 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailbox {
+    /// The server-assigned mailbox id.
     pub id: Option<String>,
+    /// The user-visible mailbox name.
     pub name: Option<String>,
     /// `None` for a top-level mailbox.
     pub parent_id: Option<String>,
+    /// The special-use role of the mailbox, when any.
     pub role: Option<JmapMailboxRole>,
+    /// Position hint for display ordering (lower first).
     #[serde(default)]
     pub sort_order: u32,
+    /// The number of emails in the mailbox.
     #[serde(default)]
     pub total_emails: u32,
+    /// The number of unread emails in the mailbox.
     #[serde(default)]
     pub unread_emails: u32,
+    /// The number of threads with at least one email in the mailbox.
     #[serde(default)]
     pub total_threads: u32,
+    /// The number of threads with at least one unread email in the mailbox.
     #[serde(default)]
     pub unread_threads: u32,
+    /// The user's rights on the mailbox.
     #[serde(default)]
     pub my_rights: JmapMailboxRights,
+    /// Whether the user is subscribed to the mailbox.
     #[serde(default)]
     pub is_subscribed: bool,
 }
@@ -38,14 +49,19 @@ pub struct JmapMailbox {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailboxCreate {
+    /// The user-visible mailbox name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The parent mailbox id; `None` for a top-level mailbox.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    /// The special-use role of the mailbox.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<JmapMailboxRole>,
+    /// Position hint for display ordering (lower first).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<u32>,
+    /// Whether the user is subscribed to the mailbox.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_subscribed: Option<bool>,
 }
@@ -55,14 +71,19 @@ pub struct JmapMailboxCreate {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailboxUpdate {
+    /// The user-visible mailbox name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The parent mailbox id; `None` for a top-level mailbox.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    /// The special-use role of the mailbox.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<JmapMailboxRole>,
+    /// Position hint for display ordering (lower first).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<u32>,
+    /// Whether the user is subscribed to the mailbox.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_subscribed: Option<bool>,
 }
@@ -162,16 +183,27 @@ impl<'de> Deserialize<'de> for JmapMailboxRole {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JmapMailboxProperty {
+    /// The `id` property.
     Id,
+    /// The `name` property.
     Name,
+    /// The `parentId` property.
     ParentId,
+    /// The `role` property.
     Role,
+    /// The `sortOrder` property.
     SortOrder,
+    /// The `totalEmails` property.
     TotalEmails,
+    /// The `unreadEmails` property.
     UnreadEmails,
+    /// The `totalThreads` property.
     TotalThreads,
+    /// The `unreadThreads` property.
     UnreadThreads,
+    /// The `myRights` property.
     MyRights,
+    /// The `isSubscribed` property.
     IsSubscribed,
 }
 
@@ -179,8 +211,11 @@ pub enum JmapMailboxProperty {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JmapMailboxSortProperty {
+    /// Sort by mailbox name.
     Name,
+    /// Sort by the sortOrder position hint.
     SortOrder,
+    /// Sort by parent mailbox id.
     ParentId,
 }
 
@@ -188,32 +223,30 @@ pub enum JmapMailboxSortProperty {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailboxSortComparator {
+    /// The property to sort by.
     pub property: JmapMailboxSortProperty,
+    /// Ascending if `None` or `Some(true)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_ascending: Option<bool>,
 }
 
-/// JmapFilter for `Mailbox/query` (RFC 8621 §2.4).
+/// Filter condition for `Mailbox/query` (RFC 8621 §2.4).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailboxFilter {
-    /// JmapFilter by parent mailbox ID.
+    /// Filter by parent mailbox ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
-
-    /// JmapFilter by role.
+    /// Filter by role.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<JmapMailboxRole>,
-
-    /// JmapFilter by name (substring match).
+    /// Filter by name (substring match).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-
     /// Whether to include subscribed mailboxes only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_subscribed: Option<bool>,
-
-    /// Whether to include mailboxes with unread email only.
+    /// Whether to include mailboxes with a role only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub has_any_role: Option<bool>,
 }
@@ -227,29 +260,43 @@ pub struct JmapMailboxFilter {
 pub enum JmapMailboxSetItemError {
     /// The mailbox cannot be destroyed because it has child mailboxes.
     MailboxHasChild {
+        /// Optional human-readable detail.
         description: Option<String>,
     },
     /// The mailbox cannot be destroyed because it contains email.
     MailboxHasEmail {
+        /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// The referenced object does not exist.
     NotFound {
+        /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// The update patch is invalid.
     InvalidPatch {
+        /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// The object will be destroyed by this request, so it cannot be updated.
     WillDestroy {
+        /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// One or more object properties are invalid.
     InvalidProperties {
+        /// Optional human-readable detail.
         description: Option<String>,
+        /// The invalid property names.
         #[serde(default)]
         properties: Vec<String>,
     },
+    /// The type is a singleton, objects cannot be created or destroyed.
     Singleton {
+        /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// Any error type this library does not know about.
     #[serde(other)]
     Unknown,
 }

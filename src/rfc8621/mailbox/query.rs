@@ -54,11 +54,8 @@
 //! println!("{} mailboxes", out.mailboxes.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -67,10 +64,10 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
+        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
     },
     rfc8621::{
-        MAIL_CAPABILITY,
+        JMAP_MAIL_CAPABILITY,
         mailbox::{JmapMailbox, JmapMailboxFilter, JmapMailboxProperty, JmapMailboxSortComparator},
     },
 };
@@ -78,20 +75,28 @@ use crate::{
 /// Failure causes during a batched JMAP `Mailbox/query` + `Mailbox/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapMailboxQueryError {
+    /// The response carried no query response.
     #[error("JMAP Mailbox/query failed: missing Mailbox/query response in method_responses")]
     MissingQueryResponse,
+    /// The response carried no get response.
     #[error("JMAP Mailbox/query failed: missing Mailbox/get response in method_responses")]
     MissingGetResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Mailbox/query failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Mailbox/query failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The query response could not be parsed.
     #[error("JMAP Mailbox/query failed: parse Mailbox/query response: {0}")]
     ParseQueryResponse(#[source] serde_json::Error),
+    /// The get response could not be parsed.
     #[error("JMAP Mailbox/query failed: parse Mailbox/get response: {0}")]
     ParseGetResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error for the query call.
     #[error("JMAP Mailbox/query failed: Mailbox/query: {0}")]
     QueryMethod(JmapMethodError),
+    /// The server returned a method-level error for the get call.
     #[error("JMAP Mailbox/query failed: Mailbox/get: {0}")]
     GetMethod(JmapMethodError),
 }
@@ -114,10 +119,15 @@ pub struct JmapMailboxQueryOptions {
 /// Successful terminal output of [`JmapMailboxQuery`].
 #[derive(Clone, Debug)]
 pub struct JmapMailboxQueryOutput {
+    /// The fetched mailboxes.
     pub mailboxes: Vec<JmapMailbox>,
+    /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
+    /// Zero-based index of the first returned id.
     pub position: u64,
+    /// The state the query results were computed at.
     pub query_state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -128,6 +138,7 @@ pub struct JmapMailboxQuery {
 }
 
 impl JmapMailboxQuery {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -135,7 +146,7 @@ impl JmapMailboxQuery {
     ) -> Result<Self, JmapMailboxQueryError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -170,7 +181,10 @@ impl JmapMailboxQuery {
             serde_json::to_value(&get_args).map_err(JmapMailboxQueryError::SerializeArgs)?,
         );
 
-        let request = batch.into_request(vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()]);
+        let request = batch.into_request(vec![
+            JMAP_CORE_CAPABILITY.into(),
+            JMAP_MAIL_CAPABILITY.into(),
+        ]);
 
         Ok(Self {
             state: State::Send(JmapSend::new(http_auth, api_url, request)?),
@@ -183,7 +197,6 @@ impl JmapCoroutine for JmapMailboxQuery {
     type Return = Result<JmapMailboxQueryOutput, JmapMailboxQueryError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Mailbox/query: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -250,14 +263,6 @@ impl JmapCoroutine for JmapMailboxQuery {
 
 enum State {
     Send(JmapSend),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
 }
 
 #[derive(Serialize)]

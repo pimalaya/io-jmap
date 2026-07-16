@@ -1,7 +1,8 @@
 //! JMAP EmailSubmission types (RFC 8621 §7).
 
-use alloc::{collections::BTreeMap, string::String, vec::Vec};
 use core::fmt;
+
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
@@ -9,8 +10,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JmapUndoStatus {
+    /// The submission may still be cancelled.
     Pending,
+    /// The submission can no longer be cancelled.
     Final,
+    /// The submission was cancelled.
     Canceled,
 }
 
@@ -32,31 +36,22 @@ impl fmt::Display for JmapUndoStatus {
 pub struct JmapEmailSubmission {
     /// Server-assigned ID.
     pub id: Option<String>,
-
     /// The identity to send as.
     pub identity_id: Option<String>,
-
     /// The ID of the email to send.
     pub email_id: Option<String>,
-
     /// The thread the email belongs to.
     pub thread_id: Option<String>,
-
     /// SMTP envelope to use for delivery.
     pub envelope: Option<JmapEnvelope>,
-
     /// Date/time the submission was made (RFC 3339).
     pub send_at: Option<String>,
-
     /// Current undo status: `"pending"`, `"final"`, or `"canceled"`.
     pub undo_status: Option<JmapUndoStatus>,
-
     /// Per-recipient delivery status.
     pub delivery_status: Option<BTreeMap<String, JmapDeliveryStatus>>,
-
     /// Blob IDs of DSN messages.
     pub dsn_blob_ids: Option<Vec<String>>,
-
     /// Blob IDs of MDN messages.
     pub mdn_blob_ids: Option<Vec<String>>,
 }
@@ -67,7 +62,6 @@ pub struct JmapEmailSubmission {
 pub struct JmapEnvelope {
     /// MAIL FROM address and parameters.
     pub mail_from: JmapEmailAddressWithParameters,
-
     /// RCPT TO addresses and parameters.
     pub rcpt_to: Vec<JmapEmailAddressWithParameters>,
 }
@@ -78,7 +72,6 @@ pub struct JmapEnvelope {
 pub struct JmapEmailAddressWithParameters {
     /// The email address.
     pub email: String,
-
     /// SMTP parameters (e.g. `NOTIFY`, `ORCPT`).
     pub parameters: Option<BTreeMap<String, Option<String>>>,
 }
@@ -115,10 +108,8 @@ pub enum JmapDisplayed {
 pub struct JmapDeliveryStatus {
     /// The SMTP reply for this recipient.
     pub smtp_reply: String,
-
     /// Delivery state for this recipient.
     pub delivered: JmapDelivered,
-
     /// Whether the message has been displayed to the recipient.
     pub displayed: JmapDisplayed,
 }
@@ -129,10 +120,8 @@ pub struct JmapDeliveryStatus {
 pub struct JmapEmailSubmissionCreate {
     /// The identity to send as.
     pub identity_id: String,
-
     /// The ID of the email to send.
     pub email_id: String,
-
     /// SMTP envelope override (uses email headers if omitted).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub envelope: Option<JmapEnvelope>,
@@ -144,29 +133,31 @@ pub struct JmapEmailSubmissionCreate {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailSubmissionUpdate {
+    /// The new undo status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub undo_status: Option<JmapUndoStatus>,
 }
 
-/// JmapFilter for `EmailSubmission/query` (RFC 8621 §7.4).
+/// Filter condition for `EmailSubmission/query` (RFC 8621 §7.4).
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailSubmissionFilter {
+    /// Only submissions sent from these identities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity_ids: Option<Vec<String>>,
-
+    /// Only submissions of these emails.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email_ids: Option<Vec<String>>,
-
+    /// Only submissions of emails in these threads.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_ids: Option<Vec<String>>,
-
+    /// Only submissions with this undo status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub undo_status: Option<JmapUndoStatus>,
-
+    /// RFC 3339 upper bound on the sendAt date.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub before: Option<String>,
-
+    /// RFC 3339 lower bound on the sendAt date.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
 }
@@ -175,8 +166,11 @@ pub struct JmapEmailSubmissionFilter {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JmapEmailSubmissionSortProperty {
+    /// Sort by email id.
     EmailId,
+    /// Sort by thread id.
     ThreadId,
+    /// Sort by the sendAt date.
     SentAt,
 }
 
@@ -184,7 +178,9 @@ pub enum JmapEmailSubmissionSortProperty {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailSubmissionComparator {
+    /// The property to sort by.
     pub property: JmapEmailSubmissionSortProperty,
+    /// Ascending if `None` or `Some(true)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_ascending: Option<bool>,
 }
@@ -195,26 +191,55 @@ pub struct JmapEmailSubmissionComparator {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum JmapEmailSubmissionSetItemError {
     /// The message had too many recipients (RFC 8621 §7.5).
-    TooManyRecipients { description: Option<String> },
+    TooManyRecipients {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// The message had no recipients (RFC 8621 §7.5).
-    NoRecipients { description: Option<String> },
+    NoRecipients {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// One or more recipient addresses were invalid (RFC 8621 §7.5).
-    InvalidRecipients { description: Option<String> },
+    InvalidRecipients {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// The From address is not permitted for this identity (RFC 8621 §7.5).
-    ForbiddenFrom { description: Option<String> },
+    ForbiddenFrom {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// The MAIL FROM address is not permitted (RFC 8621 §7.5).
-    ForbiddenMailFrom { description: Option<String> },
+    ForbiddenMailFrom {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// This user is not permitted to send email (RFC 8621 §7.5).
-    ForbiddenToSend { description: Option<String> },
+    ForbiddenToSend {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// The submission cannot be unsent (RFC 8621 §7.5).
-    CannotUnsendMessage { description: Option<String> },
+    CannotUnsendMessage {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// The email object was not a valid message (RFC 8621 §7.5).
-    InvalidEmail { description: Option<String> },
+    InvalidEmail {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// Standard set error (RFC 8620 §5.3): target id not found.
-    NotFound { description: Option<String> },
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// Standard set error (RFC 8620 §5.3): one or more properties were invalid.
     InvalidProperties {
+        /// Optional human-readable detail.
         description: Option<String>,
+        /// The invalid property names.
         #[serde(default)]
         properties: Vec<String>,
     },

@@ -60,11 +60,8 @@
 //! println!("{} push subscriptions", out.subscriptions.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -73,7 +70,7 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession,
+        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession,
         push_subscription::JmapPushSubscription, send::*,
     },
 };
@@ -81,14 +78,19 @@ use crate::{
 /// Failure causes during a JMAP `PushSubscription/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapPushSubscriptionGetError {
+    /// The response carried no method response.
     #[error("JMAP PushSubscription/get failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP PushSubscription/get failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP PushSubscription/get failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP PushSubscription/get failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP PushSubscription/get failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -107,8 +109,11 @@ pub struct JmapPushSubscriptionGetOptions {
 /// Successful terminal output of [`JmapPushSubscriptionGet`].
 #[derive(Clone, Debug)]
 pub struct JmapPushSubscriptionGetOutput {
+    /// The fetched push subscriptions.
     pub subscriptions: Vec<JmapPushSubscription>,
+    /// The requested ids the server did not find.
     pub not_found: Vec<String>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -118,6 +123,7 @@ pub struct JmapPushSubscriptionGet {
 }
 
 impl JmapPushSubscriptionGet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -131,7 +137,7 @@ impl JmapPushSubscriptionGet {
 
         let mut batch = JmapBatch::new();
         batch.add("PushSubscription/get", args);
-        let request = batch.into_request(vec![CORE_CAPABILITY.into()]);
+        let request = batch.into_request(vec![JMAP_CORE_CAPABILITY.into()]);
 
         Ok(Self {
             state: State::Send(JmapSend::new(http_auth, &session.api_url, request)?),
@@ -144,7 +150,6 @@ impl JmapCoroutine for JmapPushSubscriptionGet {
     type Return = Result<JmapPushSubscriptionGetOutput, JmapPushSubscriptionGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("PushSubscription/get: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -183,14 +188,6 @@ enum State {
     Send(JmapSend),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PushSubscriptionGetArgs<'a> {
@@ -212,9 +209,9 @@ struct PushSubscriptionGetResponse {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{format, string::ToString};
+    use alloc::format;
 
-    use super::*;
+    use crate::rfc8620::push_subscription::get::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -351,8 +348,6 @@ mod tests {
             JmapPushSubscriptionGetError::Send(JmapSendError::HttpStatus(401))
         ));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapPushSubscriptionGet, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

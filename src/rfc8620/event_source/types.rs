@@ -1,36 +1,66 @@
-//! JMAP Event Source data types (RFC 8620 §7.1 & §7.3): push payload, per-account
-//! type-state map, `closeafter` value, and the parser-level error.
+//! JMAP Event Source data types (RFC 8620 §7.1 & §7.3): push payload,
+//! per-account type-state map, `closeafter` value, and the parser-level
+//! error.
 
-use alloc::{collections::BTreeMap, string::String};
+use alloc::{
+    collections::BTreeMap,
+    string::{String, ToString},
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::utils::default_type_tag;
+/// Wire value of the `@type` property of a StateChange object.
+const DEFAULT_TYPE_TAG: &str = "StateChange";
 
-/// Type-state map for one JMAP account, keyed by JMAP type name (`JmapEmail`,
-/// `JmapMailbox`, …); the value is the opaque state string. Callers diff it
+fn default_type_tag() -> String {
+    DEFAULT_TYPE_TAG.to_string()
+}
+
+/// Type-state map for one JMAP account, keyed by JMAP type name (`Email`,
+/// `Mailbox`, …); the value is the opaque state string. Callers diff it
 /// against their stored checkpoint and call `<Type>/changes` on a mismatch.
 pub type JmapTypeStates = BTreeMap<String, String>;
 
-/// JMAP `JmapStateChange` push notification (RFC 8620 §7.1).
+/// JMAP StateChange push notification (RFC 8620 §7.1).
 ///
 /// `changed` is keyed by account id, then JMAP type, then opaque new state.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JmapStateChange {
+    /// The `@type` tag of the push object, always `StateChange`.
     #[serde(rename = "@type", default = "default_type_tag")]
     pub r#type: String,
+    /// The new type states, keyed by account id.
     #[serde(default)]
     pub changed: BTreeMap<String, JmapTypeStates>,
 }
 
-/// Failure causes from
-/// [`parse_state_change`](super::utils::parse_state_change).
+impl JmapStateChange {
+    /// Decodes one SSE frame's `data` field as a JMAP StateChange. Empty or
+    /// whitespace-only payloads return an empty `changed` map (keep-alive).
+    pub fn parse(data: &str) -> Result<Self, JmapStateChangeParseError> {
+        let trimmed = data.trim();
+        if trimmed.is_empty() {
+            return Ok(Self::default());
+        }
+
+        let change: Self = serde_json::from_str(trimmed)?;
+        if change.r#type != DEFAULT_TYPE_TAG {
+            return Err(JmapStateChangeParseError::UnexpectedType(change.r#type));
+        }
+
+        Ok(change)
+    }
+}
+
+/// Failure causes from [`JmapStateChange::parse`].
 #[derive(Debug, Error)]
 pub enum JmapStateChangeParseError {
-    #[error("Invalid JMAP JmapStateChange JSON: {0}")]
+    /// The payload is not valid JSON.
+    #[error("Invalid StateChange JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
-    #[error("Expected @type JmapStateChange, got {0}")]
+    /// The payload's `@type` tag is not `StateChange`.
+    #[error("Expected @type StateChange, got {0}")]
     UnexpectedType(String),
 }
 
@@ -38,13 +68,14 @@ pub enum JmapStateChangeParseError {
 /// closes the streaming response.
 #[derive(Clone, Copy, Debug)]
 pub enum JmapCloseAfter {
-    /// Never close: stream many [`JmapStateChange`] frames over one socket. The
-    /// socket is unavailable for parallel JMAP POSTs while the stream is open.
+    /// Never close: stream many [`JmapStateChange`] frames over one socket.
+    /// The socket is unavailable for parallel JMAP POSTs while the stream is
+    /// open.
     No,
     /// Close after the first [`JmapStateChange`]: frees the socket for
-    /// follow-up `*/changes` + `*/get` POSTs, then resubscribe (IMAP IDLE-like
-    /// pattern).  Recommended for
-    /// [`JmapEventSource`](super::subscribe::JmapEventSource).
+    /// follow-up `*/changes` + `*/get` POSTs, then resubscribe (IMAP
+    /// IDLE-like pattern). Recommended for
+    /// [`JmapEventSource`](crate::rfc8620::event_source::subscribe::JmapEventSource).
     State,
 }
 
@@ -54,5 +85,67 @@ impl JmapCloseAfter {
             Self::No => "no",
             Self::State => "state",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::rfc8620::event_source::*;
+
+    #[test]
+    fn parses_minimal_state_change() {
+        let json = r#"{"@type":"StateChange","changed":{"u1":{"Email":"s1"}}}"#;
+        let change = JmapStateChange::parse(json).unwrap();
+        assert_eq!(change.r#type, "StateChange");
+        assert_eq!(change.changed.len(), 1);
+        assert_eq!(change.changed["u1"]["Email"], "s1");
+    }
+
+    #[test]
+    fn parses_multi_account_multi_type() {
+        let json = r#"{
+            "@type": "StateChange",
+            "changed": {
+                "acc-a": {"Email": "e1", "Mailbox": "m1"},
+                "acc-b": {"Email": "e2"}
+            }
+        }"#;
+        let change = JmapStateChange::parse(json).unwrap();
+        assert_eq!(change.changed.len(), 2);
+        assert_eq!(change.changed["acc-a"]["Mailbox"], "m1");
+        assert_eq!(change.changed["acc-b"]["Email"], "e2");
+    }
+
+    #[test]
+    fn empty_data_is_keep_alive() {
+        let change = JmapStateChange::parse("").unwrap();
+        assert!(change.changed.is_empty());
+
+        let change = JmapStateChange::parse("   \n  ").unwrap();
+        assert!(change.changed.is_empty());
+    }
+
+    #[test]
+    fn wrong_type_field_rejected() {
+        let json = r#"{"@type":"NotAStateChange","changed":{}}"#;
+        match JmapStateChange::parse(json) {
+            Err(JmapStateChangeParseError::UnexpectedType(t)) => assert_eq!(t, "NotAStateChange"),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn invalid_json_rejected() {
+        match JmapStateChange::parse("{not json") {
+            Err(JmapStateChangeParseError::InvalidJson(_)) => {}
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_changed_field_defaults_to_empty() {
+        let json = r#"{"@type":"StateChange"}"#;
+        let change = JmapStateChange::parse(json).unwrap();
+        assert!(change.changed.is_empty());
     }
 }

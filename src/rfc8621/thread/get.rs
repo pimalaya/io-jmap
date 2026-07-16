@@ -52,24 +52,22 @@
 //! println!("{} threads", out.threads.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapSession, get::*},
-    rfc8621::{MAIL_CAPABILITY, thread::JmapThread},
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapSession, get::*},
+    rfc8621::{JMAP_MAIL_CAPABILITY, thread::JmapThread},
 };
 
 /// Failure causes during a JMAP `Thread/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapThreadGetError {
+    /// The inner generic get coroutine failed.
     #[error("JMAP Thread/get failed: {0}")]
     Get(#[from] JmapGetError),
 }
@@ -77,9 +75,13 @@ pub enum JmapThreadGetError {
 /// Successful terminal output of [`JmapThreadGet`].
 #[derive(Clone, Debug)]
 pub struct JmapThreadGetOutput {
+    /// The fetched threads.
     pub threads: Vec<JmapThread>,
+    /// The requested ids the server did not find.
     pub not_found: Vec<String>,
+    /// The new server state after the call.
     pub new_state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -89,6 +91,7 @@ pub struct JmapThreadGet {
 }
 
 impl JmapThreadGet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -96,7 +99,7 @@ impl JmapThreadGet {
     ) -> Result<Self, JmapThreadGetError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -107,7 +110,7 @@ impl JmapThreadGet {
                 http_auth,
                 api_url,
                 "Thread/get",
-                vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()],
+                vec![JMAP_CORE_CAPABILITY.into(), JMAP_MAIL_CAPABILITY.into()],
                 JmapGetOptions {
                     ids: Some(ids),
                     properties: None,
@@ -122,7 +125,6 @@ impl JmapCoroutine for JmapThreadGet {
     type Return = Result<JmapThreadGetOutput, JmapThreadGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Thread/get: {}", self.state);
         match &mut self.state {
             State::Get(get) => {
                 let JmapGetOutput {
@@ -144,12 +146,4 @@ impl JmapCoroutine for JmapThreadGet {
 
 enum State {
     Get(JmapGet<JmapThread>),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Get(_) => f.write_str("get"),
-        }
-    }
 }

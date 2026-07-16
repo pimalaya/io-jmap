@@ -6,9 +6,6 @@
 
 pub mod subscribe;
 mod types;
-mod utils;
 
 #[doc(inline)]
 pub use types::*;
-#[doc(inline)]
-pub use utils::*;

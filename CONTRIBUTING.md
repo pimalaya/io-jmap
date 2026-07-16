@@ -1,45 +1,30 @@
 # Contributing guide
 
-Thank you for investing your time in contributing to the I/O JMAP project.
+Thank you for investing your time in contributing to I/O JMAP.
 
-## Development
+Whether you are a human or an AI agent, read these in order before touching the code:
 
-The development environment is managed by [Nix](https://nixos.org/download.html).
-Running `nix-shell` will spawn a shell with everything you need to get started with the lib.
+1. the [Pimalaya README](https://github.com/pimalaya) for what the project is and how its repositories stack;
+2. the [Pimalaya CONTRIBUTING](https://github.com/pimalaya/.github/blob/master/CONTRIBUTING.md) guide, which chains to the shared architecture and guidelines;
+3. the inline header documentation, starting with src/lib.rs: it is the architecture document of this crate;
+4. the docs/ folder for the development history and living plans.
 
-If you do not want to use Nix, you can either use [rustup](https://rust-lang.github.io/rustup/index.html):
+Everything below documents only what differs from the Pimalaya standards.
 
-```
-rustup update
-```
+## Live provider tests
 
-or install manually the following dependencies:
+Next to the in-memory unit tests, two ignored integration tests exercise the full coroutine flow against real JMAP servers.
 
-- [cargo](https://doc.rust-lang.org/cargo/)
-- [rustc](https://doc.rust-lang.org/stable/rustc/platform-support.html) (`>= 1.87`)
+The Stalwart test runs against a local instance: bootstrap it with tests/stalwart.sh (provisions the pimalaya.org domain and a test user on port 8080), then run:
 
-## Build
-
-```
-cargo build
+```sh
+cargo test --test stalwart -- --include-ignored
 ```
 
-## Test
+The Fastmail test runs over HTTPS against a real account and requires two environment variables, FASTMAIL_EMAIL and FASTMAIL_API_TOKEN (the full Authorization header value, Bearer included):
 
-```
-cargo test
-```
-
-## Override dependencies
-
-All Pimalaya crates use `[patch.crates-io]` to point to sibling directories.
-If you want to build io-jmap against a locally modified dependency (e.g. `io-http`), add the following to `Cargo.toml`:
-
-```toml
-[patch.crates-io]
-io-http.path = "/path/to/io-http"
+```sh
+FASTMAIL_API_TOKEN="Bearer <token>" FASTMAIL_EMAIL="user@fastmail.com" cargo test --test fastmail -- --include-ignored
 ```
 
-## Commit style
-
-I/O JMAP follows the [conventional commits specification](https://www.conventionalcommits.org/en/v1.0.0/#summary).
+Both flows create a test mailbox, import an email, exercise query/get/set/thread, and clean everything up on success.

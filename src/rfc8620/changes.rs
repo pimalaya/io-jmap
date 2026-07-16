@@ -23,11 +23,8 @@
 //! # let _ = coroutine;
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -42,14 +39,19 @@ use crate::{
 /// Failure causes during a JMAP `Foo/changes` flow.
 #[derive(Debug, Error)]
 pub enum JmapChangesError {
+    /// The response carried no method response.
     #[error("JMAP Foo/changes failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Foo/changes failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Foo/changes failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Foo/changes failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Foo/changes failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -70,11 +72,17 @@ pub struct JmapChangesOptions {
 /// [`JmapThreadChanges`]: crate::rfc8621::thread::changes::JmapThreadChanges
 #[derive(Clone, Debug)]
 pub struct JmapChangesOutput {
+    /// The new server state after the call.
     pub new_state: String,
+    /// Whether more changes are available via a follow-up call.
     pub has_more_changes: bool,
+    /// Ids of objects created since the requested state.
     pub created: Vec<String>,
+    /// Ids of objects updated since the requested state.
     pub updated: Vec<String>,
+    /// Ids of objects destroyed since the requested state.
     pub destroyed: Vec<String>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -125,7 +133,6 @@ impl JmapCoroutine for JmapChanges {
     type Return = Result<JmapChangesOutput, JmapChangesError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("changes: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -165,14 +172,6 @@ enum State {
     Send(JmapSend),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ChangesArgs<'a> {
@@ -196,7 +195,7 @@ struct ChangesResponse {
 mod tests {
     use alloc::{format, string::ToString, vec};
 
-    use super::*;
+    use crate::rfc8620::changes::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -301,8 +300,6 @@ mod tests {
         let out = expect_complete_ok(&mut cor, &reply);
         assert!(out.has_more_changes);
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapChanges, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

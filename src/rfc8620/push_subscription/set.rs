@@ -68,11 +68,8 @@
 //! println!("created {} push subscriptions", out.created.len());
 //! ```
 
-use core::fmt;
-
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -81,7 +78,7 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, JmapSetError,
+        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, JmapSetError,
         push_subscription::{
             JmapPushSubscription, JmapPushSubscriptionCreate, JmapPushSubscriptionUpdate,
         },
@@ -92,14 +89,19 @@ use crate::{
 /// Failure causes during a JMAP `PushSubscription/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapPushSubscriptionSetError {
+    /// The response carried no method response.
     #[error("JMAP PushSubscription/set failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP PushSubscription/set failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP PushSubscription/set failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP PushSubscription/set failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP PushSubscription/set failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -107,12 +109,16 @@ pub enum JmapPushSubscriptionSetError {
 /// Arguments for a `PushSubscription/set` request.
 #[derive(Clone, Debug, Default)]
 pub struct JmapPushSubscriptionSetArgs {
+    /// The subscriptions to create, keyed by client id.
     pub create: BTreeMap<String, JmapPushSubscriptionCreate>,
+    /// The patches to apply, keyed by subscription id.
     pub update: BTreeMap<String, JmapPushSubscriptionUpdate>,
+    /// The ids of the objects to destroy.
     pub destroy: Vec<String>,
 }
 
 impl JmapPushSubscriptionSetArgs {
+    /// Queues an object to create under the given client id.
     pub fn create(
         &mut self,
         client_id: impl Into<String>,
@@ -122,6 +128,7 @@ impl JmapPushSubscriptionSetArgs {
         self
     }
 
+    /// Queues a patch for the object with the given id.
     pub fn update(
         &mut self,
         id: impl Into<String>,
@@ -131,6 +138,7 @@ impl JmapPushSubscriptionSetArgs {
         self
     }
 
+    /// Queues the object with the given id for destruction.
     pub fn destroy(&mut self, id: impl Into<String>) -> &mut Self {
         self.destroy.push(id.into());
         self
@@ -143,12 +151,19 @@ impl JmapPushSubscriptionSetArgs {
 /// (RFC 8620 §7.2.2).
 #[derive(Clone, Debug)]
 pub struct JmapPushSubscriptionSetOutput {
+    /// The created subscriptions, keyed by client id.
     pub created: BTreeMap<String, JmapPushSubscription>,
+    /// The updated subscriptions, keyed by id.
     pub updated: BTreeMap<String, Option<JmapPushSubscription>>,
+    /// Ids of the destroyed objects.
     pub destroyed: Vec<String>,
+    /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, JmapSetError>,
+    /// The failed updates, keyed by id.
     pub not_updated: BTreeMap<String, JmapSetError>,
+    /// The failed destroys, keyed by id.
     pub not_destroyed: BTreeMap<String, JmapSetError>,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -158,6 +173,7 @@ pub struct JmapPushSubscriptionSet {
 }
 
 impl JmapPushSubscriptionSet {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -172,7 +188,7 @@ impl JmapPushSubscriptionSet {
 
         let mut batch = JmapBatch::new();
         batch.add("PushSubscription/set", json_args);
-        let request = batch.into_request(vec![CORE_CAPABILITY.into()]);
+        let request = batch.into_request(vec![JMAP_CORE_CAPABILITY.into()]);
 
         Ok(Self {
             state: State::Send(JmapSend::new(http_auth, &session.api_url, request)?),
@@ -185,7 +201,6 @@ impl JmapCoroutine for JmapPushSubscriptionSet {
     type Return = Result<JmapPushSubscriptionSetOutput, JmapPushSubscriptionSetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("PushSubscription/set: {}", self.state);
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -228,14 +243,6 @@ enum State {
     Send(JmapSend),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PushSubscriptionSetRequest {
@@ -268,7 +275,7 @@ struct PushSubscriptionSetResponse {
 mod tests {
     use alloc::{format, string::ToString};
 
-    use super::*;
+    use crate::rfc8620::push_subscription::set::*;
 
     fn make_auth() -> SecretString {
         SecretString::from("Bearer test")
@@ -450,8 +457,6 @@ mod tests {
             JmapPushSubscriptionSetError::Send(JmapSendError::HttpStatus(401))
         ));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapPushSubscriptionSet, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

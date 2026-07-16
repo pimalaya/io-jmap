@@ -53,24 +53,22 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use core::fmt;
-
 use alloc::{string::String, vec};
 
-use log::trace;
 use secrecy::SecretString;
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{CORE_CAPABILITY, JmapSession, changes::*},
-    rfc8621::MAIL_CAPABILITY,
+    rfc8620::{JMAP_CORE_CAPABILITY, JmapSession, changes::*},
+    rfc8621::JMAP_MAIL_CAPABILITY,
 };
 
 /// Failure causes during a JMAP `Email/changes` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailChangesError {
+    /// The inner generic changes coroutine failed.
     #[error("JMAP Email/changes failed: {0}")]
     Changes(#[from] JmapChangesError),
 }
@@ -88,6 +86,7 @@ pub struct JmapEmailChanges {
 }
 
 impl JmapEmailChanges {
+    /// Prepares the method call request and builds the coroutine.
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
@@ -96,7 +95,7 @@ impl JmapEmailChanges {
     ) -> Result<Self, JmapEmailChangesError> {
         let account_id = session
             .primary_accounts
-            .get(MAIL_CAPABILITY)
+            .get(JMAP_MAIL_CAPABILITY)
             .cloned()
             .unwrap_or_default();
         let api_url = &session.api_url;
@@ -107,7 +106,7 @@ impl JmapEmailChanges {
                 http_auth,
                 api_url,
                 "Email/changes",
-                vec![CORE_CAPABILITY.into(), MAIL_CAPABILITY.into()],
+                vec![JMAP_CORE_CAPABILITY.into(), JMAP_MAIL_CAPABILITY.into()],
                 since_state,
                 JmapChangesOptions {
                     max_changes: opts.max_changes,
@@ -122,7 +121,6 @@ impl JmapCoroutine for JmapEmailChanges {
     type Return = Result<JmapChangesOutput, JmapEmailChangesError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("Email/changes: {}", self.state);
         match &mut self.state {
             State::Changes(changes) => {
                 let out = jmap_try!(changes, arg);
@@ -134,12 +132,4 @@ impl JmapCoroutine for JmapEmailChanges {
 
 enum State {
     Changes(JmapChanges),
-}
-
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Changes(_) => f.write_str("changes"),
-        }
-    }
 }

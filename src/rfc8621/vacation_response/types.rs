@@ -13,26 +13,20 @@ use serde::{Deserialize, Serialize};
 pub struct JmapVacationResponse {
     /// Always `"singleton"`.
     pub id: String,
-
     /// Whether the vacation response is currently enabled.
     pub is_enabled: bool,
-
     /// Date/time (RFC 3339) from which the vacation response is active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_date: Option<String>,
-
     /// Date/time (RFC 3339) until which the vacation response is active.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_date: Option<String>,
-
     /// Subject of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-
     /// Plaintext body of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_body: Option<String>,
-
     /// HTML body of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub html_body: Option<String>,
@@ -44,21 +38,22 @@ pub struct JmapVacationResponse {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapVacationResponseUpdate {
+    /// Whether the vacation response is sent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_enabled: Option<bool>,
-
+    /// RFC 3339 start of the vacation period.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_date: Option<String>,
-
+    /// RFC 3339 end of the vacation period.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_date: Option<String>,
-
+    /// Subject of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subject: Option<String>,
-
+    /// Plaintext body of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_body: Option<String>,
-
+    /// HTML body of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub html_body: Option<String>,
 }

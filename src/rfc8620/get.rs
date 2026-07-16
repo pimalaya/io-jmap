@@ -54,11 +54,10 @@
 //! println!("got {} items", out.list.len());
 //! ```
 
-use core::{fmt, marker::PhantomData};
+use core::marker::PhantomData;
 
 use alloc::{string::String, vec::Vec};
 
-use log::trace;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
@@ -73,14 +72,19 @@ use crate::{
 /// Failure causes during a JMAP `Foo/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapGetError {
+    /// The response carried no method response.
     #[error("JMAP Foo/get failed: missing response in method_responses")]
     MissingResponse,
+    /// The inner send coroutine failed.
     #[error("JMAP Foo/get failed: {0}")]
     Send(#[from] JmapSendError),
+    /// The method arguments could not be serialized.
     #[error("JMAP Foo/get failed: serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
+    /// The method response could not be parsed.
     #[error("JMAP Foo/get failed: parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
+    /// The server returned a method-level error.
     #[error("JMAP Foo/get failed: {0}")]
     Method(#[from] JmapMethodError),
 }
@@ -97,9 +101,13 @@ pub struct JmapGetOptions {
 /// Successful terminal output of the [`JmapGet`] coroutine.
 #[derive(Clone, Debug)]
 pub struct JmapGetOutput<T> {
+    /// The fetched objects.
     pub list: Vec<T>,
+    /// The requested ids the server did not find.
     pub not_found: Vec<String>,
+    /// The server state the objects were fetched at.
     pub state: String,
+    /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
 
@@ -152,8 +160,6 @@ impl<T: DeserializeOwned> JmapCoroutine for JmapGet<T> {
     type Return = Result<JmapGetOutput<T>, JmapGetError>;
 
     fn resume(&mut self, arg: Option<&[u8]>) -> JmapCoroutineState<Self::Yield, Self::Return> {
-        trace!("get: {}", self.state);
-
         match &mut self.state {
             State::Send(send) => {
                 let JmapSendOutput {
@@ -189,14 +195,6 @@ enum State {
     Send(JmapSend),
 }
 
-impl fmt::Display for State {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Send(_) => f.write_str("send"),
-        }
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GetArgs<'a> {
@@ -220,7 +218,7 @@ struct GetResponse<T> {
 mod tests {
     use alloc::{format, string::ToString, vec};
 
-    use super::*;
+    use crate::rfc8620::get::*;
 
     #[derive(Debug, Deserialize, PartialEq)]
     struct Probe {
@@ -329,8 +327,6 @@ mod tests {
             JmapGetError::Send(JmapSendError::HttpStatus(401))
         ));
     }
-
-    // --- utils
 
     fn expect_wants_write(cor: &mut JmapGet<Probe>, arg: Option<&[u8]>) -> Vec<u8> {
         match cor.resume(arg) {

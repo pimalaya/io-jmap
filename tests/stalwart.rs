@@ -1,4 +1,4 @@
-use io_http::rfc7617::basic::BasicCredentials;
+use io_http::rfc7617::basic::HttpAuthBasic;
 
 mod common;
 
@@ -18,6 +18,6 @@ mod common;
 #[test]
 #[ignore = "requires a running Stalwart instance on localhost:8080 and --include-ignored"]
 fn stalwart() {
-    let creds = BasicCredentials::new("test@pimalaya.org", "P!malaya-test-2026").to_authorization();
+    let creds = HttpAuthBasic::new("test@pimalaya.org", "P!malaya-test-2026").to_authorization();
     common::run_jmap("localhost", 8080, &creds, "test@pimalaya.org");
 }
