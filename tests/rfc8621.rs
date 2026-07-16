@@ -5,7 +5,7 @@
 
 use io_jmap::{
     coroutine::*,
-    rfc8620::JmapSession,
+    rfc8620::session::JmapSession,
     rfc8621::{
         email::{
             get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOptions, JmapEmailGetOutput},

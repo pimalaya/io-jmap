@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-16
+
 ### Added
 
 - Added I/O-free `PushSubscription/get` and `PushSubscription/set` coroutines following RFC 8620 §7.2.
@@ -18,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `AddressBook/get`, `AddressBook/changes`, `AddressBook/set` (with the `onDestroyRemoveContents` and `onSuccessSetIsDefault` extra arguments and the `addressBookHasContents` set error), `ContactCard/get`, `ContactCard/changes`, `ContactCard/query` (batched with `ContactCard/get` via Result Reference), `ContactCard/set`, `ContactCard/copy`. The ContactCard's JSContact payload (RFC 9553) is kept as raw JSON next to the typed `id` and `addressBookIds` properties.
 
 ### Changed
+
+- Reorganised the type modules so each type lives next to the code that owns it, dropping the `types` catch-all modules and their flat re-exports; a type tied to a single method moved into that method's module and gained a path segment.
+
+  In `rfc8621::email`, `JmapEmailFilter`, `JmapEmailComparator` and `JmapEmailSortProperty` moved to `email::query`, `JmapEmailPatch`/`JmapEmailPatchOp`/`JmapEmailSetItemError` to `email::set`, `JmapEmailImportArgs`/`JmapEmailImportItemError` to `email::import`, and `JmapEmailCopyArgs`/`JmapEmailCopyItemError` to `email::copy`; the create, update, filter, sort and per-object error companions of Mailbox, Identity, VacationResponse, EmailSubmission, AddressBook, ContactCard and PushSubscription moved into their own `set`, `query`, `copy` or `cancel` modules the same way. The shared RFC 8620 core types split by family: `JmapSession`/`JmapAccountInfo` into `rfc8620::session`, `JmapRequest`/`JmapResponse`/`JmapBatch`/`JmapResultReference` into `rfc8620::request`, `JmapMethodError` and the per-object `JmapSetError` into `rfc8620::error`, `JmapFilter`/`JmapFilterOperator`/`JmapFilterOperatorKind` into `rfc8620::filter`, and `JmapAddedItem` into `rfc8620::query_changes`. Entity objects, shared enums and constants keep their module-root path: `rfc8621::email::JmapEmail`, `JmapEmailAddress`, `JmapEmailProperty`, the `JMAP_KEYWORD_*` constants, `rfc9610::JmapContactsCapability` and every capability constant.
 
 - Renamed the capability constants with the strict `Jmap` domain prefix.
 
@@ -93,5 +99,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.1.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.2.0..HEAD
+[0.2.0]: https://github.com/pimalaya/io-jmap/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/io-jmap/compare/root..v0.1.0
