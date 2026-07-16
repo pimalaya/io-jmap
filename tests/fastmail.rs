@@ -3,13 +3,13 @@
 //! These tests require a Fastmail account and an app password:
 //!
 //! ```sh
-//! FASTMAIL_API_TOKEN="Bearer <token>" \
+//! FASTMAIL_API_TOKEN="<app-password-or-token>" \
 //! FASTMAIL_EMAIL="user@fastmail.com" \
 //! cargo test --test fastmail -- --include-ignored
 //! ```
 //!
-//! The `FASTMAIL_API_TOKEN` value must be the full `Authorization`
-//! header value, e.g. `"Bearer <app-password-or-token>"`.
+//! `FASTMAIL_API_TOKEN` is the bare Fastmail app password or API
+//! token; the test adds the `Bearer ` prefix itself.
 
 mod common;
 
@@ -26,9 +26,7 @@ use io_http::rfc6750::bearer::HttpAuthBearer;
 fn fastmail() {
     let email = env::var("FASTMAIL_EMAIL").expect("FASTMAIL_EMAIL not set");
     let token = env::var("FASTMAIL_API_TOKEN").expect("FASTMAIL_API_TOKEN not set");
-    let token = HttpAuthBearer::from_authorization(&token)
-        .expect("FASTMAIL_API_TOKEN must be a full `Bearer <token>` header value")
-        .to_authorization();
+    let token = HttpAuthBearer::new(token).to_authorization();
 
     common::run_jmaps("api.fastmail.com", 443, &token, &email);
 }
