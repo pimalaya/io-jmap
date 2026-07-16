@@ -11,7 +11,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc9610::address_book::get::{JmapAddressBookGet, JmapAddressBookGetOptions},
 //! };
 //! use secrecy::SecretString;
@@ -56,17 +56,38 @@
 use alloc::{borrow::ToOwned, format, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapSession, get::*},
-    rfc9610::{
-        JMAP_CONTACTS_CAPABILITY,
-        address_book::{JmapAddressBook, JmapAddressBookProperty},
-    },
+    rfc8620::{JMAP_CORE_CAPABILITY, get::*, session::JmapSession},
+    rfc9610::{JMAP_CONTACTS_CAPABILITY, address_book::JmapAddressBook},
 };
+
+/// [`JmapAddressBook`] properties requestable in `AddressBook/get`
+/// (RFC 9610 §2).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JmapAddressBookProperty {
+    /// The `id` property.
+    Id,
+    /// The `name` property.
+    Name,
+    /// The `description` property.
+    Description,
+    /// The `sortOrder` property.
+    SortOrder,
+    /// The `isDefault` property.
+    IsDefault,
+    /// The `isSubscribed` property.
+    IsSubscribed,
+    /// The `shareWith` property.
+    ShareWith,
+    /// The `myRights` property.
+    MyRights,
+}
 
 /// Failure causes during a JMAP `AddressBook/get` flow.
 #[derive(Debug, Error)]

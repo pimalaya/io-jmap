@@ -1,10 +1,18 @@
-//! JMAP EmailSubmission types (RFC 8621 §7).
+//! JMAP for Mail: EmailSubmission (RFC 8621 §7).
 
 use core::fmt;
 
 use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
+
+pub mod cancel;
+pub mod get;
+pub mod query;
+pub mod set;
+
+/// JMAP for Mail Submission capability (RFC 8621 §7).
+pub const JMAP_SUBMISSION_CAPABILITY: &str = "urn:ietf:params:jmap:submission";
 
 /// The undo status of an email submission (RFC 8621 §7.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,79 +122,8 @@ pub struct JmapDeliveryStatus {
     pub displayed: JmapDisplayed,
 }
 
-/// A single email submission to create via `EmailSubmission/set`.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JmapEmailSubmissionCreate {
-    /// The identity to send as.
-    pub identity_id: String,
-    /// The ID of the email to send.
-    pub email_id: String,
-    /// SMTP envelope override (uses email headers if omitted).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub envelope: Option<JmapEnvelope>,
-}
-
-/// Patch object for `EmailSubmission/set` update.
-///
-/// Only `undoStatus` can be updated (to `"canceled"`).
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JmapEmailSubmissionUpdate {
-    /// The new undo status.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub undo_status: Option<JmapUndoStatus>,
-}
-
-/// Filter condition for `EmailSubmission/query` (RFC 8621 §7.4).
-#[derive(Clone, Debug, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JmapEmailSubmissionFilter {
-    /// Only submissions sent from these identities.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub identity_ids: Option<Vec<String>>,
-    /// Only submissions of these emails.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub email_ids: Option<Vec<String>>,
-    /// Only submissions of emails in these threads.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thread_ids: Option<Vec<String>>,
-    /// Only submissions with this undo status.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub undo_status: Option<JmapUndoStatus>,
-    /// RFC 3339 upper bound on the sendAt date.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub before: Option<String>,
-    /// RFC 3339 lower bound on the sendAt date.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub after: Option<String>,
-}
-
-/// Sort property for `EmailSubmission/query`.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum JmapEmailSubmissionSortProperty {
-    /// Sort by email id.
-    EmailId,
-    /// Sort by thread id.
-    ThreadId,
-    /// Sort by the sendAt date.
-    SentAt,
-}
-
-/// Sort comparator for `EmailSubmission/query`.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JmapEmailSubmissionComparator {
-    /// The property to sort by.
-    pub property: JmapEmailSubmissionSortProperty,
-    /// Ascending if `None` or `Some(true)`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_ascending: Option<bool>,
-}
-
 /// Per-object error returned in `EmailSubmission/set` responses
-/// (RFC 8621 §7.5).
+/// (RFC 8621 §7.5); shared by the create (`set`) and cancel flows.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum JmapEmailSubmissionSetItemError {

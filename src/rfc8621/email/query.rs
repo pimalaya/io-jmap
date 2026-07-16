@@ -15,7 +15,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::email::query::{JmapEmailQuery, JmapEmailQueryOptions},
 //! };
 //! use secrecy::SecretString;
@@ -75,14 +75,135 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, JmapBatch, JmapFilter, JmapMethodError, JmapResultReference,
-        JmapSession, send::*,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, filter::JmapFilter, request::JmapBatch,
+        request::JmapResultReference, send::*, session::JmapSession,
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
-        email::{JmapEmail, JmapEmailComparator, JmapEmailFilter, JmapEmailProperty},
+        email::{JmapEmail, JmapEmailProperty},
     },
 };
+
+/// Sort property for `Email/query` (RFC 8621 §4.4).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JmapEmailSortProperty {
+    /// Sort by receive time.
+    ReceivedAt,
+    /// Sort by the `Date` header.
+    SentAt,
+    /// Sort by message size.
+    Size,
+    /// Sort by the first `From` address.
+    From,
+    /// Sort by the first `To` address.
+    To,
+    /// Sort by the base subject.
+    Subject,
+    /// Sort by attachment presence.
+    HasAttachment,
+    /// Sort by keyword presence on the email (requires `keyword` field).
+    Keyword,
+    /// Sort by whether all emails in the thread have a keyword
+    /// (requires `keyword` field).
+    AllInThreadHaveKeyword,
+    /// Sort by whether some emails in the thread have a keyword
+    /// (requires `keyword` field).
+    SomeInThreadHaveKeyword,
+}
+
+/// Filter condition for `Email/query` (RFC 8621 §4.4).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailFilter {
+    /// Only messages in this mailbox ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_mailbox: Option<String>,
+    /// Exclude messages in any of these mailbox IDs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_mailbox_other_than: Option<Vec<String>>,
+    /// RFC 3339 upper bound.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<String>,
+    /// RFC 3339 lower bound.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    /// Only messages of at least this size, in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<u64>,
+    /// Only messages strictly below this size, in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u64>,
+    /// Only threads where every email carries this keyword.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub all_in_thread_have_keyword: Option<String>,
+    /// Only threads where at least one email carries this keyword.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub some_in_thread_have_keyword: Option<String>,
+    /// Only threads where no email carries this keyword.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub none_in_thread_have_keyword: Option<String>,
+    /// Only messages carrying this keyword.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_keyword: Option<String>,
+    /// Only messages not carrying this keyword.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub not_keyword: Option<String>,
+    /// Only messages with (or without) attachments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_attachment: Option<bool>,
+    /// Full-text search query.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Text search over the `From` header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// Text search over the `To` header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Text search over the `Cc` header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cc: Option<String>,
+    /// Text search over the `Bcc` header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bcc: Option<String>,
+    /// Text search over the `Subject` header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// Text search over the message body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+/// Comparator for `Email/query` sorting (RFC 8621 §4.4).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailComparator {
+    /// The property to sort by.
+    pub property: JmapEmailSortProperty,
+    /// Ascending if `None` or `Some(true)`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_ascending: Option<bool>,
+    /// String comparison collation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collation: Option<String>,
+    /// Required when `property` is `Keyword`, `AllInThreadHaveKeyword`, or
+    /// `SomeInThreadHaveKeyword`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyword: Option<String>,
+}
+
+impl JmapEmailComparator {
+    /// Sort by `receivedAt` descending (newest first).
+    pub fn received_at_desc() -> Self {
+        Self {
+            property: JmapEmailSortProperty::ReceivedAt,
+            is_ascending: Some(false),
+            collation: None,
+            keyword: None,
+        }
+    }
+}
 
 /// Failure causes during a batched JMAP `Email/query` + `Email/get` flow.
 #[derive(Debug, Error)]

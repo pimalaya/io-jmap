@@ -11,8 +11,8 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
-//!     rfc8621::vacation_response::{JmapVacationResponseUpdate, set::JmapVacationResponseSet},
+//!     rfc8620::session::JmapSession,
+//!     rfc8621::vacation_response::set::{JmapVacationResponseSet, JmapVacationResponseUpdate},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -66,14 +66,41 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        session::JmapSession,
+    },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
-        vacation_response::{
-            JMAP_VACATION_RESPONSE_CAPABILITY, JmapVacationResponse, JmapVacationResponseUpdate,
-        },
+        vacation_response::{JMAP_VACATION_RESPONSE_CAPABILITY, JmapVacationResponse},
     },
 };
+
+/// Patch object for `VacationResponse/set` update (RFC 8621 §8).
+///
+/// Only `Some` fields are serialized; `None` fields are left unchanged.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapVacationResponseUpdate {
+    /// Whether the vacation response is sent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_enabled: Option<bool>,
+    /// RFC 3339 start of the vacation period.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from_date: Option<String>,
+    /// RFC 3339 end of the vacation period.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_date: Option<String>,
+    /// Subject of the auto-reply message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// Plaintext body of the auto-reply message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_body: Option<String>,
+    /// HTML body of the auto-reply message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_body: Option<String>,
+}
 
 /// Failure causes during a JMAP `VacationResponse/set` flow.
 #[derive(Debug, Error)]

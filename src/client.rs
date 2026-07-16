@@ -56,21 +56,19 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc8620::{
-        JmapRequest, JmapResponse, JmapSession,
         blob_download::*,
         blob_upload::*,
         changes::JmapChangesOutput,
         coroutine::JmapRedirectYield,
         push_subscription::{get::*, set::*},
+        request::{JmapRequest, JmapResponse},
         send::*,
+        session::JmapSession,
         session_get::*,
     },
     rfc8621::{
-        email::{
-            JmapEmailCopyArgs, JmapEmailImportArgs, changes::*, copy::*, get::*, import::*,
-            parse::*, query::*, set::*,
-        },
-        email_submission::{cancel::*, get::*, query::*, set::*, *},
+        email::{changes::*, copy::*, get::*, import::*, parse::*, query::*, set::*},
+        email_submission::{cancel::*, get::*, query::*, set::*},
         identity::{get::*, set::*},
         mailbox::{changes::*, get::*, query::*, set::*},
         thread::{changes::*, get::*},
@@ -78,7 +76,7 @@ use crate::{
     },
     rfc9610::{
         address_book::{changes::*, get::*, set::*},
-        contact_card::{JmapContactCardCopyArgs, changes::*, copy::*, get::*, query::*, set::*},
+        contact_card::{changes::*, copy::*, get::*, query::*, set::*},
     },
 };
 

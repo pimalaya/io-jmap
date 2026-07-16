@@ -12,8 +12,8 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
-//!     rfc8621::email::{JmapEmailCopyArgs, copy::JmapEmailCopy},
+//!     rfc8620::session::JmapSession,
+//!     rfc8621::email::copy::{JmapEmailCopy, JmapEmailCopyArgs},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -63,7 +63,7 @@
 //! println!("{} created", out.created.len());
 //! ```
 
-use alloc::{collections::BTreeMap, string::String, vec};
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -72,12 +72,55 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
-    rfc8621::{
-        JMAP_MAIL_CAPABILITY,
-        email::{JmapEmail, JmapEmailCopyArgs, JmapEmailCopyItemError},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        session::JmapSession,
     },
+    rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
 };
+
+/// Arguments for copying a single email between accounts via `Email/copy`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailCopyArgs {
+    /// Source email ID.
+    pub id: String,
+    /// `{ mailbox-id -> true }` for destination mailboxes.
+    pub mailbox_ids: BTreeMap<String, bool>,
+    /// Keywords on the copy (replaces source keywords).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<BTreeMap<String, bool>>,
+    /// RFC 3339 override for the copy's `receivedAt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub received_at: Option<String>,
+}
+
+/// Per-object error returned in `Email/copy` responses (RFC 8621 §4.10).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapEmailCopyItemError {
+    /// The email already exists in the destination account (RFC 8621 §4.10).
+    AlreadyExists {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): target id not found.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// Catch-all for set errors not modelled above.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `Email/copy` flow.
 #[derive(Debug, Error)]

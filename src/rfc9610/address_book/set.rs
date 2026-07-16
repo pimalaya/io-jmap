@@ -14,7 +14,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc9610::address_book::set::{JmapAddressBookSet, JmapAddressBookSetArgs},
 //! };
 //! use secrecy::SecretString;
@@ -59,21 +59,111 @@
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
     rfc9610::{
         JMAP_CONTACTS_CAPABILITY,
-        address_book::{
-            JmapAddressBook, JmapAddressBookCreate, JmapAddressBookSetItemError,
-            JmapAddressBookUpdate,
-        },
+        address_book::{JmapAddressBook, JmapAddressBookRights},
     },
 };
+
+/// Client-settable subset of [`JmapAddressBook`] for `AddressBook/set`
+/// create requests (RFC 9610 §2). Server-assigned fields are excluded.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapAddressBookCreate {
+    /// The user-visible address book name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Optional long-form description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Position hint for display ordering (lower first).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<u32>,
+    /// Whether the user is subscribed to the address book.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_subscribed: Option<bool>,
+    /// Principal id to rights map (RFC 9670).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_with: Option<BTreeMap<String, JmapAddressBookRights>>,
+}
+
+/// Patch object for `AddressBook/set` update requests (RFC 8620 §5.3): only
+/// `Some` fields are serialised.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapAddressBookUpdate {
+    /// The user-visible address book name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Optional long-form description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Position hint for display ordering (lower first).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<u32>,
+    /// Whether the user is subscribed to the address book.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_subscribed: Option<bool>,
+    /// Principal id to rights map (RFC 9670).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share_with: Option<BTreeMap<String, JmapAddressBookRights>>,
+}
+
+/// Per-object error returned in `AddressBook/set` responses (RFC 9610 §2.3).
+///
+/// Covers the standard RFC 8620 §5.3 set errors plus the AddressBook-specific
+/// error defined in RFC 9610 §2.3.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapAddressBookSetItemError {
+    /// The AddressBook still has ContactCards and `onDestroyRemoveContents`
+    /// was false (RFC 9610 §2.3).
+    AddressBookHasContents {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the change is not allowed, e.g.
+    /// a `shareWith` or `isSubscribed` change rejected by the server.
+    Forbidden {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): target id not found.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): patch could not be applied.
+    InvalidPatch {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): would destroy an object already
+    /// queued for destruction in the same request.
+    WillDestroy {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were
+    /// invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// Catch-all for set errors not modelled above.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `AddressBook/set` flow.
 #[derive(Debug, Error)]

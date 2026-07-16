@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc9610::contact_card::set::{JmapContactCardSet, JmapContactCardSetArgs},
 //! };
 //! use secrecy::SecretString;
@@ -57,18 +57,67 @@
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
-    rfc9610::{
-        JMAP_CONTACTS_CAPABILITY,
-        contact_card::{JmapContactCard, JmapContactCardPatch, JmapContactCardSetItemError},
-    },
+    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
+    rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
+
+/// Patch object for `ContactCard/set` update requests (RFC 8620 §5.3): JSON
+/// pointer paths mapped to their new values; a `null` value removes the
+/// pointed property.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(transparent)]
+pub struct JmapContactCardPatch(pub BTreeMap<String, serde_json::Value>);
+
+/// Per-object error returned in `ContactCard/set` responses (RFC 9610 §3.5).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapContactCardSetItemError {
+    /// One or more blob IDs in the card (e.g. a Media `blobId`) were not
+    /// found (RFC 9610 §3).
+    BlobNotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the change is not allowed.
+    Forbidden {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): target id not found.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): patch could not be applied.
+    InvalidPatch {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): would destroy an object already
+    /// queued for destruction in the same request.
+    WillDestroy {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were
+    /// invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// Catch-all for set errors not modelled above.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `ContactCard/set` flow.
 #[derive(Debug, Error)]

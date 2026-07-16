@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::identity::set::{JmapIdentitySet, JmapIdentitySetArgs},
 //! };
 //! use secrecy::SecretString;
@@ -64,15 +64,99 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        session::JmapSession,
+    },
     rfc8621::{
-        JMAP_MAIL_CAPABILITY,
-        email_submission::JMAP_SUBMISSION_CAPABILITY,
-        identity::{
-            JmapIdentity, JmapIdentityCreate, JmapIdentitySetItemError, JmapIdentityUpdate,
-        },
+        JMAP_MAIL_CAPABILITY, email::JmapEmailAddress,
+        email_submission::JMAP_SUBMISSION_CAPABILITY, identity::JmapIdentity,
     },
 };
+
+/// A partial [`JmapIdentity`] object for `Identity/set` create requests.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapIdentityCreate {
+    /// The display name for the sender.
+    pub name: String,
+    /// The email address for the sender.
+    pub email: String,
+    /// `Reply-To` addresses to set on outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<Vec<JmapEmailAddress>>,
+    /// `Bcc` addresses to add to all outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bcc: Option<Vec<JmapEmailAddress>>,
+    /// Plaintext signature to append to outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_signature: Option<String>,
+    /// HTML signature to append to outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_signature: Option<String>,
+}
+
+/// Patch object for `Identity/set` update requests.
+///
+/// Only `Some` fields are serialized.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapIdentityUpdate {
+    /// The display name for the sender.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// `Reply-To` addresses to set on outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<Vec<JmapEmailAddress>>,
+    /// `Bcc` addresses to add to all outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bcc: Option<Vec<JmapEmailAddress>>,
+    /// Plaintext signature to append to outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_signature: Option<String>,
+    /// HTML signature to append to outgoing email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub html_signature: Option<String>,
+}
+
+/// Per-object error returned in `Identity/set` responses (RFC 8621 §6.4).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapIdentitySetItemError {
+    /// Standard set error (RFC 8620 §5.3): target id not found.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): patch could not be applied.
+    InvalidPatch {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): would destroy an object already
+    /// queued for destruction in the same request.
+    WillDestroy {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): tried to create/destroy a
+    /// server-managed singleton.
+    Singleton {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Catch-all for set errors not modelled above.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `Identity/set` flow.
 #[derive(Debug, Error)]

@@ -44,7 +44,7 @@ use url::Url;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JmapBatch, JmapMethodError, send::*},
+    rfc8620::{error::JmapMethodError, request::JmapBatch, send::*},
 };
 
 /// Failure causes during a JMAP `Foo/set` flow.

@@ -14,7 +14,6 @@ use io_jmap::{
             },
         },
         mailbox::{
-            JmapMailboxCreate,
             get::{
                 JmapMailboxGet, JmapMailboxGetError, JmapMailboxGetOptions, JmapMailboxGetOutput,
             },
@@ -22,7 +21,10 @@ use io_jmap::{
                 JmapMailboxQuery, JmapMailboxQueryError, JmapMailboxQueryOptions,
                 JmapMailboxQueryOutput,
             },
-            set::{JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError, JmapMailboxSetOutput},
+            set::{
+                JmapMailboxCreate, JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError,
+                JmapMailboxSetOutput,
+            },
         },
     },
 };

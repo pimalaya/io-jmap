@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::mailbox::query::{JmapMailboxQuery, JmapMailboxQueryOptions},
 //! };
 //! use secrecy::SecretString;
@@ -64,13 +64,58 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch,
+        request::JmapResultReference, send::*, session::JmapSession,
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
-        mailbox::{JmapMailbox, JmapMailboxFilter, JmapMailboxProperty, JmapMailboxSortComparator},
+        mailbox::{JmapMailbox, JmapMailboxProperty, JmapMailboxRole},
     },
 };
+
+/// Sort property for `Mailbox/query` (RFC 8621 §2.4).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JmapMailboxSortProperty {
+    /// Sort by mailbox name.
+    Name,
+    /// Sort by the sortOrder position hint.
+    SortOrder,
+    /// Sort by parent mailbox id.
+    ParentId,
+}
+
+/// Sort comparator for `Mailbox/query` (RFC 8620 §5.5).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapMailboxSortComparator {
+    /// The property to sort by.
+    pub property: JmapMailboxSortProperty,
+    /// Ascending if `None` or `Some(true)`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_ascending: Option<bool>,
+}
+
+/// Filter condition for `Mailbox/query` (RFC 8621 §2.4).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapMailboxFilter {
+    /// Filter by parent mailbox ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// Filter by role.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<JmapMailboxRole>,
+    /// Filter by name (substring match).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Whether to include subscribed mailboxes only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_subscribed: Option<bool>,
+    /// Whether to include mailboxes with a role only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_any_role: Option<bool>,
+}
 
 /// Failure causes during a batched JMAP `Mailbox/query` + `Mailbox/get` flow.
 #[derive(Debug, Error)]

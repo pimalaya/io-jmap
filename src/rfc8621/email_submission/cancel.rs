@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::email_submission::cancel::JmapEmailSubmissionCancel,
 //! };
 //! use secrecy::SecretString;
@@ -63,15 +63,29 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        session::JmapSession,
+    },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
         email_submission::{
             JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapEmailSubmissionSetItemError,
-            JmapEmailSubmissionUpdate, JmapUndoStatus,
+            JmapUndoStatus,
         },
     },
 };
+
+/// Patch object for `EmailSubmission/set` update.
+///
+/// Only `undoStatus` can be updated (to `"canceled"`).
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailSubmissionUpdate {
+    /// The new undo status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo_status: Option<JmapUndoStatus>,
+}
 
 /// Failure causes during a JMAP `EmailSubmission/set` cancel flow.
 #[derive(Debug, Error)]

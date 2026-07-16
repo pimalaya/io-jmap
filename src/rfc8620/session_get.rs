@@ -59,7 +59,7 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc8620::{JmapSession, coroutine::JmapRedirectYield},
+    rfc8620::{coroutine::JmapRedirectYield, session::JmapSession},
 };
 
 /// Failure causes during the JMAP session-get flow.

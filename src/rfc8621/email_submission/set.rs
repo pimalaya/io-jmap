@@ -12,8 +12,8 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
-//!     rfc8621::email_submission::{JmapEmailSubmissionCreate, set::JmapEmailSubmissionSet},
+//!     rfc8620::session::JmapSession,
+//!     rfc8621::email_submission::set::{JmapEmailSubmissionCreate, JmapEmailSubmissionSet},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -71,15 +71,31 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        session::JmapSession,
+    },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
         email_submission::{
-            JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapEmailSubmissionCreate,
-            JmapEmailSubmissionSetItemError,
+            JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapEmailSubmissionSetItemError,
+            JmapEnvelope,
         },
     },
 };
+
+/// A single email submission to create via `EmailSubmission/set`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailSubmissionCreate {
+    /// The identity to send as.
+    pub identity_id: String,
+    /// The ID of the email to send.
+    pub email_id: String,
+    /// SMTP envelope override (uses email headers if omitted).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub envelope: Option<JmapEnvelope>,
+}
 
 /// Failure causes during a JMAP `EmailSubmission/set` flow.
 #[derive(Debug, Error)]

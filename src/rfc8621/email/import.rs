@@ -13,8 +13,8 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
-//!     rfc8621::email::{JmapEmailImportArgs, import::JmapEmailImport},
+//!     rfc8620::session::JmapSession,
+//!     rfc8621::email::import::{JmapEmailImport, JmapEmailImportArgs},
 //! };
 //! use secrecy::SecretString;
 //!
@@ -64,7 +64,7 @@
 //! println!("{} created", out.created.len());
 //! ```
 
-use alloc::{collections::BTreeMap, string::String, vec};
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -73,12 +73,55 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
-    rfc8621::{
-        JMAP_MAIL_CAPABILITY,
-        email::{JmapEmail, JmapEmailImportArgs, JmapEmailImportItemError},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        session::JmapSession,
     },
+    rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
 };
+
+/// Arguments for importing a single RFC 5322 message via `Email/import`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailImportArgs {
+    /// Blob ID of the RFC 5322 message.
+    pub blob_id: String,
+    /// `{ mailbox-id -> true }` for destination mailboxes.
+    pub mailbox_ids: BTreeMap<String, bool>,
+    /// `{ keyword -> true }` to set on the imported email.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<BTreeMap<String, bool>>,
+    /// RFC 3339 override for `receivedAt`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub received_at: Option<String>,
+}
+
+/// Per-object error returned in `Email/import` responses (RFC 8621 §4.9).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapEmailImportItemError {
+    /// The message body was not a valid RFC 5322 message (RFC 8621 §4.9).
+    InvalidEmail {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): target id not found.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// Catch-all for set errors not modelled above.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `Email/import` flow.
 #[derive(Debug, Error)]

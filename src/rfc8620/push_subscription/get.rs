@@ -13,7 +13,7 @@
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
 //!     rfc8620::{
-//!         JmapSession,
+//!         session::JmapSession,
 //!         push_subscription::get::{JmapPushSubscriptionGet, JmapPushSubscriptionGetOptions},
 //!     },
 //! };
@@ -70,8 +70,8 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession,
-        push_subscription::JmapPushSubscription, send::*,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, push_subscription::JmapPushSubscription,
+        request::JmapBatch, send::*, session::JmapSession,
     },
 };
 

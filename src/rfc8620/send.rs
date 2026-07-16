@@ -5,8 +5,8 @@
 //! 3xx redirects surface as [`JmapSendError::UnexpectedRedirect`];
 //! redirect-aware coroutines resume [`Http11Send`] directly instead.
 //!
-//! [`JmapRequest`]: crate::rfc8620::JmapRequest
-//! [`JmapResponse`]: crate::rfc8620::JmapResponse
+//! [`JmapRequest`]: crate::rfc8620::request::JmapRequest
+//! [`JmapResponse`]: crate::rfc8620::request::JmapResponse
 //!
 //! # Example
 //!
@@ -18,7 +18,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::{JmapBatch, send::JmapSend},
+//!     rfc8620::{request::JmapBatch, send::JmapSend},
 //! };
 //! use secrecy::SecretString;
 //! use serde_json::json;
@@ -69,7 +69,7 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc8620::{JmapRequest, JmapResponse},
+    rfc8620::request::{JmapRequest, JmapResponse},
 };
 
 /// Failure causes during the JMAP send flow.
@@ -188,7 +188,7 @@ enum State {
 mod tests {
     use alloc::{format, string::ToString, vec, vec::Vec};
 
-    use crate::rfc8620::JmapBatch;
+    use crate::rfc8620::request::JmapBatch;
     use crate::rfc8620::send::*;
 
     fn make_auth() -> SecretString {

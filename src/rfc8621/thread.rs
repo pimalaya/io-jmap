@@ -1,8 +1,11 @@
-//! JMAP Thread types (RFC 8621 §3).
+//! JMAP for Mail: Thread (RFC 8621 §3).
 
 use alloc::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
+
+pub mod changes;
+pub mod get;
 
 /// A JMAP Thread object (RFC 8621 §3.1).
 ///

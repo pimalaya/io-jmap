@@ -35,8 +35,17 @@ use url::Url;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JmapAddedItem, JmapBatch, JmapMethodError, send::*},
+    rfc8620::{error::JmapMethodError, request::JmapBatch, send::*},
 };
+
+/// A single added item in a `Foo/queryChanges` response (RFC 8620 §5.6).
+#[derive(Clone, Debug, Deserialize)]
+pub struct JmapAddedItem {
+    /// The id of the added object.
+    pub id: String,
+    /// The zero-based position of the object in the query results.
+    pub index: u64,
+}
 
 /// Failure causes during a JMAP `Foo/queryChanges` flow.
 #[derive(Debug, Error)]

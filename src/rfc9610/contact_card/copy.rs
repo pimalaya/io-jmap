@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc9610::contact_card::copy::JmapContactCardCopy,
 //! };
 //! use secrecy::SecretString;
@@ -54,7 +54,7 @@
 //! println!("{} created", out.created.len());
 //! ```
 
-use alloc::{collections::BTreeMap, string::String, vec};
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -63,12 +63,52 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, send::*},
-    rfc9610::{
-        JMAP_CONTACTS_CAPABILITY,
-        contact_card::{JmapContactCard, JmapContactCardCopyArgs, JmapContactCardCopyItemError},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        session::JmapSession,
     },
+    rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
+
+/// Arguments for copying a single card between accounts via
+/// `ContactCard/copy` (RFC 9610 §3.6).
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapContactCardCopyArgs {
+    /// Source ContactCard id.
+    pub id: String,
+    /// `{ address-book-id -> true }` in the destination account.
+    pub address_book_ids: BTreeMap<String, bool>,
+}
+
+/// Per-object error returned in `ContactCard/copy` responses (RFC 8620
+/// §5.4).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapContactCardCopyItemError {
+    /// The card already exists in the destination account (RFC 8620 §5.4).
+    AlreadyExists {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): target id not found.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were
+    /// invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// Catch-all for set errors not modelled above.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `ContactCard/copy` flow.
 #[derive(Debug, Error)]

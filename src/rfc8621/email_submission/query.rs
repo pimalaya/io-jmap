@@ -11,7 +11,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::email_submission::query::{
 //!         JmapEmailSubmissionQuery, JmapEmailSubmissionQueryOptions,
 //!     },
@@ -69,16 +69,61 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch,
+        request::JmapResultReference, send::*, session::JmapSession,
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
-        email_submission::{
-            JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapEmailSubmissionComparator,
-            JmapEmailSubmissionFilter,
-        },
+        email_submission::{JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapUndoStatus},
     },
 };
+
+/// Filter condition for `EmailSubmission/query` (RFC 8621 §7.4).
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailSubmissionFilter {
+    /// Only submissions sent from these identities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_ids: Option<Vec<String>>,
+    /// Only submissions of these emails.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email_ids: Option<Vec<String>>,
+    /// Only submissions of emails in these threads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_ids: Option<Vec<String>>,
+    /// Only submissions with this undo status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub undo_status: Option<JmapUndoStatus>,
+    /// RFC 3339 upper bound on the sendAt date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub before: Option<String>,
+    /// RFC 3339 lower bound on the sendAt date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+}
+
+/// Sort property for `EmailSubmission/query`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JmapEmailSubmissionSortProperty {
+    /// Sort by email id.
+    EmailId,
+    /// Sort by thread id.
+    ThreadId,
+    /// Sort by the sendAt date.
+    SentAt,
+}
+
+/// Sort comparator for `EmailSubmission/query`.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailSubmissionComparator {
+    /// The property to sort by.
+    pub property: JmapEmailSubmissionSortProperty,
+    /// Ascending if `None` or `Some(true)`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_ascending: Option<bool>,
+}
 
 /// Failure causes during a batched JMAP `EmailSubmission/query` + `/get` flow.
 #[derive(Debug, Error)]

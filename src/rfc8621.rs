@@ -5,8 +5,7 @@ pub mod email_submission;
 pub mod identity;
 pub mod mailbox;
 pub mod thread;
-mod utils;
 pub mod vacation_response;
 
-#[doc(inline)]
-pub use utils::*;
+/// JMAP for Mail capability (RFC 8621).
+pub const JMAP_MAIL_CAPABILITY: &str = "urn:ietf:params:jmap:mail";

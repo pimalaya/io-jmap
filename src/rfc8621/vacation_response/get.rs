@@ -11,7 +11,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::vacation_response::get::JmapVacationResponseGet,
 //! };
 //! use secrecy::SecretString;
@@ -65,7 +65,7 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, get::*, send::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, get::*, request::JmapBatch, send::*, session::JmapSession},
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
         vacation_response::{JMAP_VACATION_RESPONSE_CAPABILITY, JmapVacationResponse},

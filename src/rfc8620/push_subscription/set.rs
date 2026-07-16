@@ -14,10 +14,9 @@
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
 //!     rfc8620::{
-//!         JmapSession,
-//!         push_subscription::{
-//!             JmapPushSubscriptionCreate,
-//!             set::{JmapPushSubscriptionSet, JmapPushSubscriptionSetArgs},
+//!         session::JmapSession,
+//!         push_subscription::set::{
+//!             JmapPushSubscriptionCreate, JmapPushSubscriptionSet, JmapPushSubscriptionSetArgs,
 //!         },
 //!     },
 //! };
@@ -78,13 +77,67 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapSession, JmapSetError,
-        push_subscription::{
-            JmapPushSubscription, JmapPushSubscriptionCreate, JmapPushSubscriptionUpdate,
-        },
-        send::*,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, error::JmapSetError,
+        push_subscription::JmapPushSubscription, request::JmapBatch, send::*, session::JmapSession,
     },
 };
+
+/// A partial [`JmapPushSubscription`] for `PushSubscription/set` create
+/// requests.
+///
+/// `verificationCode` MUST NOT be set on create (RFC 8620 §7.2): the server
+/// pushes a [`super::JmapPushVerification`] to `url` and the client copies the
+/// code back via [`JmapPushSubscriptionUpdate`].
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapPushSubscriptionCreate {
+    /// An ID unique to the client + device, containing no unobfuscated
+    /// device ID (RFC 8620 §7.2).
+    pub device_client_id: String,
+    /// Absolute `https://` URL the server will POST push messages to.
+    pub url: String,
+    /// Client-generated encryption keys; when supplied, the server MUST
+    /// encrypt all pushed data with them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keys: Option<JmapPushSubscriptionKeys>,
+    /// RFC 3339 expiry time; the server may clamp it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// Type names to restrict pushes to; `None` pushes all types.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub types: Option<Vec<String>>,
+}
+
+/// Patch object for `PushSubscription/set` update requests; only `Some`
+/// fields are serialized.
+///
+/// `url` and `keys` are immutable (RFC 8620 §7.2.2): to change them, destroy
+/// the subscription and create a new one.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapPushSubscriptionUpdate {
+    /// The code from the pushed [`super::JmapPushVerification`]; an invalid
+    /// code is rejected with an `invalidProperties` set error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_code: Option<String>,
+    /// New RFC 3339 expiry time extending (or shortening) the subscription
+    /// lifetime; the server may clamp it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// Type names to restrict pushes to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub types: Option<Vec<String>>,
+}
+
+/// Client-generated Web Push encryption keys (RFC 8620 §7.2), both encoded
+/// in URL-safe base64 as specified by RFC 8291.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct JmapPushSubscriptionKeys {
+    /// The P-256 ECDH public key.
+    pub p256dh: String,
+    /// The authentication secret.
+    pub auth: String,
+}
 
 /// Failure causes during a JMAP `PushSubscription/set` flow.
 #[derive(Debug, Error)]

@@ -43,8 +43,10 @@ use std::env;
 use io_jmap::{
     client::JmapClientStd,
     rfc8620::push_subscription::{
-        JmapPushSubscriptionCreate, JmapPushSubscriptionUpdate,
-        get::JmapPushSubscriptionGetOptions, set::JmapPushSubscriptionSetArgs,
+        get::JmapPushSubscriptionGetOptions,
+        set::{
+            JmapPushSubscriptionCreate, JmapPushSubscriptionSetArgs, JmapPushSubscriptionUpdate,
+        },
     },
 };
 use pimalaya_stream::tls::Tls;

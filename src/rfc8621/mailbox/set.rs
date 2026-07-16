@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::mailbox::set::{JmapMailboxSet, JmapMailboxSetArgs},
 //! };
 //! use secrecy::SecretString;
@@ -57,18 +57,112 @@
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
+    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
-        mailbox::{JmapMailbox, JmapMailboxCreate, JmapMailboxSetItemError, JmapMailboxUpdate},
+        mailbox::{JmapMailbox, JmapMailboxRole},
     },
 };
+
+/// Client-settable subset of [`JmapMailbox`] for `Mailbox/set` create requests
+/// (RFC 8621 §2.1). Server-assigned fields are excluded.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapMailboxCreate {
+    /// The user-visible mailbox name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The parent mailbox id; `None` for a top-level mailbox.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// The special-use role of the mailbox.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<JmapMailboxRole>,
+    /// Position hint for display ordering (lower first).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<u32>,
+    /// Whether the user is subscribed to the mailbox.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_subscribed: Option<bool>,
+}
+
+/// Patch object for `Mailbox/set` update requests (RFC 8620 §5.3): only
+/// `Some` fields are serialised.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapMailboxUpdate {
+    /// The user-visible mailbox name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The parent mailbox id; `None` for a top-level mailbox.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// The special-use role of the mailbox.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<JmapMailboxRole>,
+    /// Position hint for display ordering (lower first).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sort_order: Option<u32>,
+    /// Whether the user is subscribed to the mailbox.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_subscribed: Option<bool>,
+}
+
+/// Per-object error returned in `Mailbox/set` responses (RFC 8621 §2.6).
+///
+/// Covers the standard RFC 8620 §5.3 set errors plus the mailbox-specific
+/// errors defined in RFC 8621 §2.6.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapMailboxSetItemError {
+    /// The mailbox cannot be destroyed because it has child mailboxes.
+    MailboxHasChild {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// The mailbox cannot be destroyed because it contains email.
+    MailboxHasEmail {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// The referenced object does not exist.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// The update patch is invalid.
+    InvalidPatch {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// The object will be destroyed by this request, so it cannot be updated.
+    WillDestroy {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// One or more object properties are invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// The type is a singleton, objects cannot be created or destroyed.
+    Singleton {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Any error type this library does not know about.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `Mailbox/set` flow.
 #[derive(Debug, Error)]

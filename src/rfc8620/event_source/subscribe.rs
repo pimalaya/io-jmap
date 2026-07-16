@@ -16,7 +16,7 @@
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState},
 //!     rfc8620::{
-//!         JmapSession,
+//!         session::JmapSession,
 //!         event_source::{
 //!             JmapCloseAfter,
 //!             subscribe::{JmapEventSource, JmapEventSourceYield},
@@ -91,8 +91,8 @@ use url::Url;
 use crate::{
     coroutine::*,
     rfc8620::{
-        JmapSession,
         event_source::{JmapCloseAfter, JmapStateChange, JmapStateChangeParseError},
+        session::JmapSession,
     },
 };
 
@@ -359,7 +359,7 @@ mod tests {
 
     use crate::{
         coroutine::*,
-        rfc8620::{JmapSession, event_source::subscribe::*, event_source::*},
+        rfc8620::{event_source::subscribe::*, event_source::*, session::JmapSession},
     };
 
     fn synthetic_session() -> JmapSession {

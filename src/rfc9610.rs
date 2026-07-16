@@ -1,6 +1,9 @@
-//! RFC 9610 helpers: capability URN and account capability object.
+//! RFC 9610: JMAP for Contacts.
 
 use serde::Deserialize;
+
+pub mod address_book;
+pub mod contact_card;
 
 /// JMAP for Contacts capability (RFC 9610 §1.4.1).
 pub const JMAP_CONTACTS_CAPABILITY: &str = "urn:ietf:params:jmap:contacts";

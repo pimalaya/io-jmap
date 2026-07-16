@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc9610::contact_card::query::{JmapContactCardQuery, JmapContactCardQueryOptions},
 //! };
 //! use secrecy::SecretString;
@@ -55,23 +55,136 @@
 //! println!("{} cards", out.cards.len());
 //! ```
 
+use core::fmt;
+
 use alloc::{string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, JmapBatch, JmapMethodError, JmapResultReference, JmapSession, send::*,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch,
+        request::JmapResultReference, send::*, session::JmapSession,
     },
-    rfc9610::{
-        JMAP_CONTACTS_CAPABILITY,
-        contact_card::{JmapContactCard, JmapContactCardFilter, JmapContactCardSortComparator},
-    },
+    rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
+
+/// Filter for `ContactCard/query` (RFC 9610 §3.3.1); all specified
+/// conditions must apply.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapContactCardFilter {
+    /// AddressBook id the card must be in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub in_address_book: Option<String>,
+    /// Exact JSContact `uid` of the card.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
+    /// Uid the card's `members` property must contain.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_member: Option<String>,
+    /// Exact JSContact `kind` of the card, e.g. `group`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The card's `created` date-time must be before this UTC date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_before: Option<String>,
+    /// The card's `created` date-time must be the same or after this UTC
+    /// date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_after: Option<String>,
+    /// The card's `updated` date-time must be before this UTC date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_before: Option<String>,
+    /// The card's `updated` date-time must be the same or after this UTC
+    /// date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_after: Option<String>,
+    /// Free-text match against any text in the card.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Match against any NameComponent or the full name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Match against NameComponents of kind `given`.
+    #[serde(rename = "name/given", skip_serializing_if = "Option::is_none")]
+    pub name_given: Option<String>,
+    /// Match against NameComponents of kind `surname`.
+    #[serde(rename = "name/surname", skip_serializing_if = "Option::is_none")]
+    pub name_surname: Option<String>,
+    /// Match against NameComponents of kind `surname2`.
+    #[serde(rename = "name/surname2", skip_serializing_if = "Option::is_none")]
+    pub name_surname2: Option<String>,
+    /// Match against any Nickname name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+    /// Match against any Organization name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<String>,
+    /// Match against any EmailAddress address or label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Match against any Phone number or label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone: Option<String>,
+    /// Match against any OnlineService service, uri, user or label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub online_service: Option<String>,
+    /// Match against any AddressComponent or the full address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    /// Match against any Note note.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Sort property for `ContactCard/query` (RFC 9610 §3.3.2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JmapContactCardSortProperty {
+    /// The `created` date on the ContactCard.
+    Created,
+    /// The `updated` date on the ContactCard.
+    Updated,
+    /// The first NameComponent of kind `given`.
+    NameGiven,
+    /// The first NameComponent of kind `surname`.
+    NameSurname,
+    /// The first NameComponent of kind `surname2`.
+    NameSurname2,
+}
+
+impl fmt::Display for JmapContactCardSortProperty {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Created => "created",
+            Self::Updated => "updated",
+            Self::NameGiven => "name/given",
+            Self::NameSurname => "name/surname",
+            Self::NameSurname2 => "name/surname2",
+        })
+    }
+}
+
+impl Serialize for JmapContactCardSortProperty {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(self)
+    }
+}
+
+/// Sort comparator for `ContactCard/query` (RFC 8620 §5.5).
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapContactCardSortComparator {
+    /// The property to sort by.
+    pub property: JmapContactCardSortProperty,
+    /// Ascending if `None` or `Some(true)`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_ascending: Option<bool>,
+}
 
 /// Failure causes during a batched JMAP `ContactCard/query` +
 /// `ContactCard/get` flow.

@@ -12,7 +12,7 @@
 //!
 //! use io_jmap::{
 //!     coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
-//!     rfc8620::JmapSession,
+//!     rfc8620::session::JmapSession,
 //!     rfc8621::email::set::{JmapEmailSet, JmapEmailSetArgs},
 //! };
 //! use secrecy::SecretString;
@@ -55,21 +55,162 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
+use alloc::{collections::BTreeMap, format, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, JmapBatch, JmapSession, send::*, set::*},
-    rfc8621::{
-        JMAP_MAIL_CAPABILITY,
-        email::{JmapEmail, JmapEmailPatch, JmapEmailPatchOp, JmapEmailSetItemError},
-    },
+    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
+    rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
 };
+
+/// A single operation in an `Email/set` update patch (RFC 8621 §4.7). Each
+/// variant serialises as a JSON Pointer entry in a flat patch object.
+#[derive(Clone, Debug)]
+pub enum JmapEmailPatchOp {
+    /// Set a keyword: `"keywords/<kw>": true`
+    SetKeyword(String),
+    /// Unset a keyword: `"keywords/<kw>": null`
+    UnsetKeyword(String),
+    /// Replace all keywords atomically: `"keywords": { ... }`
+    ReplaceKeywords(BTreeMap<String, bool>),
+    /// Add email to a mailbox: `"mailboxIds/<id>": true`
+    AddToMailbox(String),
+    /// Remove email from a mailbox: `"mailboxIds/<id>": null`
+    RemoveFromMailbox(String),
+    /// Replace mailbox membership atomically: `"mailboxIds": { ... }`
+    ReplaceMailboxIds(BTreeMap<String, bool>),
+}
+
+/// A set of patch operations applied to a single email in `Email/set`.
+///
+/// Serializes to a flat JSON Merge Patch object (RFC 7396).
+#[derive(Clone, Debug, Default)]
+pub struct JmapEmailPatch(pub Vec<JmapEmailPatchOp>);
+
+impl JmapEmailPatch {
+    /// Appends a [`JmapEmailPatchOp::SetKeyword`] operation.
+    pub fn set_keyword(mut self, keyword: impl Into<String>) -> Self {
+        self.0.push(JmapEmailPatchOp::SetKeyword(keyword.into()));
+        self
+    }
+
+    /// Appends a [`JmapEmailPatchOp::UnsetKeyword`] operation.
+    pub fn unset_keyword(mut self, keyword: impl Into<String>) -> Self {
+        self.0.push(JmapEmailPatchOp::UnsetKeyword(keyword.into()));
+        self
+    }
+
+    /// Appends a [`JmapEmailPatchOp::ReplaceKeywords`] operation.
+    pub fn replace_keywords(mut self, keywords: BTreeMap<String, bool>) -> Self {
+        self.0.push(JmapEmailPatchOp::ReplaceKeywords(keywords));
+        self
+    }
+
+    /// Appends a [`JmapEmailPatchOp::AddToMailbox`] operation.
+    pub fn add_to_mailbox(mut self, id: impl Into<String>) -> Self {
+        self.0.push(JmapEmailPatchOp::AddToMailbox(id.into()));
+        self
+    }
+
+    /// Appends a [`JmapEmailPatchOp::RemoveFromMailbox`] operation.
+    pub fn remove_from_mailbox(mut self, id: impl Into<String>) -> Self {
+        self.0.push(JmapEmailPatchOp::RemoveFromMailbox(id.into()));
+        self
+    }
+
+    /// Appends a [`JmapEmailPatchOp::ReplaceMailboxIds`] operation.
+    pub fn replace_mailbox_ids(mut self, ids: BTreeMap<String, bool>) -> Self {
+        self.0.push(JmapEmailPatchOp::ReplaceMailboxIds(ids));
+        self
+    }
+}
+
+impl Serialize for JmapEmailPatch {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = s.serialize_map(Some(self.0.len()))?;
+        for op in &self.0 {
+            match op {
+                JmapEmailPatchOp::SetKeyword(kw) => {
+                    map.serialize_entry(&format!("keywords/{kw}"), &true)?
+                }
+                JmapEmailPatchOp::UnsetKeyword(kw) => {
+                    map.serialize_entry(&format!("keywords/{kw}"), &Option::<bool>::None)?
+                }
+                JmapEmailPatchOp::ReplaceKeywords(kws) => map.serialize_entry("keywords", kws)?,
+                JmapEmailPatchOp::AddToMailbox(id) => {
+                    map.serialize_entry(&format!("mailboxIds/{id}"), &true)?
+                }
+                JmapEmailPatchOp::RemoveFromMailbox(id) => {
+                    map.serialize_entry(&format!("mailboxIds/{id}"), &Option::<bool>::None)?
+                }
+                JmapEmailPatchOp::ReplaceMailboxIds(ids) => {
+                    map.serialize_entry("mailboxIds", ids)?
+                }
+            }
+        }
+        map.end()
+    }
+}
+
+/// Per-object error returned in `Email/set` responses (RFC 8621 §4.7).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapEmailSetItemError {
+    /// The email would exceed the server's keyword limit (RFC 8621 §4.7).
+    TooManyKeywords {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// The email would be in too many mailboxes (RFC 8621 §4.7).
+    TooManyMailboxes {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// One or more blob IDs in the email were not found (RFC 8621 §4.7).
+    BlobNotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): target id not found.
+    NotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): patch could not be applied.
+    InvalidPatch {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): would destroy an object already
+    /// queued for destruction in the same request.
+    WillDestroy {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): tried to create/destroy a
+    /// server-managed singleton.
+    Singleton {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Catch-all for set errors not modelled above.
+    #[serde(other)]
+    Unknown,
+}
 
 /// Failure causes during a JMAP `Email/set` flow.
 #[derive(Debug, Error)]

@@ -1,6 +1,8 @@
-//! JMAP Event Source data types (RFC 8620 §7.1 & §7.3): push payload,
-//! per-account type-state map, `closeafter` value, and the parser-level
-//! error.
+//! JMAP Event Source push channel (RFC 8620 §7.3 & §7.1).
+//!
+//! A streaming GET against
+//! [`JmapSession::event_source_url`](crate::rfc8620::session::JmapSession::event_source_url)
+//! yields W3C SSE frames carrying [`JmapStateChange`] payloads.
 
 use alloc::{
     collections::BTreeMap,
@@ -9,6 +11,8 @@ use alloc::{
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub mod subscribe;
 
 /// Wire value of the `@type` property of a StateChange object.
 const DEFAULT_TYPE_TAG: &str = "StateChange";

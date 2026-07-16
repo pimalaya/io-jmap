@@ -37,7 +37,7 @@ use io_jmap::{
     rfc8620::{blob_upload::*, coroutine::JmapRedirectYield, session_get::*},
     rfc8621::{
         email::{JmapEmailFilter, JmapEmailImportArgs, get::*, import::*, query::*, set::*},
-        mailbox::{JmapMailboxCreate, JmapMailboxUpdate, get::*, query::*, set::*},
+        mailbox::{get::*, query::*, set::*},
         thread::get::*,
     },
 };
