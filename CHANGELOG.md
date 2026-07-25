@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-25
+
+### Added
+
+- Added an optional `schemars` feature deriving `schemars::JsonSchema` on the RFC 8621 output types, so downstream tools can generate JSON Schemas describing JMAP command output.
+
+  The feature is off by default and stays `no_std`: it pulls only schemars' `derive` (not `std`). It covers the Email object (with its addresses, headers, body parts and body values), Mailbox (with its rights), Thread, Identity, EmailSubmission (with its envelope and delivery status) and VacationResponse objects. `JmapMailboxRole`, which serializes as a plain string through a hand-written impl, is described as a string on the field rather than derived, so the schema matches the wire format.
+
 ## [0.2.0] - 2026-07-16
 
 ### Added
@@ -99,6 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.2.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.2.1..HEAD
+[0.2.1]: https://github.com/pimalaya/io-jmap/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/pimalaya/io-jmap/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/io-jmap/compare/root..v0.1.0
