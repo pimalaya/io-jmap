@@ -14,6 +14,7 @@ pub mod set;
 /// An Identity describes a sender identity the user can send email
 /// from (name, email address, signature, etc.).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapIdentity {
     /// The server-assigned ID.

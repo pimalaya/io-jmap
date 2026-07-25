@@ -13,6 +13,7 @@ pub mod set;
 
 /// A JMAP Mailbox object (RFC 8621 §2.1): a named container for emails.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailbox {
     /// The server-assigned mailbox id.
@@ -22,6 +23,7 @@ pub struct JmapMailbox {
     /// `None` for a top-level mailbox.
     pub parent_id: Option<String>,
     /// The special-use role of the mailbox, when any.
+    #[cfg_attr(feature = "schemars", schemars(with = "Option<String>"))]
     pub role: Option<JmapMailboxRole>,
     /// Position hint for display ordering (lower first).
     #[serde(default)]
@@ -48,6 +50,7 @@ pub struct JmapMailbox {
 
 /// Access rights on a mailbox (RFC 8621 §2.1).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailboxRights {
     /// May read items in the mailbox.

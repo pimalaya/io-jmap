@@ -16,6 +16,7 @@ pub const JMAP_SUBMISSION_CAPABILITY: &str = "urn:ietf:params:jmap:submission";
 
 /// The undo status of an email submission (RFC 8621 §7.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum JmapUndoStatus {
     /// The submission may still be cancelled.
@@ -40,6 +41,7 @@ impl fmt::Display for JmapUndoStatus {
 ///
 /// Represents a sending of an email from a particular identity.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailSubmission {
     /// Server-assigned ID.
@@ -66,6 +68,7 @@ pub struct JmapEmailSubmission {
 
 /// SMTP envelope for an email submission.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEnvelope {
     /// MAIL FROM address and parameters.
@@ -76,6 +79,7 @@ pub struct JmapEnvelope {
 
 /// An email address with optional SMTP parameters.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailAddressWithParameters {
     /// The email address.
@@ -86,6 +90,7 @@ pub struct JmapEmailAddressWithParameters {
 
 /// Delivery state of a single recipient (RFC 8621 §7.1.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum JmapDelivered {
     /// The message is in a local mail queue.
@@ -100,6 +105,7 @@ pub enum JmapDelivered {
 
 /// Whether the email has been displayed to the recipient (RFC 8621 §7.1.1).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum JmapDisplayed {
     /// Display status is unknown.
@@ -112,6 +118,7 @@ pub enum JmapDisplayed {
 
 /// Per-recipient delivery status from a submission.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapDeliveryStatus {
     /// The SMTP reply for this recipient.

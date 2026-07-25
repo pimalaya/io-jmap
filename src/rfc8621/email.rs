@@ -26,6 +26,7 @@ pub const JMAP_KEYWORD_DRAFT: &str = "$draft";
 
 /// A JMAP Email object (RFC 8621 §4.1).
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmail {
     /// The server-assigned email id.
@@ -85,6 +86,7 @@ pub struct JmapEmail {
 
 /// An email address (name + email pair).
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailAddress {
     /// The display name, when present.
@@ -95,6 +97,7 @@ pub struct JmapEmailAddress {
 
 /// A raw email header name-value pair.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailHeader {
     /// Field name, without trailing colon.
@@ -105,6 +108,7 @@ pub struct JmapEmailHeader {
 
 /// A MIME body part descriptor.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailBodyPart {
     /// Part id, scoped to the message.
@@ -135,6 +139,7 @@ pub struct JmapEmailBodyPart {
 
 /// The text content of a body part.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailBodyValue {
     /// The decoded text content.

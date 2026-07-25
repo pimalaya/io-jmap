@@ -12,6 +12,7 @@ pub mod get;
 /// A Thread is a set of Email objects that share the same root
 /// `Message-ID` and in-reply-to chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapThread {
     /// The server-assigned ID for this thread.

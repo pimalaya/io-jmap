@@ -15,6 +15,7 @@ pub const JMAP_VACATION_RESPONSE_CAPABILITY: &str = "urn:ietf:params:jmap:vacati
 /// There is exactly one VacationResponse object per account. Its `id`
 /// is always `"singleton"`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct JmapVacationResponse {
     /// Always `"singleton"`.
