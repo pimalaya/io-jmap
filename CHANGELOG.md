@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added I/O-free JMAP for Calendars coroutines following draft-ietf-jmap-calendars-27.
+
+  `Calendar/get`, `Calendar/changes`, `CalendarEvent/get` (with the `recurrenceOverridesBefore`, `recurrenceOverridesAfter`, `reduceParticipants` and `timeZone` extra arguments), `CalendarEvent/query` (batched with `CalendarEvent/get` via Result Reference, with server-side recurrence expansion) and `CalendarEvent/changes`. The CalendarEvent's JSCalendar payload (RFC 8984) is kept as raw JSON next to the typed `id`, `baseEventId`, `calendarIds`, `isDraft`, `isOrigin`, `utcStart` and `utcEnd` properties. Writing is left out until something writes.
+
+  The module is `calendars` rather than `rfcNNNN`, the domain being the only one of the JMAP suite still in the working group; it is renamed the day the number exists, the type names being already stable. `JmapClientStd` gained the matching `calendar_get`, `calendar_changes`, `calendar_event_get`, `calendar_event_query` and `calendar_event_changes` methods.
+
 ## [0.2.1] - 2026-07-25
 
 ### Added

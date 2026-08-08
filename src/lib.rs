@@ -15,7 +15,9 @@
 //! ## Layout: one folder per RFC
 //!
 //! The source tree mirrors how the JMAP specification itself is
-//! split, one module per RFC. [`rfc8620`] implements the core
+//! split, one module per RFC, plus [`calendars`], the one domain
+//! still in the working group and therefore named for itself until
+//! its number exists. [`rfc8620`] implements the core
 //! protocol: the session, request and response objects, the generic
 //! `Foo/get`, `Foo/set`, `Foo/query`, `Foo/changes` and
 //! `Foo/queryChanges` coroutines every data type builds on, the blob
@@ -26,7 +28,9 @@
 //! generic core coroutines with the mail capability and its own data
 //! types. [`rfc9610`] covers JMAP for Contacts: AddressBook and
 //! ContactCard, where the JSContact payload stays raw JSON, converting
-//! it being out of scope.
+//! it being out of scope. [`calendars`] covers JMAP for Calendars:
+//! Calendar and CalendarEvent, read-only for now, its JSCalendar
+//! payload staying raw JSON for the same reason.
 //!
 //! Two modules span the RFC modules and therefore live at the crate
 //! root: [`coroutine`] defines the coroutine contract every state
@@ -62,6 +66,7 @@ extern crate alloc;
 #[cfg(feature = "client")]
 extern crate std;
 
+pub mod calendars;
 #[cfg(feature = "client")]
 pub mod client;
 pub mod coroutine;

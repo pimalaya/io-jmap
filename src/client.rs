@@ -54,6 +54,10 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
+    calendars::{
+        calendar::{changes::*, get::*},
+        calendar_event::{changes::*, get::*, query::*},
+    },
     coroutine::*,
     rfc8620::{
         blob_download::*,
@@ -188,6 +192,21 @@ pub enum JmapClientStdError {
     /// The `ContactCard/copy` coroutine failed.
     #[error(transparent)]
     ContactCardCopy(#[from] JmapContactCardCopyError),
+    /// The `Calendar/get` coroutine failed.
+    #[error(transparent)]
+    CalendarGet(#[from] JmapCalendarGetError),
+    /// The `Calendar/changes` coroutine failed.
+    #[error(transparent)]
+    CalendarChanges(#[from] JmapCalendarChangesError),
+    /// The `CalendarEvent/get` coroutine failed.
+    #[error(transparent)]
+    CalendarEventGet(#[from] JmapCalendarEventGetError),
+    /// The `CalendarEvent/query` coroutine failed.
+    #[error(transparent)]
+    CalendarEventQuery(#[from] JmapCalendarEventQueryError),
+    /// The `CalendarEvent/changes` coroutine failed.
+    #[error(transparent)]
+    CalendarEventChanges(#[from] JmapCalendarEventChangesError),
     /// The underlying stream failed to read or write.
     #[error(transparent)]
     Io(#[from] io::Error),
@@ -789,6 +808,60 @@ impl JmapClientStd {
             &self.http_auth,
             from_account_id,
             cards,
+        )?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapCalendarGet`] (`Calendar/get`).
+    pub fn calendar_get(
+        &mut self,
+        opts: JmapCalendarGetOptions,
+    ) -> Result<JmapCalendarGetOutput, JmapClientStdError> {
+        let coroutine = JmapCalendarGet::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapCalendarChanges`] (`Calendar/changes`).
+    pub fn calendar_changes(
+        &mut self,
+        since_state: impl Into<String>,
+        opts: JmapCalendarChangesOptions,
+    ) -> Result<JmapChangesOutput, JmapClientStdError> {
+        let coroutine =
+            JmapCalendarChanges::new(self.session_or_err()?, &self.http_auth, since_state, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapCalendarEventGet`] (`CalendarEvent/get`).
+    pub fn calendar_event_get(
+        &mut self,
+        opts: JmapCalendarEventGetOptions,
+    ) -> Result<JmapCalendarEventGetOutput, JmapClientStdError> {
+        let coroutine = JmapCalendarEventGet::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapCalendarEventQuery`] (batched `CalendarEvent/query` +
+    /// `CalendarEvent/get`).
+    pub fn calendar_event_query(
+        &mut self,
+        opts: JmapCalendarEventQueryOptions,
+    ) -> Result<JmapCalendarEventQueryOutput, JmapClientStdError> {
+        let coroutine = JmapCalendarEventQuery::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapCalendarEventChanges`] (`CalendarEvent/changes`).
+    pub fn calendar_event_changes(
+        &mut self,
+        since_state: impl Into<String>,
+        opts: JmapCalendarEventChangesOptions,
+    ) -> Result<JmapChangesOutput, JmapClientStdError> {
+        let coroutine = JmapCalendarEventChanges::new(
+            self.session_or_err()?,
+            &self.http_auth,
+            since_state,
+            opts,
         )?;
         self.run(coroutine)
     }
