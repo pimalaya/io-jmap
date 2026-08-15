@@ -51,19 +51,19 @@ use crate::{
 #[derive(Debug, Error)]
 pub enum JmapSetError {
     /// The response carried no method response.
-    #[error("JMAP Foo/set failed: missing response in method_responses")]
+    #[error("missing response in method_responses")]
     MissingResponse,
     /// The inner send coroutine failed.
-    #[error("JMAP Foo/set failed: {0}")]
+    #[error("{0}")]
     Send(#[from] JmapSendError),
     /// The method arguments could not be serialized.
-    #[error("JMAP Foo/set failed: serialize args: {0}")]
+    #[error("serialize args: {0}")]
     SerializeArgs(#[source] serde_json::Error),
     /// The method response could not be parsed.
-    #[error("JMAP Foo/set failed: parse response: {0}")]
+    #[error("parse response: {0}")]
     ParseResponse(#[source] serde_json::Error),
     /// The server returned a method-level error.
-    #[error("JMAP Foo/set failed: {0}")]
+    #[error("{0}")]
     Method(#[from] JmapMethodError),
 }
 

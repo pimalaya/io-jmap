@@ -48,7 +48,10 @@ use std::io::{self, Read, Write};
     feature = "rustls-ring",
     feature = "native-tls"
 ))]
-use pimalaya_stream::{std::stream::StreamStd, tls::Tls};
+use pimalaya_stream::{
+    stream::{Stream, TcpConnectOptions, TlsConnectOptions},
+    tls::Tls,
+};
 use secrecy::SecretString;
 use thiserror::Error;
 use url::Url;
@@ -344,8 +347,20 @@ impl JmapClientStd {
             .ok_or_else(|| JmapClientStdError::UrlMissingHost(url.to_string()))?;
 
         let stream = match url.scheme() {
-            "http" | "jmap" => StreamStd::connect_tcp(host, url.port().unwrap_or(80))?,
-            "https" | "jmaps" => StreamStd::connect_tls(host, url.port().unwrap_or(443), tls)?,
+            "http" | "jmap" => {
+                let port = url.port().unwrap_or(80);
+                let opts = TcpConnectOptions::default();
+                Stream::connect_tcp(host, port, opts)?
+            }
+            "https" | "jmaps" => {
+                let port = url.port().unwrap_or(443);
+                let opts = TlsConnectOptions {
+                    tls: tls.clone(),
+                    ..Default::default()
+                };
+
+                Stream::connect_tls(host, port, opts)?
+            }
             scheme => {
                 return Err(JmapClientStdError::UrlUnsupportedScheme {
                     url: url.to_string(),

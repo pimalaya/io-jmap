@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-15
+
 ### Added
 
 - Added I/O-free JMAP for Calendars coroutines following draft-ietf-jmap-calendars-27.
@@ -14,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Calendar/get`, `Calendar/changes`, `CalendarEvent/get` (with the `recurrenceOverridesBefore`, `recurrenceOverridesAfter`, `reduceParticipants` and `timeZone` extra arguments), `CalendarEvent/query` (batched with `CalendarEvent/get` via Result Reference, with server-side recurrence expansion) and `CalendarEvent/changes`. The CalendarEvent's JSCalendar payload (RFC 8984) is kept as raw JSON next to the typed `id`, `baseEventId`, `calendarIds`, `isDraft`, `isOrigin`, `utcStart` and `utcEnd` properties. Writing is left out until something writes.
 
   The module is `calendars` rather than `rfcNNNN`, the domain being the only one of the JMAP suite still in the working group; it is renamed the day the number exists, the type names being already stable. `JmapClientStd` gained the matching `calendar_get`, `calendar_changes`, `calendar_event_get`, `calendar_event_query` and `calendar_event_changes` methods.
+
+### Changed
+
+- Bumped pimalaya-stream to 0.3, which drops the `sasl` module it no longer owns and whose `Read` and `Write` retry a stream reporting it is not ready. **Behaviour change.**
+
+  The `Tls` type this crate takes comes from that version, so a consumer must move with it. A blocking socket is not supposed to report `EAGAIN`, yet callers saw one surface mid-exchange and end the exchange with a bare `Resource temporarily unavailable (os error 35)`, macOS especially. The transport now retries such a failure for a minute before giving up with a `TimedOut` naming the budget, and arms a socket read deadline at connect time so a server going silent on a healthy connection stops blocking the caller forever.
+
+- Bumped io-http to 0.5.
+- Raised the minimum supported Rust version from 1.87 to 1.88, following pimalaya-stream and io-http.
+
+### Fixed
+
+- Fixed the generic method errors displaying the RFC's `Foo` placeholder as though it were a type name, which reached users as "JMAP AddressBook/changes failed: JMAP Foo/changes failed: …". `JmapGetError`, `JmapSetError`, `JmapQueryError`, `JmapChangesError` and `JmapQueryChangesError` now display only their own cause, leaving the concrete method name to the caller that knows it. The doc comments keep the `Foo/get` spelling, which is how RFC 8620 itself writes a generic method.
 
 ## [0.2.1] - 2026-07-25
 
@@ -115,7 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.2.1..HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.3.0..HEAD
+[0.3.0]: https://github.com/pimalaya/io-jmap/compare/v0.2.1..v0.3.0
 [0.2.1]: https://github.com/pimalaya/io-jmap/compare/v0.2.0..v0.2.1
 [0.2.0]: https://github.com/pimalaya/io-jmap/compare/v0.1.0..v0.2.0
 [0.1.0]: https://github.com/pimalaya/io-jmap/compare/root..v0.1.0
