@@ -12,14 +12,13 @@
 //!
 //! ```rust,no_run
 //! use io_jmap::client::JmapClientStd;
-//! use pimalaya_stream::tls::Tls;
 //! use secrecy::SecretString;
 //! use url::Url;
 //!
 //! let url: Url = "https://api.example.com/jmap/session/".parse().unwrap();
 //! let auth = SecretString::from("Bearer xyz");
 //!
-//! let mut client = JmapClientStd::connect(&url, &Tls::default(), auth).unwrap();
+//! let mut client = JmapClientStd::connect(&url, auth, Default::default()).unwrap();
 //! let session = client.session_get(&url).unwrap();
 //!
 //! println!("logged in as {}", session.username);
@@ -49,6 +48,7 @@ use std::io::{self, Read, Write};
     feature = "native-tls"
 ))]
 use pimalaya_stream::{
+    proxy::Proxy,
     stream::{Stream, TcpConnectOptions, TlsConnectOptions},
     tls::Tls,
 };
@@ -253,6 +253,27 @@ pub enum JmapClientStdError {
     MissingSession,
 }
 
+/// Optional settings for [`JmapClientStd::connect`].
+///
+/// The default uses the TLS backend default and resolves the proxy from
+/// the environment.
+#[cfg(any(
+    feature = "rustls-aws",
+    feature = "rustls-ring",
+    feature = "native-tls"
+))]
+#[derive(Clone, Debug, Default)]
+pub struct JmapClientStdConnectOptions {
+    /// How `https` and `jmaps` connections are secured. ALPN comes from
+    /// `tls.rustls.alpn` (see [`JmapClientStd::default_alpn`]); an empty
+    /// vec skips ALPN.
+    pub tls: Tls,
+    /// How the connection reaches the server: [`Proxy::System`]
+    /// resolves it from the environment, [`Proxy::None`] connects
+    /// directly.
+    pub proxy: Proxy,
+}
+
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 
 /// Std-blocking JMAP client wrapping a single boxed stream.
@@ -330,8 +351,8 @@ impl JmapClientStd {
     }
 
     /// Connects to `url`, doing a TLS handshake for `https` / `jmaps` (plain
-    /// TCP for `http` / `jmap`). ALPN comes from `tls.rustls.alpn` (see
-    /// [`Self::default_alpn`]); empty vec skips ALPN.
+    /// TCP for `http` / `jmap`). `http_auth` is the `Authorization` header
+    /// value sent with every request.
     #[cfg(any(
         feature = "rustls-aws",
         feature = "rustls-ring",
@@ -339,9 +360,11 @@ impl JmapClientStd {
     ))]
     pub fn connect(
         url: &Url,
-        tls: &Tls,
         http_auth: SecretString,
+        opts: JmapClientStdConnectOptions,
     ) -> Result<Self, JmapClientStdError> {
+        let JmapClientStdConnectOptions { tls, proxy } = opts;
+
         let host = url
             .host_str()
             .ok_or_else(|| JmapClientStdError::UrlMissingHost(url.to_string()))?;
@@ -349,13 +372,18 @@ impl JmapClientStd {
         let stream = match url.scheme() {
             "http" | "jmap" => {
                 let port = url.port().unwrap_or(80);
-                let opts = TcpConnectOptions::default();
+                let opts = TcpConnectOptions {
+                    proxy,
+                    ..Default::default()
+                };
+
                 Stream::connect_tcp(host, port, opts)?
             }
             "https" | "jmaps" => {
                 let port = url.port().unwrap_or(443);
                 let opts = TlsConnectOptions {
-                    tls: tls.clone(),
+                    tls,
+                    proxy,
                     ..Default::default()
                 };
 

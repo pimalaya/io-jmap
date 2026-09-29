@@ -15,7 +15,6 @@
 use std::env;
 
 use io_jmap::client::JmapClientStd;
-use pimalaya_stream::tls::Tls;
 use secrecy::SecretString;
 use url::Url;
 
@@ -29,7 +28,7 @@ fn main() {
 
     let http_auth = SecretString::from(env::var("JMAP_TOKEN").expect("JMAP_TOKEN env var"));
 
-    let mut client = JmapClientStd::connect(&url, &Tls::default(), http_auth).unwrap();
+    let mut client = JmapClientStd::connect(&url, http_auth, Default::default()).unwrap();
     let session = client.session_get(&url).unwrap();
 
     println!("username: {}", session.username);

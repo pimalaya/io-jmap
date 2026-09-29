@@ -49,7 +49,6 @@ use io_jmap::{
         },
     },
 };
-use pimalaya_stream::tls::Tls;
 use secrecy::SecretString;
 use url::Url;
 
@@ -63,7 +62,7 @@ fn main() {
 
     let http_auth = SecretString::from(env::var("JMAP_TOKEN").expect("JMAP_TOKEN env var"));
 
-    let mut client = JmapClientStd::connect(&url, &Tls::default(), http_auth).unwrap();
+    let mut client = JmapClientStd::connect(&url, http_auth, Default::default()).unwrap();
     client.session_get(&url).unwrap();
 
     if let Ok(push_url) = env::var("JMAP_PUSH_URL") {
