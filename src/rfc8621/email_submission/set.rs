@@ -62,7 +62,7 @@
 //! println!("{} created", out.created.len());
 //! ```
 
-use alloc::{collections::BTreeMap, string::String, vec};
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -77,6 +77,7 @@ use crate::{
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
+        email::set::JmapEmailPatch,
         email_submission::{
             JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapEmailSubmissionSetItemError,
             JmapEnvelope,
@@ -95,6 +96,34 @@ pub struct JmapEmailSubmissionCreate {
     /// SMTP envelope override (uses email headers if omitted).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub envelope: Option<JmapEnvelope>,
+}
+
+/// Arguments for an `EmailSubmission/set` request (RFC 8621 §7.5).
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapEmailSubmissionSetArgs {
+    /// Submissions to create (client ID → submission).
+    pub create: BTreeMap<String, JmapEmailSubmissionCreate>,
+    /// `Email/set` patches the server applies once a submission is
+    /// created, keyed by submission id or by `#` and its client ID.
+    ///
+    /// The usual one moves the sent email from the drafts mailbox to the
+    /// sent one and unsets its `$draft` keyword.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_success_update_email: Option<BTreeMap<String, JmapEmailPatch>>,
+    /// Emails the server destroys once their submission is created, by
+    /// submission id or by `#` and its client ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_success_destroy_email: Option<Vec<String>>,
+}
+
+impl From<BTreeMap<String, JmapEmailSubmissionCreate>> for JmapEmailSubmissionSetArgs {
+    fn from(create: BTreeMap<String, JmapEmailSubmissionCreate>) -> Self {
+        Self {
+            create,
+            ..Default::default()
+        }
+    }
 }
 
 /// Failure causes during a JMAP `EmailSubmission/set` flow.
@@ -136,11 +165,12 @@ pub struct JmapEmailSubmissionSet {
 }
 
 impl JmapEmailSubmissionSet {
-    /// `submissions` maps client-assigned IDs to [`JmapEmailSubmissionCreate`].
+    /// `args` is either the full [`JmapEmailSubmissionSetArgs`], or only
+    /// the map of client-assigned IDs to [`JmapEmailSubmissionCreate`].
     pub fn new(
         session: &JmapSession,
         http_auth: &SecretString,
-        submissions: BTreeMap<String, JmapEmailSubmissionCreate>,
+        args: impl Into<JmapEmailSubmissionSetArgs>,
     ) -> Result<Self, JmapEmailSubmissionSetError> {
         let account_id = session
             .primary_accounts
@@ -149,9 +179,9 @@ impl JmapEmailSubmissionSet {
             .unwrap_or_default();
         let api_url = &session.api_url;
 
-        let args = serde_json::to_value(EmailSubmissionSetArgs {
+        let args = serde_json::to_value(EmailSubmissionSetRequest {
             account_id,
-            create: submissions,
+            args: args.into(),
         })
         .map_err(JmapEmailSubmissionSetError::SerializeArgs)?;
 
@@ -214,10 +244,11 @@ enum State {
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EmailSubmissionSetArgs {
+struct EmailSubmissionSetRequest {
+    #[serde(rename = "accountId")]
     account_id: String,
-    create: BTreeMap<String, JmapEmailSubmissionCreate>,
+    #[serde(flatten)]
+    args: JmapEmailSubmissionSetArgs,
 }
 
 #[derive(Deserialize)]
@@ -228,4 +259,50 @@ struct EmailSubmissionSetResponse {
     created: Option<BTreeMap<String, JmapEmailSubmission>>,
     #[serde(default)]
     not_created: Option<BTreeMap<String, JmapEmailSubmissionSetItemError>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{collections::BTreeMap, string::ToString};
+
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn on_success_update_email_patches_the_created_submission() {
+        let create = BTreeMap::from([(
+            "c1".to_string(),
+            JmapEmailSubmissionCreate {
+                identity_id: "i1".into(),
+                email_id: "e1".into(),
+                envelope: None,
+            },
+        )]);
+        let patch = JmapEmailPatch::default()
+            .remove_from_mailbox("drafts")
+            .add_to_mailbox("sent")
+            .unset_keyword("$draft");
+        let request = EmailSubmissionSetRequest {
+            account_id: "a1".into(),
+            args: JmapEmailSubmissionSetArgs {
+                create,
+                on_success_update_email: Some(BTreeMap::from([("#c1".to_string(), patch)])),
+                on_success_destroy_email: None,
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(request).unwrap(),
+            json!({
+                "accountId": "a1",
+                "create": {"c1": {"identityId": "i1", "emailId": "e1"}},
+                "onSuccessUpdateEmail": {"#c1": {
+                    "mailboxIds/drafts": null,
+                    "mailboxIds/sent": true,
+                    "keywords/$draft": null,
+                }},
+            }),
+        );
+    }
 }

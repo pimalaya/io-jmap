@@ -727,10 +727,9 @@ impl JmapClientStd {
     /// Runs [`JmapEmailSubmissionSet`] (`EmailSubmission/set`).
     pub fn email_submission_set(
         &mut self,
-        submissions: BTreeMap<String, JmapEmailSubmissionCreate>,
+        args: impl Into<JmapEmailSubmissionSetArgs>,
     ) -> Result<JmapEmailSubmissionSetOutput, JmapClientStdError> {
-        let coroutine =
-            JmapEmailSubmissionSet::new(self.session_or_err()?, &self.http_auth, submissions)?;
+        let coroutine = JmapEmailSubmissionSet::new(self.session_or_err()?, &self.http_auth, args)?;
         self.run(coroutine)
     }
 
