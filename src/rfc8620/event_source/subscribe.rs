@@ -143,9 +143,14 @@ pub struct JmapEventSource {
 }
 
 impl JmapEventSource {
-    /// Builds the JMAP push subscription URL: `event_source_url` plus
-    /// `types=<csv>`, `closeafter=<v>` (see [`JmapCloseAfter`]) and
-    /// `ping=<seconds>`. `types` may be empty for "all types".
+    /// Builds the JMAP push subscription URL from `event_source_url`, with
+    /// `types` (comma-separated, empty for every type), `closeafter` (see
+    /// [`JmapCloseAfter`]) and `ping` (seconds).
+    ///
+    /// RFC 8620 §7.3 makes `event_source_url` a URI template naming the
+    /// three variables, which servers send as
+    /// `…?types={types}&closeafter={closeafter}&ping={ping}`, so they are
+    /// expanded in place. A URL naming none of them gets them appended.
     pub fn subscribe_url(
         session: &JmapSession,
         types: &[&str],
@@ -154,9 +159,22 @@ impl JmapEventSource {
     ) -> String {
         let base = &session.event_source_url;
         let types = types.join(",");
-        let sep = if base.contains('?') { '&' } else { '?' };
         let close_after = close_after.as_str();
-        format!("{base}{sep}types={types}&closeafter={close_after}&ping={ping_seconds}")
+        let ping = format!("{ping_seconds}");
+
+        let templated = ["{types}", "{closeafter}", "{ping}"]
+            .iter()
+            .any(|variable| base.contains(variable));
+
+        if templated {
+            return base
+                .replace("{types}", &types)
+                .replace("{closeafter}", close_after)
+                .replace("{ping}", &ping);
+        }
+
+        let sep = if base.contains('?') { '&' } else { '?' };
+        format!("{base}{sep}types={types}&closeafter={close_after}&ping={ping}")
     }
 
     /// Builds the subscription URL from the session and prepares the initial
@@ -391,6 +409,26 @@ mod tests {
         assert_eq!(
             url,
             "https://jmap.example.org/events?types=Email,EmailDelivery&closeafter=no&ping=30"
+        );
+    }
+
+    /// The shape Fastmail and Stalwart send, which appending to would
+    /// subscribe to the literal `{types}`.
+    #[test]
+    fn subscribe_url_expands_the_uri_template() {
+        let session = JmapSession {
+            event_source_url: "https://jmap.example.org/eventsource/?types={types}&closeafter={closeafter}&ping={ping}".into(),
+            ..synthetic_session()
+        };
+        let url = JmapEventSource::subscribe_url(
+            &session,
+            &["Email", "ContactCard"],
+            30,
+            JmapCloseAfter::State,
+        );
+        assert_eq!(
+            url,
+            "https://jmap.example.org/eventsource/?types=Email,ContactCard&closeafter=state&ping=30"
         );
     }
 

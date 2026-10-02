@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `JmapEventSource::subscribe_url` appending `types`, `closeafter` and `ping` to an `eventSourceUrl` that already names them as an RFC 8620 §7.3 URI template, which is the shape Fastmail and Stalwart send.
+
+  The request carried the literal `types={types}` first: Stalwart refused it (HTTP 400) and Fastmail held a stream that never pushed. The three variables are now expanded in place, and only a URL naming none of them gets them appended.
+
 ## [0.4.1] - 2026-10-01
 
 ### Added
