@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-02
+
 ### Fixed
 
-- Fixed `JmapEventSource::subscribe_url` appending `types`, `closeafter` and `ping` to an `eventSourceUrl` that already names them as an RFC 8620 §7.3 URI template, which is the shape Fastmail and Stalwart send.
+- Fixed `JmapEventSource::subscribe_url` ignoring the RFC 8620 §7.3 `eventSourceUrl` template.
 
-  The request carried the literal `types={types}` first: Stalwart refused it (HTTP 400) and Fastmail held a stream that never pushed. The three variables are now expanded in place, and only a URL naming none of them gets them appended.
+  The `{types}`, `{closeafter}` and `{ping}` variables are now expanded in place.
 
 ## [0.4.1] - 2026-10-01
 
@@ -152,7 +154,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.4.1..HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.4.2..HEAD
+[0.4.2]: https://github.com/pimalaya/io-jmap/compare/v0.4.1..v0.4.2
 [0.4.1]: https://github.com/pimalaya/io-jmap/compare/v0.4.0..v0.4.1
 [0.4.0]: https://github.com/pimalaya/io-jmap/compare/v0.3.0..v0.4.0
 [0.3.0]: https://github.com/pimalaya/io-jmap/compare/v0.2.1..v0.3.0
