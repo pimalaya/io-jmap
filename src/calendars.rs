@@ -7,10 +7,10 @@
 //! else, and no section number is cited anywhere in the module, a
 //! reference into a moving target being worse than none.
 //!
-//! Two data types are covered, both read-only for now: [`calendar`],
-//! the collection, and [`calendar_event`], a JSCalendar Event or Task
-//! (RFC 8984) kept as raw JSON the way [`crate::rfc9610`] keeps its
-//! JSContact payload.
+//! Two data types are covered: [`calendar`], the collection, read only
+//! for now, and [`calendar_event`], a JSCalendar Event or Task (RFC 8984)
+//! kept as raw JSON the way [`crate::rfc9610`] keeps its JSContact
+//! payload, read and written.
 
 use alloc::string::String;
 

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added the `CalendarEvent/set` coroutine (draft-ietf-jmap-calendars-27), `JmapCalendarEventSet`: create, update by patch, destroy, `ifInState` and `sendSchedulingMessages`, its per-object errors typed as `JmapCalendarEventSetItemError` (the RFC 8620 §5.3 ones and the draft's `noSupportedScheduleMethods`) with `Display`. `JmapClientStd` gained the matching `calendar_event_set` method.
+
+### Changed
+
+- **BREAKING**: `JmapMethodError` gained `StateMismatch` (RFC 8620 §5.3), which used to read as `Unknown`, so a `Foo/set` refused for its `ifInState` can be told apart. `JmapClientStdError` gained `CalendarEventSet`.
+
+### Fixed
+
+- Fixed `JmapCalendarEvent` serializing the server-set `isOrigin`, which a create must not carry (RFC 8620 §5.3).
+- Fixed every `Foo/set` failing to parse a response naming no `newState`, which Stalwart answers a call that changed nothing; it reads as empty.
+
 ## [0.5.0] - 2026-10-09
 
 ### Added

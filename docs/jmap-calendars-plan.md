@@ -1,6 +1,6 @@
 # JMAP for Calendars: bringing draft-ietf-jmap-calendars into io-jmap
 
-Status: done, read side. See [Landed](#4-landed).
+Status: done, read side and `CalendarEvent/set`. See [Landed](#4-landed).
 
 io-jmap covers the core (RFC 8620), mail (RFC 8621) and contacts (RFC 9610). Calendars are the one domain of the JMAP suite missing, and they are what a JMAP account cannot currently be used for at all: [pimalaya/android](../../android) offers JMAP for contacts only, because there is nothing here to read a calendar with.
 
@@ -92,4 +92,6 @@ Four things worth recording, all of them answers to questions §3 left open:
 - **`Calendar` properties are a closed enum, `CalendarEvent` properties are strings.** Same split as contacts and for the same reason: the JSCalendar property namespace is open, the Calendar one is not.
 - **`isVisible` is `Option<bool>`, not `bool`.** The draft defaults it to true, so the usual `#[serde(default)]` would invert the meaning of an absent value; `None` says the server was not asked rather than "hidden".
 
-Still out, unchanged from §2.3: `Calendar/set`, `CalendarEvent/set`, `CalendarEvent/copy`, `CalendarEvent/parse`, `CalendarEventNotification/*` and `ParticipantIdentity/*`. The consumer that unblocks is [pimalaya/android](../../android/docs/jmap-mail-calendar-plan.md) §3, which reads.
+Still out: `Calendar/set`, `CalendarEvent/copy`, `CalendarEvent/parse`, `CalendarEventNotification/*` and `ParticipantIdentity/*`. The consumer that unblocked the read side is [pimalaya/android](../../android/docs/jmap-mail-calendar-plan.md) §3.
+
+`CalendarEvent/set` followed once the same app wrote JMAP calendars (its cairn change `jmap-calendar-writes`): it builds its own call for `sendSchedulingMessages`, as `CalendarEvent/get` does for its extra arguments, and decodes through the generic `JmapSet`.

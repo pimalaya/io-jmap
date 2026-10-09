@@ -27,7 +27,7 @@ This library is composed of 3 feature-gated layers:
 - **Push notifications**: push subscription management and the streaming Event Source channel, yielding one state change per push frame with cooperative shutdown.
 - **Mail**: mailboxes, emails, threads, identities, email submissions and vacation responses.
 - **Contacts**: address books and contact cards, the JSContact payload kept as raw JSON.
-- **Calendars**: calendars and calendar events, read-only for now, the JSCalendar payload kept as raw JSON and recurrence expanded by the server.
+- **Calendars**: calendars read, calendar events read and written, the JSCalendar payload kept as raw JSON and recurrence expanded by the server.
 - **Full client** with **TLS** support:
   - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
   - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)
@@ -43,7 +43,7 @@ This library is composed of 3 feature-gated layers:
 | [8620] | JMAP core: session discovery, batched API requests, generic get, set, query and changes methods, blobs, push (Event Source, PushSubscription) |
 | [8621] | JMAP for Mail: Mailbox, Email, Thread, Identity, EmailSubmission, VacationResponse                                                          |
 | [9610] | JMAP for Contacts: AddressBook, ContactCard (JSContact payload kept as raw JSON)                                                            |
-| [draft] | JMAP for Calendars: Calendar, CalendarEvent (JSCalendar payload kept as raw JSON), reads only: get, changes, query                         |
+| [draft] | JMAP for Calendars: Calendar (get, changes), CalendarEvent (get, changes, query, set; JSCalendar payload kept as raw JSON)                 |
 
 [8620]: https://www.rfc-editor.org/rfc/rfc8620
 [8621]: https://www.rfc-editor.org/rfc/rfc8621

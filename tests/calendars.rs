@@ -31,10 +31,17 @@ use io_jmap::{
                 JmapCalendarEventQueryOptions, JmapCalendarEventQueryOutput,
                 JmapCalendarEventSortComparator, JmapCalendarEventSortProperty,
             },
+            set::{
+                JmapCalendarEventPatch, JmapCalendarEventSet, JmapCalendarEventSetArgs,
+                JmapCalendarEventSetError, JmapCalendarEventSetItemError,
+                JmapCalendarEventSetOutput,
+            },
         },
     },
     coroutine::*,
-    rfc8620::{changes::JmapChangesOutput, session::JmapSession},
+    rfc8620::{
+        changes::JmapChangesOutput, error::JmapMethodError, session::JmapSession, set::JmapSetError,
+    },
 };
 use secrecy::SecretString;
 
@@ -590,6 +597,235 @@ fn calendar_event_changes_ok() {
             assert!(out.has_more_changes);
             assert_eq!(out.updated, vec!["ev1".to_string()]);
         }
+        (_, other) => panic!("unexpected result: {other:?}"),
+    }
+}
+
+fn run_calendar_event_set(
+    http_response_bytes: &[u8],
+    args: JmapCalendarEventSetArgs,
+) -> Outcome<JmapCalendarEventSetOutput, JmapCalendarEventSetError> {
+    let session = make_session();
+    let token = make_token();
+    let mut coroutine = JmapCalendarEventSet::new(&session, &token, args).unwrap();
+    let mut request = String::new();
+    let mut arg: Option<&[u8]> = None;
+
+    loop {
+        match coroutine.resume(arg.take()) {
+            JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) => {
+                request.push_str(&String::from_utf8_lossy(&bytes));
+            }
+            JmapCoroutineState::Yielded(JmapYield::WantsRead) => arg = Some(http_response_bytes),
+            any => return (request, any),
+        }
+    }
+}
+
+/// The JSON body of a request the coroutine wrote, past its HTTP head.
+fn request_body(request: &str) -> serde_json::Value {
+    let (_, body) = request.split_once("\r\n\r\n").expect("an HTTP request");
+    serde_json::from_str(body).expect("a JSON body")
+}
+
+#[test]
+fn calendar_event_set_writes_all_three_verbs_under_one_state() {
+    let body = br#"{
+      "methodResponses": [
+        ["CalendarEvent/set", {
+          "oldState": "s1",
+          "newState": "s2",
+          "created": {"k0": {"id": "ev9", "uid": "server-uid"}},
+          "updated": {"ev1": null, "ev2": {"sequence": 3}},
+          "destroyed": ["ev3"]
+        }, "c0"]
+      ],
+      "sessionState": "s2"
+    }"#;
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("@type".into(), "Event".into());
+    payload.insert("title".into(), "Lunch".into());
+    let create = JmapCalendarEvent {
+        calendar_ids: [("cal1".to_string(), true)].into(),
+        is_origin: true,
+        event: payload,
+        ..Default::default()
+    };
+    let patch = |pointer: &str, value: serde_json::Value| {
+        JmapCalendarEventPatch([(pointer.to_string(), value)].into())
+    };
+    let args = JmapCalendarEventSetArgs {
+        if_in_state: Some("s1".into()),
+        create: Some([("k0".to_string(), create)].into()),
+        update: Some(
+            [
+                ("ev1".to_string(), patch("title", "Standup".into())),
+                (
+                    "ev2".to_string(),
+                    patch(
+                        "recurrenceOverrides/2026-10-08T09:00:00",
+                        serde_json::json!({"excluded": true}),
+                    ),
+                ),
+            ]
+            .into(),
+        ),
+        destroy: Some(vec!["ev3".into()]),
+        send_scheduling_messages: true,
+    };
+
+    let (request, state) = run_calendar_event_set(&http_ok(body), args);
+    let JmapCoroutineState::Complete(Ok(out)) = state else {
+        panic!("unexpected result: {state:?}");
+    };
+
+    let call = &request_body(&request)["methodCalls"][0];
+    assert_eq!(call[0], "CalendarEvent/set");
+    let sent = &call[1];
+    assert_eq!(sent["accountId"], "acc1");
+    assert_eq!(sent["ifInState"], "s1");
+    assert_eq!(sent["sendSchedulingMessages"], true);
+    assert_eq!(sent["create"]["k0"]["calendarIds"]["cal1"], true);
+    assert_eq!(sent["create"]["k0"]["title"], "Lunch");
+    assert!(
+        sent["create"]["k0"].get("isOrigin").is_none(),
+        "a server-set property is never sent: {sent}"
+    );
+    assert_eq!(sent["update"]["ev1"]["title"], "Standup");
+    assert_eq!(
+        sent["update"]["ev2"]["recurrenceOverrides/2026-10-08T09:00:00"]["excluded"],
+        true
+    );
+    assert_eq!(sent["destroy"][0], "ev3");
+
+    assert_eq!(out.new_state, "s2");
+    assert_eq!(out.created["k0"].id.as_deref(), Some("ev9"));
+    assert_eq!(out.created["k0"].event["uid"], "server-uid");
+    assert!(out.updated["ev1"].is_none());
+    assert_eq!(out.updated["ev2"].as_ref().unwrap().event["sequence"], 3);
+    assert_eq!(out.destroyed, vec!["ev3".to_string()]);
+}
+
+#[test]
+fn calendar_event_set_leaves_the_defaults_unsaid() {
+    let body = br#"{
+      "methodResponses": [
+        ["CalendarEvent/set", {"newState": "s2", "created": null, "notCreated": null}, "c0"]
+      ],
+      "sessionState": "s2"
+    }"#;
+    let args = JmapCalendarEventSetArgs {
+        destroy: Some(vec!["ev3".into()]),
+        ..Default::default()
+    };
+
+    let (request, state) = run_calendar_event_set(&http_ok(body), args);
+    let JmapCoroutineState::Complete(Ok(out)) = state else {
+        panic!("unexpected result: {state:?}");
+    };
+
+    let sent = &request_body(&request)["methodCalls"][0][1];
+    assert!(sent.get("ifInState").is_none(), "{sent}");
+    assert!(
+        sent.get("sendSchedulingMessages").is_none(),
+        "false is the draft's default: {sent}"
+    );
+    assert!(out.created.is_empty() && out.not_created.is_empty());
+}
+
+#[test]
+fn calendar_event_set_types_each_refusal() {
+    let body = br#"{
+      "methodResponses": [
+        ["CalendarEvent/set", {
+          "newState": "s1",
+          "notCreated": {
+            "k0": {"type": "noSupportedScheduleMethods", "description": "no iMIP"},
+            "k1": {"type": "overQuota"},
+            "k2": {"type": "tooLarge"},
+            "k3": {"type": "somethingNew"}
+          },
+          "notUpdated": {
+            "ev1": {"type": "invalidProperties", "properties": ["method"]},
+            "ev2": {"type": "forbidden", "description": "private event"},
+            "ev3": {"type": "rateLimit"},
+            "ev4": {"type": "invalidPatch"}
+          },
+          "notDestroyed": {"ev5": {"type": "notFound"}}
+        }, "c0"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    let (_, state) = run_calendar_event_set(&http_ok(body), JmapCalendarEventSetArgs::default());
+    let JmapCoroutineState::Complete(Ok(out)) = state else {
+        panic!("unexpected result: {state:?}");
+    };
+
+    assert!(matches!(
+        out.not_created["k0"],
+        JmapCalendarEventSetItemError::NoSupportedScheduleMethods { .. }
+    ));
+    assert_eq!(
+        out.not_created["k0"].to_string(),
+        "JMAP noSupportedScheduleMethods: no iMIP"
+    );
+    assert!(matches!(
+        out.not_created["k1"],
+        JmapCalendarEventSetItemError::OverQuota { .. }
+    ));
+    assert!(matches!(
+        out.not_created["k2"],
+        JmapCalendarEventSetItemError::TooLarge { .. }
+    ));
+    assert!(matches!(
+        out.not_created["k3"],
+        JmapCalendarEventSetItemError::Unknown
+    ));
+    assert_eq!(
+        out.not_updated["ev1"].to_string(),
+        "JMAP invalidProperties [method]"
+    );
+    assert_eq!(
+        out.not_updated["ev2"].to_string(),
+        "JMAP forbidden: private event"
+    );
+    assert!(matches!(
+        out.not_updated["ev3"],
+        JmapCalendarEventSetItemError::RateLimit { .. }
+    ));
+    assert!(matches!(
+        out.not_updated["ev4"],
+        JmapCalendarEventSetItemError::InvalidPatch { .. }
+    ));
+    assert!(matches!(
+        out.not_destroyed["ev5"],
+        JmapCalendarEventSetItemError::NotFound { .. }
+    ));
+}
+
+#[test]
+fn calendar_event_set_state_mismatch() {
+    let body = br#"{
+      "methodResponses": [
+        ["error", {"type": "stateMismatch"}, "c0"]
+      ],
+      "sessionState": "s3"
+    }"#;
+    let args = JmapCalendarEventSetArgs {
+        if_in_state: Some("s1".into()),
+        destroy: Some(vec!["ev3".into()]),
+        ..Default::default()
+    };
+
+    match run_calendar_event_set(&http_ok(body), args) {
+        (
+            _,
+            JmapCoroutineState::Complete(Err(JmapCalendarEventSetError::Set(
+                JmapSetError::Method(err @ JmapMethodError::StateMismatch { .. }),
+            ))),
+        ) => assert_eq!(err.to_string(), "JMAP stateMismatch"),
         (_, other) => panic!("unexpected result: {other:?}"),
     }
 }

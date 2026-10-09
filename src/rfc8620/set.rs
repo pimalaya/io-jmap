@@ -95,7 +95,8 @@ impl<C: Serialize, U: Serialize> Default for JmapSetOptions<C, U> {
 /// Successful terminal output of the [`JmapSet`] coroutine.
 #[derive(Clone, Debug)]
 pub struct JmapSetOutput<T> {
-    /// The new server state after the call.
+    /// The new server state after the call; empty when the server named
+    /// none, which Stalwart does when nothing changed.
     pub new_state: String,
     /// The created objects, keyed by client id.
     pub created: BTreeMap<String, T>,
@@ -221,6 +222,9 @@ struct SetArgs<C: Serialize, U: Serialize> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SetResponse<T> {
+    // NOTE: RFC 8620 §5.3 requires it, but Stalwart leaves it out of a
+    // call that changed nothing.
+    #[serde(default)]
     new_state: String,
     created: Option<BTreeMap<String, T>>,
     updated: Option<BTreeMap<String, Option<T>>>,
@@ -314,7 +318,10 @@ mod tests {
         }"#;
         let reply = build_http_reply(body);
         let err = expect_complete_err(&mut cor, &reply);
-        assert!(matches!(err, JmapSetError::Method(_)));
+        assert!(matches!(
+            err,
+            JmapSetError::Method(JmapMethodError::StateMismatch { .. })
+        ));
     }
 
     #[test]
@@ -341,6 +348,23 @@ mod tests {
         let reply = build_http_reply(body);
         let err = expect_complete_err(&mut cor, &reply);
         assert!(matches!(err, JmapSetError::ParseResponse(_)));
+    }
+
+    #[test]
+    fn a_refusal_naming_no_new_state_still_reads() {
+        let mut cor = make_set();
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        // NOTE: what Stalwart answers a call that changed nothing.
+        let body = br#"{
+            "methodResponses": [["Mailbox/set", {"accountId":"a1","notCreated":{"c1":{"type":"invalidProperties"}}}, "c0"]],
+            "sessionState": "s1"
+        }"#;
+        let reply = build_http_reply(body);
+        let out = expect_complete_ok(&mut cor, &reply);
+        assert_eq!(out.new_state, "");
+        assert!(out.not_created.contains_key("c1"));
     }
 
     #[test]

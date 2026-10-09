@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub mod changes;
 pub mod get;
 pub mod query;
+pub mod set;
 
 /// A JMAP CalendarEvent object (draft-ietf-jmap-calendars): a JSCalendar
 /// Event or Task (RFC 8984) extended with the JMAP properties below.
@@ -37,8 +38,9 @@ pub struct JmapCalendarEvent {
     #[serde(default)]
     pub is_draft: bool,
     /// Whether this account is the origin of the event, as opposed to a
-    /// copy received through scheduling (server-set).
-    #[serde(default)]
+    /// copy received through scheduling (server-set, so never serialized:
+    /// a create must not carry it, RFC 8620 §5.3).
+    #[serde(default, skip_serializing)]
     pub is_origin: bool,
     /// The event's start in UTC, computed by the server so a client can
     /// sort without expanding recurrence itself; fetch-time only.

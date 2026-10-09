@@ -97,6 +97,12 @@ pub enum JmapMethodError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// The `ifInState` of a `Foo/set` no longer matches the server's state
+    /// (RFC 8620 §5.3): nothing was changed.
+    StateMismatch {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// Any error type this library does not know about.
     #[serde(other)]
     Unknown,
@@ -206,6 +212,7 @@ impl fmt::Display for JmapMethodError {
                 }
                 Ok(())
             }
+            Self::StateMismatch { description } => write_described(f, "stateMismatch", description),
             Self::Unknown => write!(f, "JMAP unknown error"),
         }
     }
