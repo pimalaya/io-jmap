@@ -64,6 +64,8 @@
 //! println!("{} created", out.created.len());
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -74,7 +76,10 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        JMAP_CORE_CAPABILITY,
+        error::{JmapMethodError, write_described, write_properties},
+        request::JmapBatch,
+        send::*,
         session::JmapSession,
     },
     rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
@@ -121,6 +126,20 @@ pub enum JmapEmailImportItemError {
     /// Catch-all for set errors not modelled above.
     #[serde(other)]
     Unknown,
+}
+
+impl fmt::Display for JmapEmailImportItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidEmail { description } => write_described(f, "invalidEmail", description),
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Unknown => write!(f, "JMAP unknown error"),
+        }
+    }
 }
 
 /// Failure causes during a JMAP `Email/import` flow.
@@ -218,8 +237,8 @@ impl JmapCoroutine for JmapEmailImport {
                 match serde_json::from_value::<EmailImportResponse>(args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailImportOutput {
                         new_state: r.new_state,
-                        created: r.created,
-                        not_created: r.not_created,
+                        created: r.created.unwrap_or_default(),
+                        not_created: r.not_created.unwrap_or_default(),
                         keep_alive,
                     })),
                     Err(err) => {
@@ -247,7 +266,70 @@ struct EmailImportArgs {
 struct EmailImportResponse {
     new_state: String,
     #[serde(default)]
-    created: BTreeMap<String, JmapEmail>,
+    created: Option<BTreeMap<String, JmapEmail>>,
     #[serde(default)]
-    not_created: BTreeMap<String, JmapEmailImportItemError>,
+    not_created: Option<BTreeMap<String, JmapEmailImportItemError>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::{format, string::ToString};
+
+    use super::*;
+
+    /// Fastmail answers `notCreated: null` when every import landed, which
+    /// RFC 8620 §5.3 allows of a create map.
+    #[test]
+    fn a_null_map_reads_as_empty() {
+        let session: JmapSession = serde_json::from_value(serde_json::json!({
+            "username": "",
+            "accounts": {},
+            "primaryAccounts": { "urn:ietf:params:jmap:mail": "a1" },
+            "capabilities": {},
+            "apiUrl": "https://api.example.com/jmap/",
+            "downloadUrl": "",
+            "uploadUrl": "",
+            "eventSourceUrl": "",
+            "state": "",
+        }))
+        .unwrap();
+        let import = JmapEmailImportArgs {
+            blob_id: "b1".to_string(),
+            mailbox_ids: BTreeMap::from([("drafts".to_string(), true)]),
+            keywords: None,
+            received_at: None,
+        };
+        let emails = BTreeMap::from([("m0".to_string(), import)]);
+        let mut coroutine =
+            JmapEmailImport::new(&session, &SecretString::from("Bearer t"), emails).unwrap();
+
+        let body = br#"{
+            "methodResponses": [["Email/import", {
+                "accountId": "a1", "oldState": "e1", "newState": "e2",
+                "created": {"m0": {"id": "E1", "blobId": "b1"}}, "notCreated": null
+            }, "c0"]],
+            "sessionState": "s1"
+        }"#;
+        let mut reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        reply.extend_from_slice(body);
+
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsWrite(_))
+        ));
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsRead)
+        ));
+        let JmapCoroutineState::Complete(Ok(out)) = coroutine.resume(Some(&reply)) else {
+            panic!("the import did not complete");
+        };
+
+        assert!(out.not_created.is_empty());
+        assert_eq!(out.created["m0"].id.as_deref(), Some("E1"));
+    }
 }

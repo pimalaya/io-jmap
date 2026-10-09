@@ -6,6 +6,8 @@ use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
+use crate::rfc8620::error::{write_described, write_properties};
+
 pub mod cancel;
 pub mod get;
 pub mod query;
@@ -165,12 +167,38 @@ pub enum JmapEmailSubmissionSetItemError {
         description: Option<String>,
     },
     /// The submission cannot be unsent (RFC 8621 §7.5).
+    #[serde(alias = "cannotUnsend")]
     CannotUnsendMessage {
         /// Optional human-readable detail.
         description: Option<String>,
     },
     /// The email object was not a valid message (RFC 8621 §7.5).
     InvalidEmail {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// The email is larger than the server sends (RFC 8621 §7.5).
+    TooLarge {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The largest email the server sends, in octets.
+        #[serde(default, rename = "maxSize")]
+        max_size: Option<u64>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the submission is not allowed.
+    Forbidden {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the submission would exceed a
+    /// quota.
+    OverQuota {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): too many submissions lately,
+    /// to try again later.
+    RateLimit {
         /// Optional human-readable detail.
         description: Option<String>,
     },
@@ -190,4 +218,94 @@ pub enum JmapEmailSubmissionSetItemError {
     /// Catch-all for set errors not modelled above.
     #[serde(other)]
     Unknown,
+}
+
+impl fmt::Display for JmapEmailSubmissionSetItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooManyRecipients { description } => {
+                write_described(f, "tooManyRecipients", description)
+            }
+            Self::NoRecipients { description } => write_described(f, "noRecipients", description),
+            Self::InvalidRecipients { description } => {
+                write_described(f, "invalidRecipients", description)
+            }
+            Self::ForbiddenFrom { description } => write_described(f, "forbiddenFrom", description),
+            Self::ForbiddenMailFrom { description } => {
+                write_described(f, "forbiddenMailFrom", description)
+            }
+            Self::ForbiddenToSend { description } => {
+                write_described(f, "forbiddenToSend", description)
+            }
+            Self::CannotUnsendMessage { description } => {
+                write_described(f, "cannotUnsend", description)
+            }
+            Self::InvalidEmail { description } => write_described(f, "invalidEmail", description),
+            Self::TooLarge {
+                description,
+                max_size,
+            } => {
+                write_described(f, "tooLarge", description)?;
+                match max_size {
+                    Some(max) => write!(f, " (at most {max} octets)"),
+                    None => Ok(()),
+                }
+            }
+            Self::Forbidden { description } => write_described(f, "forbidden", description),
+            Self::OverQuota { description } => write_described(f, "overQuota", description),
+            Self::RateLimit { description } => write_described(f, "rateLimit", description),
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Unknown => write!(f, "JMAP unknown error"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::ToString;
+
+    use serde_json::{from_value, json};
+
+    use super::JmapEmailSubmissionSetItemError;
+
+    #[test]
+    fn a_refusal_reads_as_its_type_and_description() {
+        let refused: JmapEmailSubmissionSetItemError = from_value(json!({
+            "type": "forbiddenFrom",
+            "description": "Not your address",
+        }))
+        .unwrap();
+
+        assert_eq!(refused.to_string(), "JMAP forbiddenFrom: Not your address");
+    }
+
+    #[test]
+    fn too_large_keeps_the_size_the_server_sends() {
+        let refused: JmapEmailSubmissionSetItemError =
+            from_value(json!({ "type": "tooLarge", "maxSize": 1000 })).unwrap();
+
+        assert!(matches!(
+            refused,
+            JmapEmailSubmissionSetItemError::TooLarge {
+                max_size: Some(1000),
+                ..
+            }
+        ));
+        assert_eq!(refused.to_string(), "JMAP tooLarge (at most 1000 octets)");
+    }
+
+    #[test]
+    fn the_rfc_spelling_of_cannot_unsend_is_read() {
+        let refused: JmapEmailSubmissionSetItemError =
+            from_value(json!({ "type": "cannotUnsend" })).unwrap();
+
+        assert!(matches!(
+            refused,
+            JmapEmailSubmissionSetItemError::CannotUnsendMessage { .. }
+        ));
+    }
 }

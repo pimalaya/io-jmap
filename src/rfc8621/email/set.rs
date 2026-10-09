@@ -55,6 +55,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, format, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -64,7 +66,14 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        error::{write_described, write_properties},
+        request::JmapBatch,
+        send::*,
+        session::JmapSession,
+        set::*,
+    },
     rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
 };
 
@@ -210,6 +219,29 @@ pub enum JmapEmailSetItemError {
     /// Catch-all for set errors not modelled above.
     #[serde(other)]
     Unknown,
+}
+
+impl fmt::Display for JmapEmailSetItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TooManyKeywords { description } => {
+                write_described(f, "tooManyKeywords", description)
+            }
+            Self::TooManyMailboxes { description } => {
+                write_described(f, "tooManyMailboxes", description)
+            }
+            Self::BlobNotFound { description } => write_described(f, "blobNotFound", description),
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidPatch { description } => write_described(f, "invalidPatch", description),
+            Self::WillDestroy { description } => write_described(f, "willDestroy", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Singleton { description } => write_described(f, "singleton", description),
+            Self::Unknown => write!(f, "JMAP unknown error"),
+        }
+    }
 }
 
 /// Failure causes during a JMAP `Email/set` flow.

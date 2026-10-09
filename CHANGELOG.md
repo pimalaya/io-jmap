@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `JmapCoreCapability`, the RFC 8620 §2 server limits (`maxSizeUpload`, `maxObjectsInGet`, `maxObjectsInSet`…), read by `JmapSession::core_capability`.
+- Added `JmapSession::resolve_upload_url` and `JmapSession::resolve_download_url`, filling the RFC 8620 §6 templates with their variables percent-encoded.
+- Added `Display` to `JmapEmailSetItemError`, `JmapEmailImportItemError`, `JmapEmailSubmissionSetItemError` and `JmapContactCardSetItemError`, reading as the wire type and the server's description.
+
+### Changed
+
+- **BREAKING**: `JmapEmailSubmissionSetItemError` gained `TooLarge` (RFC 8621 §7.5, with its `maxSize`), `Forbidden`, `OverQuota` and `RateLimit` (RFC 8620 §5.3), which used to read as `Unknown`, so a refusal for good can be told from one to retry.
+
+### Fixed
+
+- Fixed `JmapEmailSubmissionSetItemError::CannotUnsendMessage` missing the RFC 8621 §7.5 spelling `cannotUnsend`.
+- Fixed `Email/import`, `Email/copy` and `ContactCard/copy` failing to parse a `created` or `notCreated` the server answers as `null`, which RFC 8620 §5.3 allows and Fastmail does whenever nothing was refused.
+
 ## [0.4.2] - 2026-10-02
 
 ### Fixed

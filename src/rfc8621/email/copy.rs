@@ -220,8 +220,8 @@ impl JmapCoroutine for JmapEmailCopy {
                 match serde_json::from_value::<EmailCopyResponse>(args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailCopyOutput {
                         new_state: r.new_state,
-                        created: r.created,
-                        not_created: r.not_created,
+                        created: r.created.unwrap_or_default(),
+                        not_created: r.not_created.unwrap_or_default(),
                         keep_alive,
                     })),
                     Err(err) => {
@@ -250,7 +250,7 @@ struct EmailCopyArgs {
 struct EmailCopyResponse {
     new_state: String,
     #[serde(default)]
-    created: BTreeMap<String, JmapEmail>,
+    created: Option<BTreeMap<String, JmapEmail>>,
     #[serde(default)]
-    not_created: BTreeMap<String, JmapEmailCopyItemError>,
+    not_created: Option<BTreeMap<String, JmapEmailCopyItemError>>,
 }

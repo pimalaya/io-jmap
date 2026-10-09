@@ -213,6 +213,38 @@ impl fmt::Display for JmapMethodError {
 
 impl Error for JmapMethodError {}
 
+/// Writes one wire error type the way [`JmapMethodError`] displays its
+/// own, followed by its description when the server gave one; the
+/// per-object `Foo/set` errors display through it.
+pub(crate) fn write_described(
+    f: &mut fmt::Formatter<'_>,
+    kind: &str,
+    description: &Option<String>,
+) -> fmt::Result {
+    write!(f, "JMAP {kind}")?;
+    if let Some(description) = description {
+        write!(f, ": {description}")?;
+    }
+    Ok(())
+}
+
+/// Writes an `invalidProperties` error the way [`JmapMethodError`]
+/// displays its own: the properties named, then the description.
+pub(crate) fn write_properties(
+    f: &mut fmt::Formatter<'_>,
+    description: &Option<String>,
+    properties: &[String],
+) -> fmt::Result {
+    write!(f, "JMAP invalidProperties")?;
+    if !properties.is_empty() {
+        write!(f, " [{}]", properties.join(", "))?;
+    }
+    if let Some(description) = description {
+        write!(f, ": {description}")?;
+    }
+    Ok(())
+}
+
 /// Per-object error returned in `Foo/set` responses (RFC 8620 §5.3).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

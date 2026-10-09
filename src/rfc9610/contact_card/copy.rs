@@ -210,8 +210,8 @@ impl JmapCoroutine for JmapContactCardCopy {
                 match serde_json::from_value::<ContactCardCopyResponse>(args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapContactCardCopyOutput {
                         new_state: r.new_state,
-                        created: r.created,
-                        not_created: r.not_created,
+                        created: r.created.unwrap_or_default(),
+                        not_created: r.not_created.unwrap_or_default(),
                         keep_alive,
                     })),
                     Err(err) => JmapCoroutineState::Complete(Err(
@@ -240,7 +240,7 @@ struct ContactCardCopyArgs {
 struct ContactCardCopyResponse {
     new_state: String,
     #[serde(default)]
-    created: BTreeMap<String, JmapContactCard>,
+    created: Option<BTreeMap<String, JmapContactCard>>,
     #[serde(default)]
-    not_created: BTreeMap<String, JmapContactCardCopyItemError>,
+    not_created: Option<BTreeMap<String, JmapContactCardCopyItemError>>,
 }

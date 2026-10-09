@@ -474,8 +474,8 @@ impl JmapClientStd {
         Ok(out.response)
     }
 
-    /// Uploads a blob to `upload_url` (RFC 8620 §6.1). The caller must resolve
-    /// the session's `uploadUrl` template (e.g. substitute `{accountId}`).
+    /// Uploads a blob to `upload_url` (RFC 8620 §6.1). The caller resolves
+    /// the session's `uploadUrl` template ([`JmapSession::resolve_upload_url`]).
     /// A 3xx response terminates with [`JmapClientStdError::UnexpectedRedirect`].
     pub fn blob_upload(
         &mut self,
@@ -506,8 +506,9 @@ impl JmapClientStd {
         }
     }
 
-    /// Downloads a blob from `download_url` (RFC 8620 §6.2). The caller must
-    /// resolve the session's `downloadUrl` template. A 3xx response terminates
+    /// Downloads a blob from `download_url` (RFC 8620 §6.2). The caller
+    /// resolves the session's `downloadUrl` template
+    /// ([`JmapSession::resolve_download_url`]). A 3xx response terminates
     /// with [`JmapClientStdError::UnexpectedRedirect`].
     pub fn blob_download(&mut self, download_url: &Url) -> Result<Vec<u8>, JmapClientStdError> {
         let mut coroutine = JmapBlobDownload::new(&self.http_auth, download_url);

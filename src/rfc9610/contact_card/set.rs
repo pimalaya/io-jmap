@@ -54,6 +54,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -63,7 +65,14 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        error::{write_described, write_properties},
+        request::JmapBatch,
+        send::*,
+        session::JmapSession,
+        set::*,
+    },
     rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
 
@@ -117,6 +126,23 @@ pub enum JmapContactCardSetItemError {
     /// Catch-all for set errors not modelled above.
     #[serde(other)]
     Unknown,
+}
+
+impl fmt::Display for JmapContactCardSetItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BlobNotFound { description } => write_described(f, "blobNotFound", description),
+            Self::Forbidden { description } => write_described(f, "forbidden", description),
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidPatch { description } => write_described(f, "invalidPatch", description),
+            Self::WillDestroy { description } => write_described(f, "willDestroy", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Unknown => write!(f, "JMAP unknown error"),
+        }
+    }
 }
 
 /// Failure causes during a JMAP `ContactCard/set` flow.
