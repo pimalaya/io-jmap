@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-09
+
 ### Added
 
 - Added the `CalendarEvent/set` coroutine (draft-ietf-jmap-calendars-27), `JmapCalendarEventSet`: create, update by patch, destroy, `ifInState` and `sendSchedulingMessages`, its per-object errors typed as `JmapCalendarEventSetItemError` (the RFC 8620 §5.3 ones and the draft's `noSupportedScheduleMethods`) with `Display`. `JmapClientStd` gained the matching `calendar_event_set` method.
@@ -184,7 +186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.5.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.6.0..HEAD
+[0.6.0]: https://github.com/pimalaya/io-jmap/compare/v0.5.0..v0.6.0
 [0.5.0]: https://github.com/pimalaya/io-jmap/compare/v0.4.2..v0.5.0
 [0.4.2]: https://github.com/pimalaya/io-jmap/compare/v0.4.1..v0.4.2
 [0.4.1]: https://github.com/pimalaya/io-jmap/compare/v0.4.0..v0.4.1
