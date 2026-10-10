@@ -103,6 +103,25 @@ pub enum JmapMethodError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// The `anchor` of a `Foo/query` is not in the results (RFC 8620
+    /// §5.5).
+    AnchorNotFound {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// A `Foo/query` sort is unsupported by the server (RFC 8620 §5.5),
+    /// e.g. an `Email/query` property missing from the mail capability's
+    /// `emailQuerySortOptions` (RFC 8621 §1.3.1).
+    UnsupportedSort {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// A `Foo/query` filter is unsupported by the server (RFC 8620
+    /// §5.5).
+    UnsupportedFilter {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// Any error type this library does not know about.
     #[serde(other)]
     Unknown,
@@ -213,6 +232,15 @@ impl fmt::Display for JmapMethodError {
                 Ok(())
             }
             Self::StateMismatch { description } => write_described(f, "stateMismatch", description),
+            Self::AnchorNotFound { description } => {
+                write_described(f, "anchorNotFound", description)
+            }
+            Self::UnsupportedSort { description } => {
+                write_described(f, "unsupportedSort", description)
+            }
+            Self::UnsupportedFilter { description } => {
+                write_described(f, "unsupportedFilter", description)
+            }
             Self::Unknown => write!(f, "JMAP unknown error"),
         }
     }

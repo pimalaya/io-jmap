@@ -65,6 +65,8 @@
 //! println!("{} emails", out.emails.len());
 //! ```
 
+use core::ops::Not;
+
 use alloc::{string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -203,6 +205,16 @@ impl JmapEmailComparator {
             keyword: None,
         }
     }
+
+    /// Sort by `sentAt` descending (newest `Date` header first).
+    pub fn sent_at_desc() -> Self {
+        Self {
+            property: JmapEmailSortProperty::SentAt,
+            is_ascending: Some(false),
+            collation: None,
+            keyword: None,
+        }
+    }
 }
 
 /// Failure causes during a batched JMAP `Email/query` + `Email/get` flow.
@@ -232,7 +244,7 @@ pub enum JmapEmailQueryError {
 }
 
 /// Options for [`JmapEmailQuery::new`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct JmapEmailQueryOptions {
     /// Filter criteria; `None` matches all emails.
     pub filter: Option<JmapFilter<JmapEmailFilter>>,
@@ -240,10 +252,39 @@ pub struct JmapEmailQueryOptions {
     pub sort: Option<Vec<JmapEmailComparator>>,
     /// Zero-based offset into the result list.
     pub position: Option<u64>,
+    /// Id of the email to anchor the result window on, replacing
+    /// `position` (RFC 8620 §5.5).
+    pub anchor: Option<String>,
+    /// Offset of the result window relative to the anchor; ignored
+    /// without one.
+    pub anchor_offset: Option<i64>,
     /// Max number of emails to return.
     pub limit: Option<u64>,
+    /// Ask the server to compute `total`. On by default, unlike
+    /// [`JmapQueryOptions`](crate::rfc8620::query::JmapQueryOptions), for
+    /// it used to be always sent.
+    pub calculate_total: bool,
+    /// Return only the first matching email of each thread (RFC 8621
+    /// §4.4). Off by default.
+    pub collapse_threads: bool,
     /// Email properties to fetch; `None` returns all.
     pub properties: Option<Vec<JmapEmailProperty>>,
+}
+
+impl Default for JmapEmailQueryOptions {
+    fn default() -> Self {
+        Self {
+            filter: None,
+            sort: None,
+            position: None,
+            anchor: None,
+            anchor_offset: None,
+            limit: None,
+            calculate_total: true,
+            collapse_threads: false,
+            properties: None,
+        }
+    }
 }
 
 /// Successful terminal output of [`JmapEmailQuery`].
@@ -285,8 +326,11 @@ impl JmapEmailQuery {
             filter: opts.filter.as_ref(),
             sort: opts.sort.as_deref(),
             position: opts.position,
+            anchor: opts.anchor.as_deref(),
+            anchor_offset: opts.anchor_offset,
             limit: opts.limit,
-            calculate_total: true,
+            calculate_total: opts.calculate_total,
+            collapse_threads: opts.collapse_threads,
         };
 
         let mut batch = JmapBatch::new();
@@ -403,8 +447,14 @@ struct EmailQueryArgs<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     position: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    anchor: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_offset: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     limit: Option<u64>,
     calculate_total: bool,
+    #[serde(skip_serializing_if = "Not::not")]
+    collapse_threads: bool,
 }
 
 #[derive(Serialize)]

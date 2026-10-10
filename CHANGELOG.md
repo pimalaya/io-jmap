@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `anchor`, `anchorOffset` (RFC 8620 §5.5), `calculateTotal` and `collapseThreads` (RFC 8621 §4.4) to `JmapEmailQueryOptions`. `calculate_total` defaults to `true`, as it was always sent.
+- Added `JmapEmailComparator::sent_at_desc`.
+- Added `JmapMailCapability`, the RFC 8621 §1.3.1 account limits (`maxMailboxesPerEmail`, `maxMailboxDepth`, `emailQuerySortOptions`…), read by `JmapSession::mail_capability`.
+
+### Changed
+
+- **BREAKING**: `JmapMethodError` gained `AnchorNotFound`, `UnsupportedSort` and `UnsupportedFilter` (RFC 8620 §5.5), which used to read as `Unknown`. `JmapEmailQueryOptions` literals without `..Default::default()` need the new fields.
+
 ## [0.6.0] - 2026-10-09
 
 ### Added

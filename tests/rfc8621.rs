@@ -5,12 +5,13 @@
 
 use io_jmap::{
     coroutine::*,
-    rfc8620::session::JmapSession,
+    rfc8620::{error::JmapMethodError, session::JmapSession},
     rfc8621::{
         email::{
             get::{JmapEmailGet, JmapEmailGetError, JmapEmailGetOptions, JmapEmailGetOutput},
             query::{
-                JmapEmailQuery, JmapEmailQueryError, JmapEmailQueryOptions, JmapEmailQueryOutput,
+                JmapEmailComparator, JmapEmailQuery, JmapEmailQueryError, JmapEmailQueryOptions,
+                JmapEmailQueryOutput,
             },
         },
         mailbox::{
@@ -29,6 +30,7 @@ use io_jmap::{
     },
 };
 use secrecy::SecretString;
+use serde_json::Value;
 
 /// A minimal session object with a single mail account `acc1`.
 const SESSION_JSON: &[u8] = br#"{
@@ -541,6 +543,93 @@ fn email_query_method_error() {
         }
         other => panic!("unexpected result: {other:?}"),
     }
+}
+
+#[test]
+fn email_query_anchor_not_found() {
+    let body = br#"{
+      "methodResponses": [
+        ["error", {"type": "anchorNotFound"}, "c0"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    match run_email_query(&http_ok(body)) {
+        JmapCoroutineState::Complete(Err(JmapEmailQueryError::QueryMethod(
+            JmapMethodError::AnchorNotFound { .. },
+        ))) => {}
+        other => panic!("unexpected result: {other:?}"),
+    }
+}
+
+#[test]
+fn email_query_unsupported_sort() {
+    let body = br#"{
+      "methodResponses": [
+        ["error", {"type": "unsupportedSort", "description": "size"}, "c0"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    match run_email_query(&http_ok(body)) {
+        JmapCoroutineState::Complete(Err(JmapEmailQueryError::QueryMethod(
+            err @ JmapMethodError::UnsupportedSort { .. },
+        ))) => assert_eq!(err.to_string(), "JMAP unsupportedSort: size"),
+        other => panic!("unexpected result: {other:?}"),
+    }
+}
+
+#[test]
+fn email_query_default_args() {
+    let args = email_query_args(JmapEmailQueryOptions::default());
+
+    assert_eq!(args["calculateTotal"], true);
+    assert!(args.get("anchor").is_none());
+    assert!(args.get("anchorOffset").is_none());
+    assert!(args.get("collapseThreads").is_none());
+}
+
+#[test]
+fn email_query_window_args() {
+    let args = email_query_args(JmapEmailQueryOptions {
+        sort: Some(vec![JmapEmailComparator::sent_at_desc()]),
+        anchor: Some("email1".into()),
+        anchor_offset: Some(-5),
+        limit: Some(20),
+        calculate_total: false,
+        collapse_threads: true,
+        ..Default::default()
+    });
+
+    assert_eq!(args["sort"][0]["property"], "sentAt");
+    assert_eq!(args["sort"][0]["isAscending"], false);
+    assert_eq!(args["anchor"], "email1");
+    assert_eq!(args["anchorOffset"], -5);
+    assert_eq!(args["limit"], 20);
+    assert_eq!(args["calculateTotal"], false);
+    assert_eq!(args["collapseThreads"], true);
+}
+
+/// Returns the `Email/query` arguments of the request the coroutine
+/// writes.
+fn email_query_args(opts: JmapEmailQueryOptions) -> Value {
+    let session = make_session();
+    let token = make_token();
+    let mut coroutine = JmapEmailQuery::new(&session, &token, opts).unwrap();
+
+    let JmapCoroutineState::Yielded(JmapYield::WantsWrite(bytes)) = coroutine.resume(None) else {
+        panic!("expected WantsWrite");
+    };
+
+    let start = bytes
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .expect("HTTP head end")
+        + 4;
+    let request: Value = serde_json::from_slice(&bytes[start..]).unwrap();
+
+    assert_eq!(request["methodCalls"][0][0], "Email/query");
+    request["methodCalls"][0][1].clone()
 }
 
 #[test]
