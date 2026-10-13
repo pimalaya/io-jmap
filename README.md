@@ -28,6 +28,8 @@ This library is composed of 3 feature-gated layers:
 - **Mail**: mailboxes, emails, threads, identities, email submissions and vacation responses.
 - **Contacts**: address books and contact cards, the JSContact payload kept as raw JSON.
 - **Calendars**: calendars read, calendar events read and written, the JSCalendar payload kept as raw JSON and recurrence expanded by the server.
+- **vCard conversion** of contact cards, both ways (requires `vcard` feature)
+- **iCalendar conversion** of calendar objects into calendar events (requires `ical` feature)
 - **Full client** with **TLS** support:
   - [Rustls](https://crates.io/crates/rustls) with ring crypto (requires `rustls-ring` feature, enabled by default)
   - [Rustls](https://crates.io/crates/rustls) with aws crypto (requires `rustls-aws` feature)

@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 pub mod changes;
 pub mod get;
+#[cfg(feature = "ical")]
+pub mod ical;
 pub mod query;
 pub mod set;
 
@@ -13,10 +15,9 @@ pub mod set;
 /// Event or Task (RFC 8984) extended with the JMAP properties below.
 ///
 /// The JSCalendar payload is kept as raw JSON in
-/// [`JmapCalendarEvent::event`]; modelling or converting it (e.g. to
-/// iCalendar per RFC 5545) is out of scope for this crate. The
-/// draft-defined JSCalendar extensions stay in there too, `mayInviteSelf`
-/// and `hideAttendees` being event content rather than JMAP plumbing.
+/// [`JmapCalendarEvent::event`], converted from iCalendar (RFC 5545) by the
+/// `ical` feature. The draft-defined JSCalendar extensions stay in there
+/// too, `mayInviteSelf` and `hideAttendees` being event content.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapCalendarEvent {

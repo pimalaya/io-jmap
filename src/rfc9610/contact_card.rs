@@ -9,13 +9,14 @@ pub mod copy;
 pub mod get;
 pub mod query;
 pub mod set;
+#[cfg(feature = "vcard")]
+pub mod vcard;
 
 /// A JMAP ContactCard object (RFC 9610 §3): a JSContact Card (RFC 9553 §2)
 /// extended with the JMAP `id` and `addressBookIds` properties.
 ///
-/// The JSContact payload is kept as raw JSON in [`JmapContactCard::card`];
-/// modelling or converting it (e.g. to vCard per RFC 9555) is out of scope
-/// for this crate.
+/// The JSContact payload is kept as raw JSON in [`JmapContactCard::card`],
+/// converted to and from vCard (RFC 9555) by the `vcard` feature.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapContactCard {

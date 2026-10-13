@@ -27,10 +27,14 @@
 //! EmailSubmission and VacationResponse, each folder wrapping the
 //! generic core coroutines with the mail capability and its own data
 //! types. [`rfc9610`] covers JMAP for Contacts: AddressBook and
-//! ContactCard, where the JSContact payload stays raw JSON, converting
-//! it being out of scope. [`calendars`] covers JMAP for Calendars:
-//! Calendar and CalendarEvent, read-only for now, its JSCalendar
-//! payload staying raw JSON for the same reason.
+//! ContactCard, its JSContact payload kept as raw JSON. [`calendars`]
+//! covers JMAP for Calendars: Calendar, read only, and CalendarEvent,
+//! read and written, its JSCalendar payload kept the same way.
+//!
+//! Two optional features convert those payloads, the way the vendor
+//! crates convert theirs: `vcard` converts a ContactCard to and from
+//! vCard (RFC 9555), and `ical` an iCalendar object to a CalendarEvent,
+//! taking it already parsed so the caller bounds untrusted input.
 //!
 //! Two modules span the RFC modules and therefore live at the crate
 //! root: [`coroutine`] defines the coroutine contract every state

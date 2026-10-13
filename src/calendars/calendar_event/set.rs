@@ -69,10 +69,11 @@
 
 use core::fmt;
 
-use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
+use alloc::{collections::BTreeMap, format, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::{
@@ -95,6 +96,48 @@ use crate::{
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(transparent)]
 pub struct JmapCalendarEventPatch(pub BTreeMap<String, serde_json::Value>);
+
+impl JmapCalendarEventPatch {
+    /// The patch from the JSCalendar members of `base` to those of `staged`,
+    /// never nulling `uid`.
+    ///
+    /// Each top-level member differing goes whole, a removed one as a null.
+    /// `recurrenceOverrides` goes per recurrence id, each override whole, an
+    /// inner null being a removal (the draft's patching section).
+    pub fn diff(staged: &Map<String, Value>, base: &Map<String, Value>) -> Self {
+        const OVERRIDES: &str = "recurrenceOverrides";
+        let mut patch = BTreeMap::new();
+
+        for (key, value) in staged {
+            if base.get(key) == Some(value) {
+                continue;
+            }
+            if key == OVERRIDES
+                && let (Value::Object(overrides), Some(Value::Object(held))) =
+                    (value, base.get(key))
+            {
+                for (id, over) in overrides {
+                    if held.get(id) != Some(over) {
+                        patch.insert(format!("{OVERRIDES}/{}", pointer(id)), over.clone());
+                    }
+                }
+                for id in held.keys().filter(|id| !overrides.contains_key(*id)) {
+                    patch.insert(format!("{OVERRIDES}/{}", pointer(id)), Value::Null);
+                }
+                continue;
+            }
+            patch.insert(key.clone(), value.clone());
+        }
+
+        for key in base.keys() {
+            if !staged.contains_key(key) && key != "uid" {
+                patch.insert(key.clone(), Value::Null);
+            }
+        }
+
+        Self(patch)
+    }
+}
 
 /// Per-object error returned in `CalendarEvent/set` responses.
 ///
@@ -351,4 +394,115 @@ struct CalendarEventSetRequest {
 
 fn is_false(b: &bool) -> bool {
     !b
+}
+
+/// One key as a JSON pointer segment (RFC 6901 §4).
+fn pointer(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::String;
+
+    use serde_json::{Map, Value, json};
+
+    use crate::calendars::calendar_event::set::JmapCalendarEventPatch;
+
+    fn object(value: Value) -> Map<String, Value> {
+        match value {
+            Value::Object(object) => object,
+            _ => panic!("not an object"),
+        }
+    }
+
+    #[test]
+    fn a_member_changed_goes_whole() {
+        let base = object(json!({ "uid": "u", "title": "Standup", "duration": "PT30M" }));
+        let staged = object(json!({ "uid": "u", "title": "Daily", "duration": "PT30M" }));
+
+        let patch = JmapCalendarEventPatch::diff(&staged, &base);
+
+        assert_eq!(
+            Value::Object(patch.0.into_iter().collect()),
+            json!({ "title": "Daily" })
+        );
+        assert!(JmapCalendarEventPatch::diff(&base, &base).0.is_empty());
+    }
+
+    #[test]
+    fn a_member_removed_is_nulled_but_never_the_uid() {
+        let base = object(json!({ "uid": "u", "title": "Standup" }));
+        let staged = object(json!({}));
+
+        let patch = JmapCalendarEventPatch::diff(&staged, &base);
+
+        assert_eq!(
+            Value::Object(patch.0.into_iter().collect()),
+            json!({ "title": null })
+        );
+    }
+
+    #[test]
+    fn a_first_override_sets_the_member_whole() {
+        let base = object(json!({ "uid": "u" }));
+        let staged = object(json!({
+            "uid": "u",
+            "recurrenceOverrides": { "2026-10-08T09:00:00": { "title": "Moved" } },
+        }));
+
+        let patch = JmapCalendarEventPatch::diff(&staged, &base);
+
+        assert_eq!(
+            Value::Object(patch.0.into_iter().collect()),
+            json!({ "recurrenceOverrides": { "2026-10-08T09:00:00": { "title": "Moved" } } })
+        );
+    }
+
+    #[test]
+    fn overrides_are_patched_one_recurrence_id_at_a_time() {
+        let base = object(json!({
+            "uid": "u",
+            "recurrenceOverrides": {
+                "2026-10-08T09:00:00": { "title": "Moved" },
+                "2026-10-15T09:00:00": { "excluded": true },
+                "a/b~c": { "title": "Escaped" },
+            },
+        }));
+        let staged = object(json!({
+            "uid": "u",
+            "recurrenceOverrides": {
+                "2026-10-08T09:00:00": { "title": "Moved again" },
+                "2026-10-15T09:00:00": { "excluded": true },
+                "2026-10-22T09:00:00": { "excluded": true },
+            },
+        }));
+
+        let patch = JmapCalendarEventPatch::diff(&staged, &base);
+
+        assert_eq!(
+            Value::Object(patch.0.into_iter().collect()),
+            json!({
+                "recurrenceOverrides/2026-10-08T09:00:00": { "title": "Moved again" },
+                "recurrenceOverrides/2026-10-22T09:00:00": { "excluded": true },
+                "recurrenceOverrides/a~1b~0c": null,
+            })
+        );
+    }
+
+    #[test]
+    fn overrides_removed_whole_are_nulled_whole() {
+        let base = object(json!({
+            "uid": "u",
+            "recurrenceOverrides": { "2026-10-08T09:00:00": { "title": "Moved" } },
+        }));
+        let staged = object(json!({ "uid": "u" }));
+
+        let patch = JmapCalendarEventPatch::diff(&staged, &base);
+
+        assert_eq!(
+            Value::Object(patch.0.into_iter().collect()),
+            json!({ "recurrenceOverrides": null })
+        );
+    }
 }

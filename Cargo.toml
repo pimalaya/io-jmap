@@ -23,6 +23,8 @@ rustls-ring = ["client", "pimalaya-stream/rustls-ring", "dep:anyhow", "dep:pimal
 rustls-aws = ["client", "pimalaya-stream/rustls-aws", "dep:anyhow", "dep:pimalaya-stream"]
 native-tls = ["client", "pimalaya-stream/native-tls", "dep:anyhow", "dep:pimalaya-stream"]
 schemars = ["dep:schemars"]
+ical = ["dep:ical-rs"]
+vcard = ["dep:vcard-rs"]
 vendored = ["pimalaya-stream?/vendored"]
 
 [[example]]
@@ -37,6 +39,7 @@ required-features = ["rustls-ring"]
 
 [dev-dependencies]
 env_logger = "0.11"
+ical-rs = { version = "0.6.1", default-features = false, features = ["jscalendar", "parser"] }
 rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7"
 secrecy = { version = "0.10", default-features = false }
@@ -45,6 +48,7 @@ url = { version = "2.5", default-features = false }
 
 [dependencies]
 anyhow = { version = "1", optional = true }
+ical-rs = { version = "0.6.1", default-features = false, features = ["jscalendar"], optional = true }
 io-http = { version = "0.5", default-features = false }
 log = { version = "0.4", default-features = false }
 pimalaya-stream = { version = "0.3", default-features = false, optional = true }
@@ -54,3 +58,4 @@ serde = { version = "1", default-features = false, features = ["derive", "alloc"
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 thiserror = { version = "2", default-features = false }
 url = { version = "2.5", default-features = false, features = ["serde"] }
+vcard-rs = { version = "0.5", default-features = false, features = ["jscontact", "parser"], optional = true }

@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `anchor`, `anchorOffset` (RFC 8620 §5.5), `calculateTotal` and `collapseThreads` (RFC 8621 §4.4) to `JmapEmailQueryOptions`. `calculate_total` defaults to `true`, as it was always sent.
 - Added `JmapEmailComparator::sent_at_desc`.
 - Added `JmapMailCapability`, the RFC 8621 §1.3.1 account limits (`maxMailboxesPerEmail`, `maxMailboxDepth`, `emailQuerySortOptions`…), read by `JmapSession::mail_capability`.
+- Added the `vcard` feature, converting a ContactCard to and from vCard (RFC 9555): `JmapContactCard::to_vcard`, `from_vcard`, and `update_from_vcard` answering the `ContactCard/set` patch against a base vCard.
+- Added the `ical` feature, converting a parsed iCalendar object to a CalendarEvent, its one JSCalendar 2.0 entry: `JmapCalendarEvent::from_ical`.
+- Added `JmapCalendarEventPatch::diff`, the `CalendarEvent/set` patch between two events, `recurrenceOverrides` patched per recurrence id.
 
 ### Changed
 
