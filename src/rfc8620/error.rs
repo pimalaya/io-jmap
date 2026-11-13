@@ -1,5 +1,6 @@
-//! JMAP error objects (RFC 8620): the method-level error returned in a
-//! failed method response (§3.6.1) and the per-object `Foo/set` error
+//! JMAP error objects (RFC 8620): the request-level error answering a
+//! request refused whole (§3.6.1), the method-level error returned in a
+//! failed method response (§3.6.2) and the per-object `Foo/set` error
 //! (§5.3).
 
 use core::{error::Error, fmt};
@@ -11,7 +12,89 @@ use alloc::{
 
 use serde::{Deserialize, Serialize};
 
-/// A JMAP method-level error (RFC 8620 §3.6.1).
+/// The namespace of the JMAP problem types (RFC 8620 §3.6.1).
+const JMAP_ERROR_URN: &str = "urn:ietf:params:jmap:error:";
+
+/// A JMAP request-level error (RFC 8620 §3.6.1): the problem details
+/// (RFC 7807) of a request the server refused whole.
+///
+/// NOTE: variants keep the struct shape even with a single field, the
+/// internally-tagged serde representation of the wire object requires
+/// it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type")]
+pub enum JmapRequestError {
+    /// The request names a capability the server does not support.
+    #[serde(rename = "urn:ietf:params:jmap:error:unknownCapability")]
+    UnknownCapability {
+        /// Optional human-readable detail.
+        detail: Option<String>,
+    },
+    /// The request body was not valid JSON.
+    #[serde(rename = "urn:ietf:params:jmap:error:notJSON")]
+    NotJson {
+        /// Optional human-readable detail.
+        detail: Option<String>,
+    },
+    /// The request parsed as JSON but is not a valid Request object.
+    #[serde(rename = "urn:ietf:params:jmap:error:notRequest")]
+    NotRequest {
+        /// Optional human-readable detail.
+        detail: Option<String>,
+    },
+    /// The request exceeds a limit of the server.
+    #[serde(rename = "urn:ietf:params:jmap:error:limit")]
+    Limit {
+        /// The name of the exceeded limit, as the core capability spells
+        /// it (`maxCallsInRequest`, `maxSizeRequest`…).
+        limit: String,
+        /// Optional human-readable detail.
+        detail: Option<String>,
+    },
+    /// A problem type of the JMAP namespace this library does not model,
+    /// kept as the server named it.
+    #[serde(untagged)]
+    Other {
+        /// The problem type, a URN.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        detail: Option<String>,
+    },
+}
+
+impl JmapRequestError {
+    /// Reads the body of a refused request, `None` unless it holds a
+    /// problem of the JMAP namespace.
+    pub(crate) fn from_body(body: &[u8]) -> Option<Self> {
+        match serde_json::from_slice(body).ok()? {
+            Self::Other { type_name, .. } if !type_name.starts_with(JMAP_ERROR_URN) => None,
+            err => Some(err),
+        }
+    }
+}
+
+impl fmt::Display for JmapRequestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownCapability { detail } => write_described(f, "unknownCapability", detail),
+            Self::NotJson { detail } => write_described(f, "notJSON", detail),
+            Self::NotRequest { detail } => write_described(f, "notRequest", detail),
+            Self::Limit { limit, detail } => {
+                write!(f, "JMAP limit ({limit})")?;
+                if let Some(detail) = detail {
+                    write!(f, ": {detail}")?;
+                }
+                Ok(())
+            }
+            Self::Other { type_name, detail } => write_described(f, type_name, detail),
+        }
+    }
+}
+
+impl Error for JmapRequestError {}
+
+/// A JMAP method-level error (RFC 8620 §3.6.2).
 ///
 /// NOTE: variants keep the struct shape even with a single field, the
 /// internally-tagged serde representation of the wire object requires
@@ -30,28 +113,6 @@ pub enum JmapMethodError {
     ServerUnavailable {
         /// Optional human-readable detail.
         description: Option<String>,
-    },
-    /// The method requires a capability the request did not declare.
-    UnknownCapability {
-        /// Optional human-readable detail.
-        description: Option<String>,
-    },
-    /// The request body was not valid JSON.
-    NotJson {
-        /// Optional human-readable detail.
-        description: Option<String>,
-    },
-    /// The request parsed as JSON but is not a valid Request object.
-    NotRequest {
-        /// Optional human-readable detail.
-        description: Option<String>,
-    },
-    /// A server-defined limit was exceeded.
-    Limit {
-        /// Optional human-readable detail.
-        description: Option<String>,
-        /// The name of the exceeded limit.
-        limit: String,
     },
     /// One of the method arguments is invalid.
     InvalidArguments {
@@ -153,34 +214,6 @@ impl fmt::Display for JmapMethodError {
             Self::ServerPartialFail => write!(f, "JMAP serverPartialFail"),
             Self::ServerUnavailable { description } => {
                 write!(f, "JMAP serverUnavailable")?;
-                if let Some(d) = description {
-                    write!(f, ": {d}")?;
-                }
-                Ok(())
-            }
-            Self::UnknownCapability { description } => {
-                write!(f, "JMAP unknownCapability")?;
-                if let Some(d) = description {
-                    write!(f, ": {d}")?;
-                }
-                Ok(())
-            }
-            Self::NotJson { description } => {
-                write!(f, "JMAP notJson")?;
-                if let Some(d) = description {
-                    write!(f, ": {d}")?;
-                }
-                Ok(())
-            }
-            Self::NotRequest { description } => {
-                write!(f, "JMAP notRequest")?;
-                if let Some(d) = description {
-                    write!(f, ": {d}")?;
-                }
-                Ok(())
-            }
-            Self::Limit { description, limit } => {
-                write!(f, "JMAP limit ({limit})")?;
                 if let Some(d) = description {
                     write!(f, ": {d}")?;
                 }

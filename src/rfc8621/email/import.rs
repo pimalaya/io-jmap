@@ -81,6 +81,7 @@ use crate::{
         request::JmapBatch,
         send::*,
         session::JmapSession,
+        set::SetResponse,
     },
     rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
 };
@@ -263,9 +264,11 @@ impl JmapCoroutine for JmapEmailImport {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<EmailImportResponse>(args) {
+                match serde_json::from_value::<SetResponse<JmapEmail, JmapEmailImportItemError>>(
+                    args,
+                ) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailImportOutput {
-                        new_state: r.new_state,
+                        new_state: r.new_state.unwrap_or_default(),
                         created: r.created.unwrap_or_default(),
                         not_created: r.not_created.unwrap_or_default(),
                         keep_alive,
@@ -288,16 +291,6 @@ enum State {
 struct EmailImportArgs {
     account_id: String,
     emails: BTreeMap<String, JmapEmailImportArgs>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EmailImportResponse {
-    new_state: String,
-    #[serde(default)]
-    created: Option<BTreeMap<String, JmapEmail>>,
-    #[serde(default)]
-    not_created: Option<BTreeMap<String, JmapEmailImportItemError>>,
 }
 
 #[cfg(test)]

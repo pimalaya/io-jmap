@@ -186,7 +186,7 @@ impl JmapCoroutine for JmapEmailParse {
 
                 match serde_json::from_value::<EmailParseResponse>(args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailParseOutput {
-                        parsed: r.parsed,
+                        parsed: r.parsed.unwrap_or_default(),
                         not_parsable: r.not_parsable.unwrap_or_default(),
                         not_found: r.not_found.unwrap_or_default(),
                         keep_alive,
@@ -221,8 +221,7 @@ struct EmailParseArgs<'a> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EmailParseResponse {
-    #[serde(default)]
-    parsed: BTreeMap<String, JmapEmail>,
+    parsed: Option<BTreeMap<String, JmapEmail>>,
     not_parsable: Option<Vec<String>>,
     not_found: Option<Vec<String>>,
 }

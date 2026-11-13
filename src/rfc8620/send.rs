@@ -69,7 +69,10 @@ use url::Url;
 
 use crate::{
     coroutine::*,
-    rfc8620::request::{JmapRequest, JmapResponse},
+    rfc8620::{
+        error::JmapRequestError,
+        request::{JmapRequest, JmapResponse},
+    },
 };
 
 /// Failure causes during the JMAP send flow.
@@ -78,6 +81,14 @@ pub enum JmapSendError {
     /// The server answered with a non-2xx status.
     #[error("JMAP send failed: HTTP {0}")]
     HttpStatus(u16),
+    /// The server refused the request whole (RFC 8620 §3.6.1).
+    #[error("JMAP send failed: HTTP {status}: {error}")]
+    Request {
+        /// The HTTP status of the response.
+        status: u16,
+        /// The problem the response body names.
+        error: JmapRequestError,
+    },
     /// The server answered with an unexpected redirect.
     #[error("JMAP send failed: unexpected redirect")]
     UnexpectedRedirect,
@@ -161,7 +172,11 @@ impl JmapCoroutine for JmapSend {
                     ..
                 })) => {
                     if !response.status.is_success() {
-                        let err = JmapSendError::HttpStatus(*response.status);
+                        let status = *response.status;
+                        let err = match JmapRequestError::from_body(&response.body) {
+                            Some(error) => JmapSendError::Request { status, error },
+                            None => JmapSendError::HttpStatus(status),
+                        };
                         return JmapCoroutineState::Complete(Err(err));
                     }
 
@@ -246,6 +261,47 @@ mod tests {
 
         let reply = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
         let err = expect_complete_err(&mut cor, reply);
+        assert!(matches!(err, JmapSendError::HttpStatus(401)));
+    }
+
+    #[test]
+    fn problem_details_return_request_error() {
+        let mut cor = JmapSend::new(&make_auth(), &make_url(), make_request()).unwrap();
+
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let body = br#"{
+            "type": "urn:ietf:params:jmap:error:limit",
+            "limit": "maxCallsInRequest",
+            "status": 400,
+            "detail": "Too many calls"
+        }"#;
+        let reply = build_http_reply(400, body);
+        let err = expect_complete_err(&mut cor, &reply);
+        assert!(matches!(
+            &err,
+            JmapSendError::Request {
+                status: 400,
+                error: JmapRequestError::Limit { limit, .. },
+            } if limit == "maxCallsInRequest"
+        ));
+        assert_eq!(
+            err.to_string(),
+            "JMAP send failed: HTTP 400: JMAP limit (maxCallsInRequest): Too many calls"
+        );
+    }
+
+    #[test]
+    fn problem_outside_the_jmap_namespace_returns_status() {
+        let mut cor = JmapSend::new(&make_auth(), &make_url(), make_request()).unwrap();
+
+        expect_wants_write(&mut cor, None);
+        expect_wants_read(&mut cor);
+
+        let body = br#"{"type": "about:blank", "status": 401, "title": "Unauthorized"}"#;
+        let reply = build_http_reply(401, body);
+        let err = expect_complete_err(&mut cor, &reply);
         assert!(matches!(err, JmapSendError::HttpStatus(401)));
     }
 

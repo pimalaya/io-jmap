@@ -57,7 +57,7 @@
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
@@ -65,7 +65,7 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
-        session::JmapSession,
+        session::JmapSession, set::SetResponse,
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
@@ -192,9 +192,12 @@ impl JmapCoroutine for JmapEmailSubmissionCancel {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<EmailSubmissionCancelResponse>(args) {
+                match serde_json::from_value::<
+                    SetResponse<JmapEmailSubmission, JmapEmailSubmissionSetItemError>,
+                >(args)
+                {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailSubmissionCancelOutput {
-                        new_state: r.new_state,
+                        new_state: r.new_state.unwrap_or_default(),
                         updated: r.updated.unwrap_or_default(),
                         not_updated: r.not_updated.unwrap_or_default(),
                         keep_alive,
@@ -217,14 +220,4 @@ enum State {
 struct CancelEmailSubmissionsArgs {
     account_id: String,
     update: BTreeMap<String, JmapEmailSubmissionUpdate>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EmailSubmissionCancelResponse {
-    new_state: String,
-    #[serde(default)]
-    updated: Option<BTreeMap<String, Option<JmapEmailSubmission>>>,
-    #[serde(default)]
-    not_updated: Option<BTreeMap<String, JmapEmailSubmissionSetItemError>>,
 }

@@ -65,7 +65,7 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
-        session::JmapSession,
+        session::JmapSession, set::SetResponse,
     },
     rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
@@ -218,9 +218,12 @@ impl JmapCoroutine for JmapContactCardCopy {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<ContactCardCopyResponse>(args) {
+                match serde_json::from_value::<
+                    SetResponse<JmapContactCard, JmapContactCardCopyItemError>,
+                >(args)
+                {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapContactCardCopyOutput {
-                        new_state: r.new_state,
+                        new_state: r.new_state.unwrap_or_default(),
                         created: r.created.unwrap_or_default(),
                         not_created: r.not_created.unwrap_or_default(),
                         keep_alive,
@@ -246,12 +249,65 @@ struct ContactCardCopyArgs {
     create: BTreeMap<String, JmapContactCardCopyArgs>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ContactCardCopyResponse {
-    new_state: String,
-    #[serde(default)]
-    created: Option<BTreeMap<String, JmapContactCard>>,
-    #[serde(default)]
-    not_created: Option<BTreeMap<String, JmapContactCardCopyItemError>>,
+#[cfg(test)]
+mod tests {
+    use alloc::{format, string::ToString};
+
+    use crate::rfc9610::contact_card::copy::*;
+
+    #[test]
+    fn refusal_without_new_state_returns_ok() {
+        let session: JmapSession = serde_json::from_value(serde_json::json!({
+            "username": "",
+            "accounts": {},
+            "primaryAccounts": { "urn:ietf:params:jmap:contacts": "a1" },
+            "capabilities": {},
+            "apiUrl": "https://api.example.com/jmap/",
+            "downloadUrl": "",
+            "uploadUrl": "",
+            "eventSourceUrl": "",
+            "state": "",
+        }))
+        .unwrap();
+        let copy = JmapContactCardCopyArgs {
+            id: "k1".to_string(),
+            address_book_ids: BTreeMap::from([("b1".to_string(), true)]),
+        };
+        let cards = BTreeMap::from([("c1".to_string(), copy)]);
+        let auth = SecretString::from("Bearer t");
+        let mut coroutine = JmapContactCardCopy::new(&session, &auth, "a0", cards).unwrap();
+
+        let body = br#"{
+            "methodResponses": [["ContactCard/copy", {
+                "fromAccountId": "a0", "accountId": "a1",
+                "notCreated": {"c1": {"type": "notFound"}}
+            }, "c0"]],
+            "sessionState": "s1"
+        }"#;
+        let mut reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        reply.extend_from_slice(body);
+
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsWrite(_))
+        ));
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsRead)
+        ));
+        let out = match coroutine.resume(Some(&reply)) {
+            JmapCoroutineState::Complete(Ok(out)) => out,
+            state => panic!("expected Complete(Ok), got {state:?}"),
+        };
+
+        assert_eq!(out.new_state, "");
+        assert!(matches!(
+            out.not_created["c1"],
+            JmapContactCardCopyItemError::NotFound { .. }
+        ));
+    }
 }

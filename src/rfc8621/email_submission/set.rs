@@ -65,7 +65,7 @@
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
@@ -73,11 +73,14 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
-        session::JmapSession,
+        session::JmapSession, set::SetResponse,
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
-        email::set::JmapEmailPatch,
+        email::{
+            JmapEmail,
+            set::{JmapEmailPatch, JmapEmailSetItemError, JmapEmailSetOutput},
+        },
         email_submission::{
             JMAP_SUBMISSION_CAPABILITY, JmapEmailSubmission, JmapEmailSubmissionSetItemError,
             JmapEnvelope,
@@ -155,6 +158,12 @@ pub struct JmapEmailSubmissionSetOutput {
     pub created: BTreeMap<String, JmapEmailSubmission>,
     /// The failed creates, keyed by client id.
     pub not_created: BTreeMap<String, JmapEmailSubmissionSetItemError>,
+    /// The answer to the `Email/set` the server runs for the `onSuccess*`
+    /// arguments (RFC 8621 §7.5), `None` when it sent none.
+    ///
+    /// An `Err` is that call failing whole, or its response being
+    /// unreadable: the submissions in `created` went out all the same.
+    pub email_set: Option<Result<JmapEmailSetOutput, JmapMethodError>>,
     /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
 }
@@ -211,7 +220,9 @@ impl JmapCoroutine for JmapEmailSubmissionSet {
                     keep_alive,
                 } = jmap_try!(send, arg);
 
-                let Some((name, args, _)) = response.method_responses.into_iter().next() else {
+                let mut responses = response.method_responses.into_iter();
+
+                let Some((name, args, call_id)) = responses.next() else {
                     return JmapCoroutineState::Complete(Err(
                         JmapEmailSubmissionSetError::MissingResponse,
                     ));
@@ -223,17 +234,50 @@ impl JmapCoroutine for JmapEmailSubmissionSet {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<EmailSubmissionSetResponse>(args) {
-                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailSubmissionSetOutput {
-                        new_state: r.new_state,
-                        created: r.created.unwrap_or_default(),
-                        not_created: r.not_created.unwrap_or_default(),
-                        keep_alive,
-                    })),
-                    Err(err) => JmapCoroutineState::Complete(Err(
-                        JmapEmailSubmissionSetError::ParseResponse(err),
-                    )),
-                }
+                let r = match serde_json::from_value::<
+                    SetResponse<JmapEmailSubmission, JmapEmailSubmissionSetItemError>,
+                >(args)
+                {
+                    Ok(r) => r,
+                    Err(err) => {
+                        let err = JmapEmailSubmissionSetError::ParseResponse(err);
+                        return JmapCoroutineState::Complete(Err(err));
+                    }
+                };
+
+                let email_set = responses
+                    .find(|(name, _, id)| {
+                        *id == call_id && (name == "Email/set" || name == "error")
+                    })
+                    .map(|(name, args, _)| {
+                        if name == "error" {
+                            let err = serde_json::from_value::<JmapMethodError>(args)
+                                .unwrap_or_else(JmapMethodError::unreadable);
+                            return Err(err);
+                        }
+
+                        let r: SetResponse<JmapEmail, JmapEmailSetItemError> =
+                            serde_json::from_value(args).map_err(JmapMethodError::unreadable)?;
+
+                        Ok(JmapEmailSetOutput {
+                            new_state: r.new_state.unwrap_or_default(),
+                            created: r.created.unwrap_or_default(),
+                            updated: r.updated.unwrap_or_default(),
+                            destroyed: r.destroyed.unwrap_or_default(),
+                            not_created: r.not_created.unwrap_or_default(),
+                            not_updated: r.not_updated.unwrap_or_default(),
+                            not_destroyed: r.not_destroyed.unwrap_or_default(),
+                            keep_alive,
+                        })
+                    });
+
+                JmapCoroutineState::Complete(Ok(JmapEmailSubmissionSetOutput {
+                    new_state: r.new_state.unwrap_or_default(),
+                    created: r.created.unwrap_or_default(),
+                    not_created: r.not_created.unwrap_or_default(),
+                    email_set,
+                    keep_alive,
+                }))
             }
         }
     }
@@ -249,16 +293,6 @@ struct EmailSubmissionSetRequest {
     account_id: String,
     #[serde(flatten)]
     args: JmapEmailSubmissionSetArgs,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EmailSubmissionSetResponse {
-    new_state: String,
-    #[serde(default)]
-    created: Option<BTreeMap<String, JmapEmailSubmission>>,
-    #[serde(default)]
-    not_created: Option<BTreeMap<String, JmapEmailSubmissionSetItemError>>,
 }
 
 #[cfg(test)]

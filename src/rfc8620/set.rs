@@ -185,7 +185,7 @@ impl<T: DeserializeOwned> JmapCoroutine for JmapSet<T> {
 
                 match serde_json::from_value::<SetResponse<T>>(args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapSetOutput {
-                        new_state: r.new_state,
+                        new_state: r.new_state.unwrap_or_default(),
                         created: r.created.unwrap_or_default(),
                         updated: r.updated.unwrap_or_default(),
                         destroyed: r.destroyed.unwrap_or_default(),
@@ -219,19 +219,20 @@ struct SetArgs<C: Serialize, U: Serialize> {
     destroy: Option<Vec<String>>,
 }
 
+/// The response to a `Foo/set` (RFC 8620 §5.3), or to a method answering
+/// like one, its per-object errors read as `E`.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SetResponse<T> {
-    // NOTE: RFC 8620 §5.3 requires it, but Stalwart leaves it out of a
-    // call that changed nothing.
-    #[serde(default)]
-    new_state: String,
-    created: Option<BTreeMap<String, T>>,
-    updated: Option<BTreeMap<String, Option<T>>>,
-    destroyed: Option<Vec<String>>,
-    not_created: Option<BTreeMap<String, serde_json::Value>>,
-    not_updated: Option<BTreeMap<String, serde_json::Value>>,
-    not_destroyed: Option<BTreeMap<String, serde_json::Value>>,
+pub(crate) struct SetResponse<T, E = serde_json::Value> {
+    // NOTE: RFC 8620 §5.3 requires it, but a call that changed nothing
+    // may leave it out or answer `null`.
+    pub(crate) new_state: Option<String>,
+    pub(crate) created: Option<BTreeMap<String, T>>,
+    pub(crate) updated: Option<BTreeMap<String, Option<T>>>,
+    pub(crate) destroyed: Option<Vec<String>>,
+    pub(crate) not_created: Option<BTreeMap<String, E>>,
+    pub(crate) not_updated: Option<BTreeMap<String, E>>,
+    pub(crate) not_destroyed: Option<BTreeMap<String, E>>,
 }
 
 /// One key as a JSON pointer segment (RFC 6901 §4).

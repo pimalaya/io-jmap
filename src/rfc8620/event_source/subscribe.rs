@@ -99,6 +99,9 @@ use crate::{
 /// Default value of [`JmapEventSource::max_frame_len`]: 64 KiB.
 pub const JMAP_DEFAULT_MAX_FRAME_LEN: usize = 64 * 1024;
 
+/// Default value of [`JmapEventSource::max_chunk_len`]: 1 MiB.
+pub const JMAP_DEFAULT_MAX_CHUNK_LEN: usize = 1024 * 1024;
+
 /// Per-step yield for [`JmapEventSource`].
 #[derive(Debug)]
 pub enum JmapEventSourceYield {
@@ -145,9 +148,13 @@ pub enum JmapEventSourceError {
 /// blocking socket read in flight.
 pub struct JmapEventSource {
     /// Maximum size in bytes of one SSE frame, comment lines aside, past
-    /// which the stream fails with [`JmapEventSourceError::FrameTooLarge`],
-    /// and of one chunk. Defaults to [`JMAP_DEFAULT_MAX_FRAME_LEN`].
+    /// which the stream fails with [`JmapEventSourceError::FrameTooLarge`].
+    /// Defaults to [`JMAP_DEFAULT_MAX_FRAME_LEN`].
     pub max_frame_len: usize,
+    /// Maximum size in bytes of one chunk, however many frames it holds,
+    /// past which the stream fails with a `ChunkTooLarge`. Defaults to
+    /// [`JMAP_DEFAULT_MAX_CHUNK_LEN`].
+    pub max_chunk_len: usize,
     state: State,
     frame: FrameLen,
     shutdown: Arc<AtomicBool>,
@@ -216,6 +223,7 @@ impl JmapEventSource {
 
         Ok(Self {
             max_frame_len: JMAP_DEFAULT_MAX_FRAME_LEN,
+            max_chunk_len: JMAP_DEFAULT_MAX_CHUNK_LEN,
             state: State::SendingRequest(request.to_http_11_vec()),
             frame: FrameLen::default(),
             shutdown,
@@ -281,7 +289,7 @@ impl JmapCoroutine for JmapEventSource {
                         // into the chunked body; prime the chunk decoder so
                         // the SSE parser never sees `<hex>\r\n` size headers.
                         let mut chunks = Http11ChunksReadStream::default();
-                        chunks.max_chunk_len = self.max_frame_len;
+                        chunks.max_chunk_len = self.max_chunk_len;
 
                         let pending = if remaining.is_empty() {
                             None
@@ -613,12 +621,34 @@ mod tests {
     }
 
     #[test]
-    fn chunk_over_max_frame_len_returns_chunk_too_large() {
+    fn chunk_of_small_frames_over_max_frame_len_streams_every_frame() {
+        let mut es = streaming(JMAP_DEFAULT_MAX_FRAME_LEN);
+        let frame = b"data: {\"@type\":\"StateChange\",\"changed\":{}}\n\n";
+        let body = frame.repeat(2000);
+        assert!(body.len() > JMAP_DEFAULT_MAX_FRAME_LEN);
+
+        let chunk = chunk(&body);
+        let mut arg = Some(chunk.as_slice());
+        let mut frames = 0;
+
+        loop {
+            match es.resume(arg.take()) {
+                JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(_)) => frames += 1,
+                JmapCoroutineState::Yielded(JmapEventSourceYield::WantsRead) => break,
+                other => panic!("expected Frame or WantsRead, got {other:?}"),
+            }
+        }
+
+        assert_eq!(frames, 2000);
+    }
+
+    #[test]
+    fn chunk_over_max_chunk_len_returns_chunk_too_large() {
         let mut es = streaming(JMAP_DEFAULT_MAX_FRAME_LEN);
 
-        match es.resume(Some(b"10001\r\n")) {
+        match es.resume(Some(b"100001\r\n")) {
             JmapCoroutineState::Complete(Err(JmapEventSourceError::ReadChunks(
-                Http11ChunksReadStreamError::ChunkTooLarge(JMAP_DEFAULT_MAX_FRAME_LEN),
+                Http11ChunksReadStreamError::ChunkTooLarge(JMAP_DEFAULT_MAX_CHUNK_LEN),
             ))) => {}
             other => panic!("expected ChunkTooLarge, got {other:?}"),
         }

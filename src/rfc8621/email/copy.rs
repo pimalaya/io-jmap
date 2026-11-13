@@ -74,7 +74,7 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
-        session::JmapSession,
+        session::JmapSession, set::SetResponse,
     },
     rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
 };
@@ -228,9 +228,10 @@ impl JmapCoroutine for JmapEmailCopy {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<EmailCopyResponse>(args) {
+                match serde_json::from_value::<SetResponse<JmapEmail, JmapEmailCopyItemError>>(args)
+                {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailCopyOutput {
-                        new_state: r.new_state,
+                        new_state: r.new_state.unwrap_or_default(),
                         created: r.created.unwrap_or_default(),
                         not_created: r.not_created.unwrap_or_default(),
                         keep_alive,
@@ -254,14 +255,4 @@ struct EmailCopyArgs {
     from_account_id: String,
     account_id: String,
     create: BTreeMap<String, JmapEmailCopyArgs>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EmailCopyResponse {
-    new_state: String,
-    #[serde(default)]
-    created: Option<BTreeMap<String, JmapEmail>>,
-    #[serde(default)]
-    not_created: Option<BTreeMap<String, JmapEmailCopyItemError>>,
 }

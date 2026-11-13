@@ -57,7 +57,9 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
-use alloc::{collections::BTreeMap, string::String, vec};
+use core::fmt;
+
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -67,7 +69,10 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
+        JMAP_CORE_CAPABILITY,
+        error::{JmapMethodError, write_described, write_properties},
+        request::JmapBatch,
+        send::*,
         session::JmapSession,
     },
     rfc8621::{
@@ -103,9 +108,58 @@ pub struct JmapVacationResponseUpdate {
     pub html_body: Option<Option<String>>,
 }
 
+/// Per-object error returned in `VacationResponse/set` responses
+/// (RFC 8621 §8).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum JmapVacationResponseSetItemError {
+    /// Standard set error (RFC 8620 §5.3): patch could not be applied.
+    InvalidPatch {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): one or more properties were invalid.
+    InvalidProperties {
+        /// Optional human-readable detail.
+        description: Option<String>,
+        /// The invalid property names.
+        #[serde(default)]
+        properties: Vec<String>,
+    },
+    /// A set error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the server named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+}
+
+impl fmt::Display for JmapVacationResponseSetItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPatch { description } => write_described(f, "invalidPatch", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
+        }
+    }
+}
+
 /// Failure causes during a JMAP `VacationResponse/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapVacationResponseSetError {
+    /// The server refused the update, leaving the singleton as it was.
+    #[error("JMAP VacationResponse/set failed: {0}")]
+    NotUpdated(JmapVacationResponseSetItemError),
     /// The response carried no method response.
     #[error("JMAP VacationResponse/set failed: missing response in method_responses")]
     MissingResponse,
@@ -203,21 +257,35 @@ impl JmapCoroutine for JmapVacationResponseSet {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<VacationResponseSetResponse>(args) {
-                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapVacationResponseSetOutput {
-                        new_state: r.new_state.unwrap_or_default(),
-                        updated: r
-                            .updated
-                            .unwrap_or_default()
-                            .into_values()
-                            .flatten()
-                            .find_map(|value| serde_json::from_value(value).ok()),
-                        keep_alive,
-                    })),
-                    Err(err) => JmapCoroutineState::Complete(Err(
-                        JmapVacationResponseSetError::ParseResponse(err),
-                    )),
+                let r = match serde_json::from_value::<VacationResponseSetResponse>(args) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        let err = JmapVacationResponseSetError::ParseResponse(err);
+                        return JmapCoroutineState::Complete(Err(err));
+                    }
+                };
+
+                if let Some(refusal) = r.not_updated.unwrap_or_default().into_values().next() {
+                    let refusal = serde_json::from_value(refusal).unwrap_or(
+                        JmapVacationResponseSetItemError::Other {
+                            type_name: String::new(),
+                            description: None,
+                        },
+                    );
+                    let err = JmapVacationResponseSetError::NotUpdated(refusal);
+                    return JmapCoroutineState::Complete(Err(err));
                 }
+
+                JmapCoroutineState::Complete(Ok(JmapVacationResponseSetOutput {
+                    new_state: r.new_state.unwrap_or_default(),
+                    updated: r
+                        .updated
+                        .unwrap_or_default()
+                        .into_values()
+                        .flatten()
+                        .find_map(|value| serde_json::from_value(value).ok()),
+                    keep_alive,
+                }))
             }
         }
     }
@@ -245,11 +313,12 @@ struct VacationResponseSetResponse {
     // object, read as a whole response only when it is one.
     #[serde(default)]
     updated: Option<BTreeMap<String, Option<serde_json::Value>>>,
+    not_updated: Option<BTreeMap<String, serde_json::Value>>,
 }
 
 #[cfg(test)]
 mod tests {
-    use alloc::format;
+    use alloc::{format, string::ToString};
 
     use super::*;
 
@@ -272,6 +341,47 @@ mod tests {
     /// the properties it was sent as a partial object.
     #[test]
     fn a_null_new_state_reads_as_empty() {
+        let out = set(br#"{
+            "methodResponses": [["VacationResponse/set", {
+                "accountId": "a1", "oldState": null, "newState": null,
+                "updated": {"singleton": {"fromDate": null}}
+            }, "c0"]],
+            "sessionState": "s1"
+        }"#)
+        .expect("the update did not complete");
+
+        assert!(out.new_state.is_empty());
+        assert!(out.updated.is_none());
+    }
+
+    #[test]
+    fn a_refused_update_returns_an_error() {
+        let err = set(br#"{
+            "methodResponses": [["VacationResponse/set", {
+                "accountId": "a1", "oldState": "v1", "newState": "v1",
+                "updated": null,
+                "notUpdated": {"singleton": {
+                    "type": "invalidProperties", "properties": ["toDate"]
+                }}
+            }, "c0"]],
+            "sessionState": "s1"
+        }"#)
+        .expect_err("the refusal read as a success");
+
+        assert!(matches!(
+            &err,
+            JmapVacationResponseSetError::NotUpdated(
+                JmapVacationResponseSetItemError::InvalidProperties { properties, .. }
+            ) if properties == &["toDate"]
+        ));
+        assert_eq!(
+            err.to_string(),
+            "JMAP VacationResponse/set failed: JMAP invalidProperties [toDate]"
+        );
+    }
+
+    /// Runs one `VacationResponse/set` against the response `body`.
+    fn set(body: &[u8]) -> Result<JmapVacationResponseSetOutput, JmapVacationResponseSetError> {
         let session: JmapSession = serde_json::from_value(serde_json::json!({
             "username": "",
             "accounts": {},
@@ -291,13 +401,6 @@ mod tests {
         let mut coroutine =
             JmapVacationResponseSet::new(&session, &SecretString::from("Bearer t"), patch).unwrap();
 
-        let body = br#"{
-            "methodResponses": [["VacationResponse/set", {
-                "accountId": "a1", "oldState": null, "newState": null,
-                "updated": {"singleton": {"fromDate": null}}
-            }, "c0"]],
-            "sessionState": "s1"
-        }"#;
         let mut reply = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
             body.len()
@@ -313,11 +416,9 @@ mod tests {
             coroutine.resume(None),
             JmapCoroutineState::Yielded(JmapYield::WantsRead)
         ));
-        let JmapCoroutineState::Complete(Ok(out)) = coroutine.resume(Some(&reply)) else {
-            panic!("the update did not complete");
-        };
-
-        assert!(out.new_state.is_empty());
-        assert!(out.updated.is_none());
+        match coroutine.resume(Some(&reply)) {
+            JmapCoroutineState::Complete(out) => out,
+            state => panic!("expected Complete, got {state:?}"),
+        }
     }
 }
