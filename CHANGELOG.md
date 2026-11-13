@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING**: Changed the io-http dependency to 0.7.
+
+  The coroutines take and yield its types, so a consumer bumps in step for a single version to resolve. Its send and read errors, carried by the `Send`, `ReadHeaders` and `ReadChunks` variants, gained variants.
+
+- **BREAKING**: Changed `JmapEventSourceError` to fail with `InvalidRequest`.
+
+  `JmapEventSource::new` refuses a header value holding a CR, LF or NUL, the `Authorization` one included.
+
 - **BREAKING**: `JmapResponse::method_responses` keeps each result as a `Box<RawValue>`, the JSON text the server sent, where it held a `serde_json::Value`.
 
   Every coroutine decodes it once into its typed response, so properties the library does not model cost no allocation. Enables the `raw_value` feature of serde_json.
@@ -31,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: `JmapEventSource` skips a frame naming another event than `state`, which used to be read as a StateChange and to fail the stream when it was none; an empty `types` subscribes to `*` instead of sending `types=`.
 - **BREAKING**: Every method coroutine built from a session fails with the new `Account` variant of its error when the session names no primary account for its capability, where it sent an empty `accountId`.
 - `JmapClientStd::session_get` follows a redirect staying on the same origin and connection, five at most, which `/.well-known/jmap` discovery commonly gets; any other redirect still fails with `UnexpectedRedirect`.
-- **BREAKING**: `JmapEventSourceError` gained `FrameTooLarge`: an SSE frame over `max_frame_len` fails the stream instead of growing without bound. A chunk over `max_chunk_len` fails with `ReadChunks(ChunkTooLarge)`, where the limit was 256 MiB.
+- **BREAKING**: `JmapEventSourceError` gained `FrameTooLarge`: an SSE frame whose line or data exceeds `max_frame_len` fails the stream instead of growing without bound. A chunk over `max_chunk_len` fails with `ReadChunks(ChunkTooLarge)`, where the limit was 256 MiB.
 - **BREAKING**: `JmapSendError` gained `Request { status, error }`: a non-2xx answer whose body names a problem of the JMAP namespace no longer reads as `HttpStatus`.
 - **BREAKING**: `JmapMethodError` lost `UnknownCapability`, `NotJson`, `NotRequest` and `Limit`, which are request-level errors and now live in `JmapRequestError`.
 - **BREAKING**: `JmapVacationResponseSetError` gained `NotUpdated`: an update the server refuses under `notUpdated` fails instead of completing as a success.

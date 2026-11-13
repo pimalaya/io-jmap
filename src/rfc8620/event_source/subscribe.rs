@@ -87,14 +87,17 @@ use alloc::{format, string::String, sync::Arc, vec::Vec};
 
 use io_http::{
     coroutine::*,
-    rfc9110::{headers::HTTP_TRANSFER_ENCODING, request::HttpRequest},
+    rfc9110::{
+        headers::HTTP_TRANSFER_ENCODING,
+        request::{HttpRequest, HttpRequestError},
+    },
     rfc9112::{
         chunk_stream::{
             Http11ChunksReadStream, Http11ChunksReadStreamError, Http11ChunksReadStreamYield,
         },
         read_headers::{Http11HeadersRead, Http11HeadersReadError, Http11HeadersReadOutput},
     },
-    sse::frame::{SseFrameParser, SseFrameParserYield},
+    sse::frame::{SseFrameParser, SseFrameParserError, SseFrameParserYield},
 };
 use log::{debug, trace};
 use secrecy::{ExposeSecret, SecretString};
@@ -149,13 +152,17 @@ pub enum JmapEventSourceError {
     /// The last event id holds a CR, LF or NUL (RFC 9110 §5.5).
     #[error("JMAP event-source failed: invalid last event id")]
     InvalidLastEventId,
+    /// The request head could not be written.
+    #[error("JMAP event-source failed: {0}")]
+    InvalidRequest(#[from] HttpRequestError),
     /// The response head could not be read.
     #[error("JMAP event-source failed: {0}")]
     ReadHeaders(#[from] Http11HeadersReadError),
     /// The chunked-body decoder failed.
     #[error("JMAP event-source failed: {0}")]
     ReadChunks(#[from] Http11ChunksReadStreamError),
-    /// An SSE frame exceeds [`JmapEventSource::max_frame_len`].
+    /// A line of an SSE frame, or the data of one, exceeds
+    /// [`JmapEventSource::max_frame_len`].
     #[error("JMAP event-source failed: frame exceeds {0} bytes")]
     FrameTooLarge(usize),
     /// An SSE frame could not be decoded as a StateChange.
@@ -178,16 +185,16 @@ pub struct JmapEventSourceOptions {
 /// set. The caller's resume loop must honour the flag too to interrupt a
 /// blocking socket read in flight.
 pub struct JmapEventSource {
-    /// Maximum size in bytes of one SSE frame, comment lines aside, past
-    /// which the stream fails with [`JmapEventSourceError::FrameTooLarge`].
-    /// Defaults to [`JMAP_DEFAULT_MAX_FRAME_LEN`].
+    /// Maximum size in bytes of one line of an SSE frame, and of the data
+    /// of one frame, past which the stream fails with
+    /// [`JmapEventSourceError::FrameTooLarge`]. Defaults to
+    /// [`JMAP_DEFAULT_MAX_FRAME_LEN`].
     pub max_frame_len: usize,
     /// Maximum size in bytes of one chunk, however many frames it holds,
     /// past which the stream fails with a `ChunkTooLarge`. Defaults to
     /// [`JMAP_DEFAULT_MAX_CHUNK_LEN`].
     pub max_chunk_len: usize,
     state: State,
-    frame: FrameLen,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -270,8 +277,7 @@ impl JmapEventSource {
         Ok(Self {
             max_frame_len: JMAP_DEFAULT_MAX_FRAME_LEN,
             max_chunk_len: JMAP_DEFAULT_MAX_CHUNK_LEN,
-            state: State::SendingRequest(request.to_http_11_vec()),
-            frame: FrameLen::default(),
+            state: State::SendingRequest(request.to_http_11_vec()?),
             shutdown,
         })
     }
@@ -356,9 +362,13 @@ impl JmapCoroutine for JmapEventSource {
                                 }
                             }
                         };
+                        let mut parser = SseFrameParser::default();
+                        parser.max_line_len = self.max_frame_len;
+                        parser.max_event_len = self.max_frame_len;
+
                         self.state = State::Streaming {
                             chunks,
-                            parser: SseFrameParser::default(),
+                            parser,
                             pending,
                         };
                         // NOTE: fall into the streaming arm so the parser
@@ -371,14 +381,6 @@ impl JmapCoroutine for JmapEventSource {
                     pending,
                 } => {
                     let parser_input = pending.take();
-
-                    if let Some(bytes) = &parser_input
-                        && !self.frame.count(bytes, self.max_frame_len)
-                    {
-                        let err = JmapEventSourceError::FrameTooLarge(self.max_frame_len);
-                        self.state = State::Done;
-                        return JmapCoroutineState::Complete(Err(err));
-                    }
 
                     match parser.resume(parser_input.as_deref()) {
                         HttpCoroutineState::Yielded(SseFrameParserYield::Frame(frame)) => {
@@ -421,7 +423,14 @@ impl JmapCoroutine for JmapEventSource {
                                 }
                             }
                         }
-                        HttpCoroutineState::Complete(never) => match never {},
+                        HttpCoroutineState::Complete(Err(
+                            SseFrameParserError::LineTooLarge(max)
+                            | SseFrameParserError::EventTooLarge(max),
+                        )) => {
+                            let err = JmapEventSourceError::FrameTooLarge(max);
+                            self.state = State::Done;
+                            return JmapCoroutineState::Complete(Err(err));
+                        }
                     }
                 }
                 State::Done => return JmapCoroutineState::Complete(Ok(())),
@@ -446,52 +455,6 @@ enum State {
     },
     /// Terminal: shutdown flipped, or stream finished.
     Done,
-}
-
-/// Size of the SSE frame in progress: the lines since the last blank
-/// line, comment lines and line ends aside.
-#[derive(Default)]
-struct FrameLen {
-    /// Bytes of the complete field lines.
-    fields: usize,
-    /// Bytes of the line in progress.
-    line: usize,
-    /// Whether the line in progress is a comment.
-    comment: bool,
-    /// Whether the last byte was a CR, whose LF ends no line.
-    cr: bool,
-}
-
-impl FrameLen {
-    /// Counts `bytes` in, answering whether the frame still fits in `max`.
-    fn count(&mut self, bytes: &[u8], max: usize) -> bool {
-        for &byte in bytes {
-            let cr = mem::replace(&mut self.cr, byte == b'\r');
-
-            match byte {
-                b'\n' if cr => continue,
-                b'\r' | b'\n' if self.line == 0 => self.fields = 0,
-                b'\r' | b'\n' => {
-                    if !self.comment {
-                        self.fields += self.line;
-                    }
-                    self.line = 0;
-                }
-                _ => {
-                    if self.line == 0 {
-                        self.comment = byte == b':';
-                    }
-                    self.line += 1;
-
-                    if self.fields + self.line > max {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        true
-    }
 }
 
 #[cfg(test)]
@@ -648,6 +611,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn authorization_with_cr_lf_returns_invalid_request() {
+        let session = JmapSession {
+            event_source_url: "https://example.org/sse".into(),
+            ..synthetic_session()
+        };
+        let auth = SecretString::from("Bearer t\r\nX-Injected: 1".to_string());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let opts = JmapEventSourceOptions::default();
+        let es = JmapEventSource::new(&session, &auth, &[], 30, JmapCloseAfter::No, shutdown, opts);
+
+        match es.err() {
+            Some(JmapEventSourceError::InvalidRequest(HttpRequestError::InvalidHeaderValue(
+                name,
+            ))) => assert_eq!(name, "Authorization"),
+            other => panic!("expected InvalidRequest, got {other:?}"),
+        }
+    }
+
     // NOTE: regression guard. Head reader over-reads into the chunked body;
     // those leftover bytes must go through the chunk decoder, not straight
     // to the SSE parser. This body splits `data:` across two chunks so the
@@ -721,11 +703,14 @@ mod tests {
     fn data_lines_without_blank_line_return_frame_too_large() {
         let mut es = streaming(64);
 
+        // NOTE: 43 bytes of data once joined by a LF, 64 with the fifth
         for _ in 0..4 {
             expect_wants_read(&mut es, &chunk(b"data: 0123456789\r\n"));
         }
 
-        match es.resume(Some(&chunk(b"data: 0\n"))) {
+        expect_wants_read(&mut es, &chunk(b"data: 01234567890123456789\n"));
+
+        match es.resume(Some(&chunk(b"data:\n"))) {
             JmapCoroutineState::Complete(Err(JmapEventSourceError::FrameTooLarge(64))) => {}
             other => panic!("expected FrameTooLarge, got {other:?}"),
         }

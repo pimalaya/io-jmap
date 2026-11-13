@@ -58,6 +58,14 @@ Only the primary account of a capability is reachable through these coroutines: 
 - WHEN a new `JmapEventSource` is built with `last_event_id: Some("evt-1")`
 - THEN its request head holds `Last-Event-ID: evt-1`
 
+### Requirement: A header value cannot split a request head
+No request SHALL be written whose header value holds a CR, LF or NUL, the `Authorization` value included: io-http checks the head it serialises. `JmapEventSource::new`, which serialises its request itself, SHALL return `InvalidRequest`; `JmapSend`, `JmapSessionGet`, `JmapBlobUpload` and `JmapBlobDownload` fail their first resume with `Send(InvalidRequest)`, before any write.
+
+#### Scenario: A credential holding a line break
+- GIVEN the authorization value `Bearer t\r\nX-Injected: 1`
+- WHEN `JmapEventSource::new` builds its request
+- THEN it returns `InvalidRequest(InvalidHeaderValue("Authorization"))`
+
 ### Requirement: A patch can clear a nullable property
 An update struct SHALL type a property its RFC makes nullable as `Option<Option<T>>`: `None` leaves it out of the patch, `Some(None)` writes `null`, `Some(Some(value))` writes the value. This holds for `parent_id` and `role` of `JmapMailboxUpdate` (RFC 8621 §2), `reply_to` and `bcc` of `JmapIdentityUpdate` (RFC 8621 §6), `description` and `share_with` of `JmapAddressBookUpdate` (RFC 9610 §2), and the five nullable properties of `JmapVacationResponseUpdate`.
 
@@ -69,7 +77,7 @@ An update struct SHALL type a property its RFC makes nullable as `Option<Option<
 ### Requirement: Secrets stay out of Debug and logs
 `JmapPushSubscriptionKeys` SHALL hold its `auth` secret as a `SecretString`, written on the wire and redacted by `Debug`, and the `Debug` of `JmapPushSubscriptionCreate` SHALL show `[REDACTED]` for its `url`, a push URL being a capability the server itself never returns (RFC 8620 §7.2.1).
 
-The library SHALL log a request URL as its scheme, host and path only, never its userinfo, query or fragment: a session, download or event source URL may carry an access token in its query, a configured one a password. This binds what io-jmap logs; io-http 0.6 traces the whole request, its URL included, under its own target.
+The library SHALL log a request URL as its scheme, host and path only, never its userinfo, query or fragment: a session, download or event source URL may carry an access token in its query, a configured one a password.
 
 #### Scenario: A URL carrying a token
 - GIVEN the URL `https://user:hunter2@api.example.com/jmap/x?token=s3cr3t`

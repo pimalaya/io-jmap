@@ -22,7 +22,7 @@ Every request-response coroutine (`JmapSend` and the method coroutines built on 
 - THEN it allocates fewer than 2000 times, one string per id and the buffers, where a JSON tree took over 46000
 
 ### Requirement: Event source frames are bounded
-`JmapEventSource` SHALL fail with `FrameTooLarge(max_frame_len)` once one SSE frame exceeds its `max_frame_len`, 64 KiB by default (`JMAP_DEFAULT_MAX_FRAME_LEN`) and settable after `new`, before the first resume. The size of a frame SHALL be the bytes of the lines since the last blank line, the line in progress included, comment lines and line ends aside: a frame that fits is never refused, however many frames or comment lines the stream carries. The count SHALL be taken on each decoded chunk before the SSE parser sees it, so what the parser holds stays within one chunk and a small multiple of `max_frame_len`; a chunk holding a frame over the limit fails whole, the frames ahead of it in that chunk included.
+`JmapEventSource` SHALL fail with `FrameTooLarge(max_frame_len)` once one line of an SSE frame, or the data of one frame, exceeds its `max_frame_len`, 64 KiB by default (`JMAP_DEFAULT_MAX_FRAME_LEN`) and settable after `new`, before the first resume. The limit SHALL be handed to io-http's `SseFrameParser` as its `max_line_len` and its `max_event_len`, whose `LineTooLarge` and `EventTooLarge` both read as `FrameTooLarge`; io-jmap counts nothing itself. A line counts without its line end, the line in progress and a comment line included. The data of a frame counts as the caller reads it, the values of its `data` lines joined by a LF: the field names and the other fields (`event`, `id`, `retry`, unknown ones) are bounded as lines and do not add up, being replaced or dropped, not kept. A frame that fits is never refused, however many frames or comment lines the stream carries, and what the parser holds stays within one chunk and a small multiple of `max_frame_len`.
 
 #### Scenario: One chunk of many small frames
 - GIVEN a `JmapEventSource` with the default limits
@@ -36,7 +36,7 @@ Every request-response coroutine (`JmapSend` and the method coroutines built on 
 
 #### Scenario: Data lines with no blank line
 - GIVEN a `JmapEventSource` whose `max_frame_len` is 64
-- WHEN the server streams `data:` lines with no blank line, past 64 bytes in all
+- WHEN the server streams `data:` lines with no blank line, whose values joined by a LF reach 64 bytes, then one more `data:` line
 - THEN the coroutine completes with `FrameTooLarge(64)`
 
 ### Requirement: Event source frames carry their id
