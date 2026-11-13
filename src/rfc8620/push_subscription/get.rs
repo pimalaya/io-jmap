@@ -164,12 +164,12 @@ impl JmapCoroutine for JmapPushSubscriptionGet {
                 };
 
                 if name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(args)
+                    let err = serde_json::from_str::<JmapMethodError>(args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<PushSubscriptionGetResponse>(args) {
+                match serde_json::from_str::<PushSubscriptionGetResponse>(args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapPushSubscriptionGetOutput {
                         subscriptions: r.list,
                         not_found: r.not_found,

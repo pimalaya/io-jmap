@@ -253,12 +253,12 @@ impl JmapCoroutine for JmapVacationResponseSet {
                 };
 
                 if name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(args)
+                    let err = serde_json::from_str::<JmapMethodError>(args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                let r = match serde_json::from_value::<VacationResponseSetResponse>(args) {
+                let r = match serde_json::from_str::<VacationResponseSetResponse>(args.get()) {
                     Ok(r) => r,
                     Err(err) => {
                         let err = JmapVacationResponseSetError::ParseResponse(err);

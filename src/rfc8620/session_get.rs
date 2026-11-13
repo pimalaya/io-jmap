@@ -117,7 +117,12 @@ impl JmapSessionGet {
         };
 
         debug!("prepare session fetch request");
-        trace!("session url: {session_url}");
+        trace!(
+            "session url: {}://{}{}",
+            session_url.scheme(),
+            session_url.host_str().unwrap_or_default(),
+            session_url.path(),
+        );
 
         let http_request = HttpRequest::get(session_url)
             .header("Accept", "application/json")

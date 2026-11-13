@@ -190,14 +190,14 @@ impl JmapCoroutine for JmapEmailSubmissionCancel {
                 };
 
                 if name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(args)
+                    let err = serde_json::from_str::<JmapMethodError>(args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<
+                match serde_json::from_str::<
                     SetResponse<JmapEmailSubmission, JmapEmailSubmissionSetItemError>,
-                >(args)
+                >(args.get())
                 {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailSubmissionCancelOutput {
                         new_state: r.new_state.unwrap_or_default(),

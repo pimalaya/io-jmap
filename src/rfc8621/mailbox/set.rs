@@ -98,20 +98,22 @@ pub struct JmapMailboxCreate {
     pub is_subscribed: Option<bool>,
 }
 
-/// Patch object for `Mailbox/set` update requests (RFC 8620 §5.3): only
-/// `Some` fields are serialised.
+/// Patch object for `Mailbox/set` update requests (RFC 8620 §5.3).
+///
+/// A `None` field is left unchanged; on a nullable property `Some(None)`
+/// clears it (`null`).
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapMailboxUpdate {
     /// The user-visible mailbox name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// The parent mailbox id; `None` for a top-level mailbox.
+    /// The parent mailbox id; `Some(None)` moves it to the top level.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent_id: Option<String>,
-    /// The special-use role of the mailbox.
+    pub parent_id: Option<Option<String>>,
+    /// The special-use role of the mailbox; `Some(None)` clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub role: Option<JmapMailboxRole>,
+    pub role: Option<Option<JmapMailboxRole>>,
     /// Position hint for display ordering (lower first).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<u32>,

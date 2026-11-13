@@ -337,7 +337,7 @@ impl JmapCoroutine for JmapCalendarEventQuery {
                 };
 
                 if query_name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(query_args)
+                    let err = serde_json::from_str::<JmapMethodError>(query_args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(
                         JmapCalendarEventQueryError::QueryMethod(err),
@@ -345,7 +345,7 @@ impl JmapCoroutine for JmapCalendarEventQuery {
                 }
 
                 let query_response =
-                    match serde_json::from_value::<CalendarEventQueryResponse>(query_args) {
+                    match serde_json::from_str::<CalendarEventQueryResponse>(query_args.get()) {
                         Ok(r) => r,
                         Err(err) => {
                             return JmapCoroutineState::Complete(Err(
@@ -361,14 +361,14 @@ impl JmapCoroutine for JmapCalendarEventQuery {
                 };
 
                 if get_name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(get_args)
+                    let err = serde_json::from_str::<JmapMethodError>(get_args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(
                         JmapCalendarEventQueryError::GetMethod(err),
                     ));
                 }
 
-                match serde_json::from_value::<CalendarEventGetResponse>(get_args) {
+                match serde_json::from_str::<CalendarEventGetResponse>(get_args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapCalendarEventQueryOutput {
                         events: order_by_ids(r.list, &query_response.ids, |item| {
                             item.id.as_deref()

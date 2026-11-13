@@ -101,19 +101,22 @@ pub struct JmapIdentityCreate {
 
 /// Patch object for `Identity/set` update requests.
 ///
-/// Only `Some` fields are serialized.
+/// A `None` field is left unchanged; on a nullable property `Some(None)`
+/// clears it (`null`).
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapIdentityUpdate {
     /// The display name for the sender.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// `Reply-To` addresses to set on outgoing email.
+    /// `Reply-To` addresses to set on outgoing email; `Some(None)` clears
+    /// them.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub reply_to: Option<Vec<JmapEmailAddress>>,
-    /// `Bcc` addresses to add to all outgoing email.
+    pub reply_to: Option<Option<Vec<JmapEmailAddress>>>,
+    /// `Bcc` addresses to add to all outgoing email; `Some(None)` clears
+    /// them.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bcc: Option<Vec<JmapEmailAddress>>,
+    pub bcc: Option<Option<Vec<JmapEmailAddress>>>,
     /// Plaintext signature to append to outgoing email.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_signature: Option<String>,
@@ -303,12 +306,12 @@ impl JmapCoroutine for JmapIdentitySet {
                 };
 
                 if name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(args)
+                    let err = serde_json::from_str::<JmapMethodError>(args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<IdentitySetResponse>(args) {
+                match serde_json::from_str::<IdentitySetResponse>(args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapIdentitySetOutput {
                         new_state: r.new_state.unwrap_or_default(),
                         created: BTreeMap::new(),

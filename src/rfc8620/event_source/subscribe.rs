@@ -260,7 +260,12 @@ impl JmapEventSource {
         }
 
         debug!("prepare event source subscription request");
-        trace!("subscription url: {url}");
+        trace!(
+            "subscription url: {}://{}{}",
+            url.scheme(),
+            url.host_str().unwrap_or_default(),
+            url.path(),
+        );
 
         Ok(Self {
             max_frame_len: JMAP_DEFAULT_MAX_FRAME_LEN,

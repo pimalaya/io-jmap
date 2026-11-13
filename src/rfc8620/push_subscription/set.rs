@@ -67,10 +67,12 @@
 //! println!("created {} push subscriptions", out.created.len());
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
-use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use secrecy::{ExposeSecret, SecretString};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 use crate::{
@@ -88,7 +90,9 @@ use crate::{
 /// `verificationCode` MUST NOT be set on create (RFC 8620 §7.2): the server
 /// pushes a [`super::JmapPushVerification`] to `url` and the client copies the
 /// code back via [`JmapPushSubscriptionUpdate`].
-#[derive(Clone, Debug, Default, Serialize)]
+///
+/// Its `Debug` leaves the `url` out, a push URL being a capability.
+#[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapPushSubscriptionCreate {
     /// An ID unique to the client + device, containing no unobfuscated
@@ -106,6 +110,18 @@ pub struct JmapPushSubscriptionCreate {
     /// Type names to restrict pushes to; `None` pushes all types.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub types: Option<Vec<String>>,
+}
+
+impl fmt::Debug for JmapPushSubscriptionCreate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JmapPushSubscriptionCreate")
+            .field("device_client_id", &self.device_client_id)
+            .field("url", &"[REDACTED]")
+            .field("keys", &self.keys)
+            .field("expires", &self.expires)
+            .field("types", &self.types)
+            .finish()
+    }
 }
 
 /// Patch object for `PushSubscription/set` update requests; only `Some`
@@ -136,7 +152,11 @@ pub struct JmapPushSubscriptionKeys {
     /// The P-256 ECDH public key.
     pub p256dh: String,
     /// The authentication secret.
-    pub auth: String,
+    #[serde(
+        serialize_with = "serialize_auth",
+        deserialize_with = "deserialize_auth"
+    )]
+    pub auth: SecretString,
 }
 
 /// Failure causes during a JMAP `PushSubscription/set` flow.
@@ -268,12 +288,12 @@ impl JmapCoroutine for JmapPushSubscriptionSet {
                 };
 
                 if name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(args)
+                    let err = serde_json::from_str::<JmapMethodError>(args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<PushSubscriptionSetResponse>(args) {
+                match serde_json::from_str::<PushSubscriptionSetResponse>(args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapPushSubscriptionSetOutput {
                         created: r.created.unwrap_or_default(),
                         updated: r.updated.unwrap_or_default(),
@@ -324,6 +344,14 @@ struct PushSubscriptionSetResponse {
     not_destroyed: Option<BTreeMap<String, JmapSetError>>,
 }
 
+fn serialize_auth<S: Serializer>(auth: &SecretString, serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(auth.expose_secret())
+}
+
+fn deserialize_auth<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SecretString, D::Error> {
+    String::deserialize(deserializer).map(SecretString::from)
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{format, string::ToString};
@@ -372,6 +400,32 @@ mod tests {
         let mut bytes = head.into_bytes();
         bytes.extend_from_slice(body);
         bytes
+    }
+
+    #[test]
+    fn debug_redacts_the_url_and_the_auth_secret() {
+        let create = JmapPushSubscriptionCreate {
+            device_client_id: "a889-ffea-910".to_string(),
+            url: "https://push.example.com/?device=X8980fc".to_string(),
+            keys: Some(JmapPushSubscriptionKeys {
+                p256dh: "BPublicKey".to_string(),
+                auth: "S3cr3tAuth".to_string().into(),
+            }),
+            ..Default::default()
+        };
+
+        let wire = serde_json::to_string(&create).unwrap();
+        assert!(wire.contains("X8980fc"), "{wire}");
+        assert!(wire.contains(r#""auth":"S3cr3tAuth""#), "{wire}");
+
+        let mut args = JmapPushSubscriptionSetArgs::default();
+        args.create("c1", create);
+
+        let debug = format!("{args:?}");
+        assert!(debug.contains("a889-ffea-910"), "{debug}");
+        assert!(debug.contains("BPublicKey"), "{debug}");
+        assert!(!debug.contains("X8980fc"), "{debug}");
+        assert!(!debug.contains("S3cr3tAuth"), "{debug}");
     }
 
     #[test]

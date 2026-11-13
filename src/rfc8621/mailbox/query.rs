@@ -262,7 +262,7 @@ impl JmapCoroutine for JmapMailboxQuery {
                 };
 
                 if query_name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(query_args)
+                    let err = serde_json::from_str::<JmapMethodError>(query_args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(JmapMailboxQueryError::QueryMethod(
                         err,
@@ -270,7 +270,7 @@ impl JmapCoroutine for JmapMailboxQuery {
                 }
 
                 let query_response =
-                    match serde_json::from_value::<MailboxQueryResponse>(query_args) {
+                    match serde_json::from_str::<MailboxQueryResponse>(query_args.get()) {
                         Ok(r) => r,
                         Err(err) => {
                             return JmapCoroutineState::Complete(Err(
@@ -286,14 +286,14 @@ impl JmapCoroutine for JmapMailboxQuery {
                 };
 
                 if get_name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(get_args)
+                    let err = serde_json::from_str::<JmapMethodError>(get_args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(JmapMailboxQueryError::GetMethod(
                         err,
                     )));
                 }
 
-                match serde_json::from_value::<MailboxGetResponse>(get_args) {
+                match serde_json::from_str::<MailboxGetResponse>(get_args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapMailboxQueryOutput {
                         mailboxes: order_by_ids(r.list, &query_response.ids, |item| {
                             item.id.as_deref()

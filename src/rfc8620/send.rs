@@ -136,7 +136,12 @@ impl JmapSend {
         http_request.method = "POST".into();
 
         debug!("prepare request to send");
-        trace!("api url: {api_url}");
+        trace!(
+            "api url: {}://{}{}",
+            api_url.scheme(),
+            api_url.host_str().unwrap_or_default(),
+            api_url.path(),
+        );
 
         Ok(Self {
             state: State::Send(Http11Send::new(http_request)),

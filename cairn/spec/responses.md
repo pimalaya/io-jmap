@@ -13,6 +13,14 @@ Every request-response coroutine (`JmapSend` and the method coroutines built on 
 
 `JmapEventSource` SHALL read its head through `Http11HeadersRead`, failing with `ReadHeaders(TooLarge)` past 64 KiB, and its chunks through `Http11ChunksReadStream`, failing with `ReadChunks(ChunkTooLarge)` on a chunk over its `max_chunk_len`, 1 MiB by default (`JMAP_DEFAULT_MAX_CHUNK_LEN`) and settable after `new`, before the first resume. A chunk is a transport unit, not a frame: its bound is its own, and one chunk MAY hold any number of frames.
 
+### Requirement: Method responses are decoded once
+`JmapResponse` SHALL keep the result of each method response as the JSON text the server sent (`Box<RawValue>`), and every coroutine SHALL decode that text once, straight into its typed response: no generic JSON tree is built of a response, so a property the library does not model costs no allocation, and what a response holds on the heap follows its wire size, not the number of values in it. The per-object errors of a `Foo/set` stay generic values until their wrapper types them, being few and small.
+
+#### Scenario: Emails carrying properties the library does not model
+- GIVEN an `Email/get` response of 1000 emails, each an id and 20 unmodelled properties
+- WHEN `JmapEmailGet` decodes it
+- THEN it allocates fewer than 2000 times, one string per id and the buffers, where a JSON tree took over 46000
+
 ### Requirement: Event source frames are bounded
 `JmapEventSource` SHALL fail with `FrameTooLarge(max_frame_len)` once one SSE frame exceeds its `max_frame_len`, 64 KiB by default (`JMAP_DEFAULT_MAX_FRAME_LEN`) and settable after `new`, before the first resume. The size of a frame SHALL be the bytes of the lines since the last blank line, the line in progress included, comment lines and line ends aside: a frame that fits is never refused, however many frames or comment lines the stream carries. The count SHALL be taken on each decoded chunk before the SSE parser sees it, so what the parser holds stays within one chunk and a small multiple of `max_frame_len`; a chunk holding a frame over the limit fails whole, the frames ahead of it in that chunk included.
 

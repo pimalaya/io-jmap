@@ -24,6 +24,7 @@ use io_jmap::{
             set::*,
         },
         email_submission::{JmapEmailSubmissionSetItemError, cancel::*, set::*},
+        identity::set::JmapIdentityUpdate,
         mailbox::{
             get::{
                 JmapMailboxGet, JmapMailboxGetError, JmapMailboxGetOptions, JmapMailboxGetOutput,
@@ -34,7 +35,7 @@ use io_jmap::{
             },
             set::{
                 JmapMailboxCreate, JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError,
-                JmapMailboxSetOutput,
+                JmapMailboxSetOutput, JmapMailboxUpdate,
             },
         },
         vacation_response::get::{JmapVacationResponseGet, JmapVacationResponseGetError},
@@ -983,4 +984,39 @@ fn email_parse_reads_a_null_parsed() {
     assert!(out.parsed.is_empty());
     assert_eq!(out.not_parsable, vec!["b1"]);
     assert_eq!(out.not_found, vec!["b2"]);
+}
+
+#[test]
+fn mailbox_update_clears_a_nullable_property() {
+    let patch = JmapMailboxUpdate {
+        parent_id: Some(None),
+        role: Some(None),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(patch).unwrap(),
+        serde_json::json!({ "parentId": null, "role": null })
+    );
+
+    let patch = JmapMailboxUpdate {
+        parent_id: Some(Some("m1".to_owned())),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(patch).unwrap(),
+        serde_json::json!({ "parentId": "m1" })
+    );
+}
+
+#[test]
+fn identity_update_clears_a_nullable_property() {
+    let patch = JmapIdentityUpdate {
+        reply_to: Some(None),
+        bcc: Some(None),
+        ..Default::default()
+    };
+    assert_eq!(
+        serde_json::to_value(patch).unwrap(),
+        serde_json::json!({ "replyTo": null, "bcc": null })
+    );
 }

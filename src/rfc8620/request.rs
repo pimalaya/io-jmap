@@ -2,10 +2,10 @@
 //! objects, the batch builder generating call ids, and the result reference
 //! used to back-reference an earlier call within a batch.
 
-use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeMap, format, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, value::RawValue};
 
 /// A JMAP result reference (RFC 8620 §3.7) used to back-reference an
 /// earlier method call's result within a batch request.
@@ -38,11 +38,12 @@ pub struct JmapRequest {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapResponse {
-    /// Method responses in `(methodName, result, callId)` format.
+    /// Method responses in `(methodName, result, callId)` format, the
+    /// result kept as the JSON text the server sent.
     ///
     /// If a method failed, `methodName` is `"error"` and `result` is a
     /// [`crate::rfc8620::error::JmapMethodError`] object.
-    pub method_responses: Vec<(String, Value, String)>,
+    pub method_responses: Vec<(String, Box<RawValue>, String)>,
     /// Server-assigned IDs for objects created by this request.
     #[serde(default)]
     pub created_ids: Option<BTreeMap<String, String>>,

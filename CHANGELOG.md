@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING**: `JmapResponse::method_responses` keeps each result as a `Box<RawValue>`, the JSON text the server sent, where it held a `serde_json::Value`.
+
+  Every coroutine decodes it once into its typed response, so properties the library does not model cost no allocation. Enables the `raw_value` feature of serde_json.
+
+- **BREAKING**: `JmapMailboxUpdate` takes `Option<Option<T>>` for `parent_id` and `role`, `JmapIdentityUpdate` for `reply_to` and `bcc`, `JmapAddressBookUpdate` for `description` and `share_with`: `Some(None)` clears the property (`null`), so a mailbox can move to the top level.
+- **BREAKING**: `JmapPushSubscriptionKeys::auth` is a `SecretString`, and the `Debug` of `JmapPushSubscriptionCreate` leaves its `url` out.
 - **BREAKING**: `JmapEventSource::new` takes a `JmapEventSourceOptions`, and `JmapEventSourceError` gained `InvalidLastEventId`.
 - **BREAKING**: `JmapEventSourceYield::Frame` is now `Frame { change, id }`, carrying the last event id the server set.
 - **BREAKING**: `JmapEventSource` skips a frame naming another event than `state`, which used to be read as a StateChange and to fail the stream when it was none; an empty `types` subscribes to `*` instead of sending `types=`.
@@ -45,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Email/parse` reads a `parsed: null` (RFC 8621 §4.9) as an empty map instead of failing and hiding `notParsable` and `notFound`.
 - The `Host` header keeps a port that is not the scheme default: the coroutines no longer set it by hand and leave it to io-http.
 - `Email/set` sends the emails to create without the properties left unset, which were written as `null`, server-set ones included (RFC 8620 §5.3).
+- The trace logs name a request URL by its scheme, host and path, without the userinfo and the query, either of which may hold a credential.
 
 ## [0.7.0] - 2026-11-03
 

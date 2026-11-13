@@ -181,12 +181,12 @@ impl JmapCoroutine for JmapEmailParse {
                 };
 
                 if name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(args)
+                    let err = serde_json::from_str::<JmapMethodError>(args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<EmailParseResponse>(args) {
+                match serde_json::from_str::<EmailParseResponse>(args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailParseOutput {
                         parsed: r.parsed.unwrap_or_default(),
                         not_parsable: r.not_parsable.unwrap_or_default(),

@@ -391,22 +391,22 @@ impl JmapCoroutine for JmapEmailQuery {
                 };
 
                 if query_name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(query_args)
+                    let err = serde_json::from_str::<JmapMethodError>(query_args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(JmapEmailQueryError::QueryMethod(
                         err,
                     )));
                 }
 
-                let query_response = match serde_json::from_value::<EmailQueryResponse>(query_args)
-                {
-                    Ok(r) => r,
-                    Err(err) => {
-                        return JmapCoroutineState::Complete(Err(
-                            JmapEmailQueryError::ParseQueryResponse(err),
-                        ));
-                    }
-                };
+                let query_response =
+                    match serde_json::from_str::<EmailQueryResponse>(query_args.get()) {
+                        Ok(r) => r,
+                        Err(err) => {
+                            return JmapCoroutineState::Complete(Err(
+                                JmapEmailQueryError::ParseQueryResponse(err),
+                            ));
+                        }
+                    };
 
                 let Some((get_name, get_args, _)) = responses.next() else {
                     return JmapCoroutineState::Complete(Err(
@@ -415,12 +415,12 @@ impl JmapCoroutine for JmapEmailQuery {
                 };
 
                 if get_name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(get_args)
+                    let err = serde_json::from_str::<JmapMethodError>(get_args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(JmapEmailQueryError::GetMethod(err)));
                 }
 
-                match serde_json::from_value::<EmailGetResponse>(get_args) {
+                match serde_json::from_str::<EmailGetResponse>(get_args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailQueryOutput {
                         emails: order_by_ids(r.list, &query_response.ids, |item| {
                             item.id.as_deref()

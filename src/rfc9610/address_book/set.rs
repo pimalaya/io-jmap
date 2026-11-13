@@ -100,26 +100,28 @@ pub struct JmapAddressBookCreate {
     pub share_with: Option<BTreeMap<String, JmapAddressBookRights>>,
 }
 
-/// Patch object for `AddressBook/set` update requests (RFC 8620 §5.3): only
-/// `Some` fields are serialised.
+/// Patch object for `AddressBook/set` update requests (RFC 8620 §5.3).
+///
+/// A `None` field is left unchanged; on a nullable property `Some(None)`
+/// clears it (`null`).
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapAddressBookUpdate {
     /// The user-visible address book name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Optional long-form description.
+    /// Optional long-form description; `Some(None)` clears it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<Option<String>>,
     /// Position hint for display ordering (lower first).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<u32>,
     /// Whether the user is subscribed to the address book.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_subscribed: Option<bool>,
-    /// Principal id to rights map (RFC 9670).
+    /// Principal id to rights map (RFC 9670); `Some(None)` unshares it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub share_with: Option<BTreeMap<String, JmapAddressBookRights>>,
+    pub share_with: Option<Option<BTreeMap<String, JmapAddressBookRights>>>,
 }
 
 /// Per-object error returned in `AddressBook/set` responses (RFC 9610 §2.3).
@@ -327,4 +329,25 @@ struct AddressBookSetRequest {
     account_id: String,
     #[serde(flatten)]
     args: JmapAddressBookSetArgs,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::rfc9610::address_book::set::JmapAddressBookUpdate;
+
+    #[test]
+    fn update_clears_a_nullable_property() {
+        let patch = JmapAddressBookUpdate {
+            description: Some(None),
+            share_with: Some(None),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(patch).unwrap(),
+            json!({ "description": null, "shareWith": null })
+        );
+    }
 }

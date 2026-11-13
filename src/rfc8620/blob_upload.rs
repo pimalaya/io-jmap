@@ -133,7 +133,12 @@ impl JmapBlobUpload {
         http_request.method = "POST".into();
 
         debug!("prepare blob upload request");
-        trace!("upload url: {upload_url}");
+        trace!(
+            "upload url: {}://{}{}",
+            upload_url.scheme(),
+            upload_url.host_str().unwrap_or_default(),
+            upload_url.path(),
+        );
 
         Ok(Self {
             state: State::Send(Http11Send::new(http_request)),

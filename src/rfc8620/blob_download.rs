@@ -103,7 +103,12 @@ impl JmapBlobDownload {
             .header("Authorization", http_auth.expose_secret());
 
         debug!("prepare blob download request");
-        trace!("download url: {download_url}");
+        trace!(
+            "download url: {}://{}{}",
+            download_url.scheme(),
+            download_url.host_str().unwrap_or_default(),
+            download_url.path(),
+        );
 
         Self {
             max_len: HTTP_DEFAULT_MAX_BODY_LEN,

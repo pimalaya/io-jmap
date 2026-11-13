@@ -145,12 +145,12 @@ impl JmapCoroutine for JmapChanges {
                 };
 
                 if name == "error" {
-                    let err = serde_json::from_value::<JmapMethodError>(args)
+                    let err = serde_json::from_str::<JmapMethodError>(args.get())
                         .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_value::<ChangesResponse>(args) {
+                match serde_json::from_str::<ChangesResponse>(args.get()) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapChangesOutput {
                         new_state: r.new_state,
                         has_more_changes: r.has_more_changes,
