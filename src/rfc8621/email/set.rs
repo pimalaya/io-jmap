@@ -146,17 +146,19 @@ impl Serialize for JmapEmailPatch {
         for op in &self.0 {
             match op {
                 JmapEmailPatchOp::SetKeyword(kw) => {
-                    map.serialize_entry(&format!("keywords/{kw}"), &true)?
+                    map.serialize_entry(&format!("keywords/{}", pointer(kw)), &true)?
                 }
                 JmapEmailPatchOp::UnsetKeyword(kw) => {
-                    map.serialize_entry(&format!("keywords/{kw}"), &Option::<bool>::None)?
+                    let path = format!("keywords/{}", pointer(kw));
+                    map.serialize_entry(&path, &Option::<bool>::None)?
                 }
                 JmapEmailPatchOp::ReplaceKeywords(kws) => map.serialize_entry("keywords", kws)?,
                 JmapEmailPatchOp::AddToMailbox(id) => {
-                    map.serialize_entry(&format!("mailboxIds/{id}"), &true)?
+                    map.serialize_entry(&format!("mailboxIds/{}", pointer(id)), &true)?
                 }
                 JmapEmailPatchOp::RemoveFromMailbox(id) => {
-                    map.serialize_entry(&format!("mailboxIds/{id}"), &Option::<bool>::None)?
+                    let path = format!("mailboxIds/{}", pointer(id));
+                    map.serialize_entry(&path, &Option::<bool>::None)?
                 }
                 JmapEmailPatchOp::ReplaceMailboxIds(ids) => {
                     map.serialize_entry("mailboxIds", ids)?
@@ -488,4 +490,30 @@ struct EmailSetRequest {
     account_id: String,
     #[serde(flatten)]
     args: JmapEmailSetArgs,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::rfc8621::email::set::JmapEmailPatch;
+
+    #[test]
+    fn patch_paths_escape_keywords_and_mailbox_ids() {
+        let patch = JmapEmailPatch::default()
+            .set_keyword("todo/later")
+            .unset_keyword("a~b")
+            .add_to_mailbox("m/1")
+            .remove_from_mailbox("m~2");
+
+        assert_eq!(
+            serde_json::to_value(patch).unwrap(),
+            json!({
+                "keywords/todo~1later": true,
+                "keywords/a~0b": null,
+                "mailboxIds/m~11": true,
+                "mailboxIds/m~02": null,
+            })
+        );
+    }
 }

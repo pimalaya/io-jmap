@@ -11,7 +11,20 @@ How io-jmap reads what a JMAP server answers over HTTP/1.1, through io-http's re
 ### Requirement: Responses are bounded
 Every request-response coroutine (`JmapSend` and the method coroutines built on it, `JmapSessionGet`, `JmapBlobUpload`, `JmapBlobDownload`) SHALL read its response through io-http's `Http11Send` with its default bounds: a response head over 64 KiB SHALL fail with `Send(HeadersTooLarge)`, a body over 256 MiB with `Send(BodyTooLarge)`, and a connection closed before the response ends with `Send(Eof)`.
 
-`JmapEventSource` SHALL read its head through `Http11HeadersRead`, failing with `ReadHeaders(TooLarge)` past 64 KiB, and its chunks through `Http11ChunksReadStream`, failing with `ReadChunks(ChunkTooLarge)` on a chunk over 256 MiB. The SSE frames its `SseFrameParser` assembles across chunks carry no bound of their own.
+`JmapEventSource` SHALL read its head through `Http11HeadersRead`, failing with `ReadHeaders(TooLarge)` past 64 KiB, and its chunks through `Http11ChunksReadStream`, failing with `ReadChunks(ChunkTooLarge)` on a chunk over its `max_frame_len`.
+
+### Requirement: Event source frames are bounded
+`JmapEventSource` SHALL fail with `FrameTooLarge(max_frame_len)` once one SSE frame exceeds its `max_frame_len`, 64 KiB by default (`JMAP_DEFAULT_MAX_FRAME_LEN`) and settable after `new`, before the first resume. The size of a frame SHALL be the bytes of the lines since the last blank line, the line in progress included, comment lines and line ends aside: a frame that fits is never refused, however many frames or comment lines the stream carries. The count SHALL be taken on each decoded chunk before the SSE parser sees it, so what the parser holds stays within a small multiple of `max_frame_len`.
+
+#### Scenario: A line that never ends
+- GIVEN a `JmapEventSource` with the default `max_frame_len`
+- WHEN the server streams chunks holding no line end, 64 KiB and one byte in all
+- THEN the coroutine completes with `FrameTooLarge(65536)`
+
+#### Scenario: Data lines with no blank line
+- GIVEN a `JmapEventSource` whose `max_frame_len` is 64
+- WHEN the server streams `data:` lines with no blank line, past 64 bytes in all
+- THEN the coroutine completes with `FrameTooLarge(64)`
 
 ### Requirement: Blob downloads take their own limit
 `JmapBlobDownload` SHALL fail with `Send(BodyTooLarge(max_len))` once the blob exceeds its `max_len`, 256 MiB by default and settable after `new`. `JmapClientStd::blob_download` SHALL apply the client's `max_blob_len`, same default.

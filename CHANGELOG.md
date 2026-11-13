@@ -10,9 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Added `AlreadyExists { existing_id, description }` to `JmapEmailImportItemError` (RFC 8621 §4.8): a server forbidding duplicates names the email it already holds.
+- Added `max_frame_len` to `JmapEventSource`, 64 KiB by default (`JMAP_DEFAULT_MAX_FRAME_LEN`).
 
 ### Changed
 
+- **BREAKING**: `JmapEventSourceError` gained `FrameTooLarge`: an SSE frame over `max_frame_len` fails the stream instead of growing without bound. A chunk over `max_frame_len` fails with `ReadChunks(ChunkTooLarge)`, where the limit was 256 MiB.
+- **BREAKING**: `JmapBlobUpload::new` returns a `Result`, and `JmapBlobUploadError` gained `InvalidContentType`: a content type holding a CR, LF or NUL is refused instead of written into the request head.
 - **BREAKING**: The catch-all `Unknown` of every per-object SetError enum (`JmapMailboxSetItemError`, `JmapEmailSetItemError`, `JmapEmailImportItemError`, `JmapEmailCopyItemError`, `JmapIdentitySetItemError`, `JmapEmailSubmissionSetItemError`, `JmapAddressBookSetItemError`, `JmapContactCardSetItemError`, `JmapContactCardCopyItemError`, `JmapCalendarEventSetItemError`) is now `Other { type_name, description }`, keeping the type and description the server sent.
 - **BREAKING**: `AlreadyExists` of `JmapEmailCopyItemError` and `JmapContactCardCopyItemError` carries the `existing_id` RFC 8620 §5.4 requires; one without it reads as `Other`.
 - **BREAKING**: `JmapMethodError::Unknown` is now `Other { type_name, description }`, keeping the type and description of a method error this library does not model (`fromAccountNotFound`), and `InvalidArguments` carries the `arguments` some servers (Fastmail) name, displayed as `JMAP invalidArguments [filter/inMailbox]`. A method response named `error` whose arguments are no error object reads as `Other` with an empty `type_name` and the parse failure as description.
@@ -23,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The chained `Foo/query` + `Foo/get` coroutines (`JmapMailboxQuery`, `JmapEmailQuery`, `JmapEmailSubmissionQuery`, `JmapCalendarEventQuery`, `JmapContactCardQuery`) return the objects in the order of the query ids: RFC 8620 §5.1 leaves the order of a `/get` list to the server, and Fastmail's `Mailbox/get` ignores the sort.
 - `VacationResponse/set` reads a `newState: null` (Fastmail) as an empty `new_state` rather than failing after the update was applied.
 - `VacationResponse/set` reads the partial object Fastmail echoes under `updated` (the properties it was sent) instead of failing for want of an `id`; `updated` is filled only when the echo is a whole VacationResponse.
+- `JmapEmailPatch` escapes the keyword and the mailbox id of its patch paths as JSON Pointer tokens (RFC 6901 §3): the keyword `todo/later` is patched as `keywords/todo~1later`.
 
 ## [0.7.0] - 2026-11-03
 

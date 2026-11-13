@@ -234,6 +234,11 @@ struct SetResponse<T> {
     not_destroyed: Option<BTreeMap<String, serde_json::Value>>,
 }
 
+/// One key as a JSON pointer segment (RFC 6901 §4).
+pub(crate) fn pointer(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::{format, string::ToString, vec};

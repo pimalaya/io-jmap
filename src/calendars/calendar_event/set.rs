@@ -410,11 +410,6 @@ fn is_false(b: &bool) -> bool {
     !b
 }
 
-/// One key as a JSON pointer segment (RFC 6901 §4).
-fn pointer(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
-}
-
 #[cfg(test)]
 mod tests {
     use alloc::string::String;

@@ -434,7 +434,8 @@ fn run(connect: &dyn Fn(&Url) -> JmapStream, session_url: &str, http_auth: &str,
         }
 
         let eml = build_eml(email).into_bytes();
-        let mut coroutine = JmapBlobUpload::new(&token, &upload_url, "message/rfc822", eml);
+        let mut coroutine =
+            JmapBlobUpload::new(&token, &upload_url, "message/rfc822", eml).expect("blob upload");
         let mut arg: Option<&[u8]> = None;
         let mut read_buf = Vec::<u8>::new();
 

@@ -27,7 +27,9 @@
 //! let url: Url = "https://api.example.com/jmap/upload/a1/".parse().unwrap();
 //! let auth = SecretString::from("Bearer xyz");
 //! let data = b"hello".to_vec();
-//! let mut coroutine = JmapBlobUpload::new(&auth, &url, "application/octet-stream", data);
+//! let content_type = "application/octet-stream";
+//! let mut coroutine =
+//!     JmapBlobUpload::new(&auth, &url, content_type, data).unwrap();
 //! let mut arg = None;
 //!
 //! let out = loop {
@@ -68,6 +70,9 @@ use crate::{coroutine::*, rfc8620::coroutine::JmapRedirectYield};
 /// Failure causes during the JMAP blob-upload flow.
 #[derive(Debug, Error)]
 pub enum JmapBlobUploadError {
+    /// The content type holds a CR, LF or NUL (RFC 9110 §5.5).
+    #[error("JMAP blob-upload failed: invalid content type")]
+    InvalidContentType,
     /// The server answered with a non-2xx status.
     #[error("JMAP blob-upload failed: HTTP {0}")]
     HttpStatus(u16),
@@ -109,12 +114,18 @@ impl JmapBlobUpload {
     /// - `upload_url`: the fully resolved upload URL (no template placeholders)
     /// - `content_type`: MIME type of the blob (e.g. `"message/rfc822"`)
     /// - `data`: raw bytes to upload
+    ///
+    /// A `content_type` holding a CR, LF or NUL is refused.
     pub fn new(
         http_auth: &SecretString,
         upload_url: &Url,
         content_type: &str,
         data: Vec<u8>,
-    ) -> Self {
+    ) -> Result<Self, JmapBlobUploadError> {
+        if content_type.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0)) {
+            return Err(JmapBlobUploadError::InvalidContentType);
+        }
+
         let host = upload_url.host_str().unwrap_or("localhost");
 
         let mut http_request = HttpRequest::get(upload_url.clone())
@@ -127,9 +138,9 @@ impl JmapBlobUpload {
         debug!("prepare blob upload request");
         trace!("upload url: {upload_url}");
 
-        Self {
+        Ok(Self {
             state: State::Send(Http11Send::new(http_request)),
-        }
+        })
     }
 }
 
@@ -202,7 +213,7 @@ mod tests {
 
     #[test]
     fn success_returns_ok() {
-        let mut cor = JmapBlobUpload::new(&make_auth(), &make_url(), "text/plain", b"hi".to_vec());
+        let mut cor = upload("text/plain").unwrap();
 
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
@@ -217,7 +228,7 @@ mod tests {
 
     #[test]
     fn http_error_returns_status() {
-        let mut cor = JmapBlobUpload::new(&make_auth(), &make_url(), "text/plain", b"hi".to_vec());
+        let mut cor = upload("text/plain").unwrap();
 
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
@@ -229,7 +240,7 @@ mod tests {
 
     #[test]
     fn redirect_yields_redirect() {
-        let mut cor = JmapBlobUpload::new(&make_auth(), &make_url(), "text/plain", b"hi".to_vec());
+        let mut cor = upload("text/plain").unwrap();
 
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
@@ -245,7 +256,7 @@ mod tests {
 
     #[test]
     fn invalid_json_returns_parse_error() {
-        let mut cor = JmapBlobUpload::new(&make_auth(), &make_url(), "text/plain", b"hi".to_vec());
+        let mut cor = upload("text/plain").unwrap();
 
         expect_wants_write(&mut cor, None);
         expect_wants_read(&mut cor);
@@ -257,10 +268,30 @@ mod tests {
 
     #[test]
     fn request_uses_post_method() {
-        let mut cor = JmapBlobUpload::new(&make_auth(), &make_url(), "text/plain", b"hi".to_vec());
+        let mut cor = upload("text/plain").unwrap();
         let bytes = expect_wants_write(&mut cor, None);
         let req = core::str::from_utf8(&bytes).expect("utf8 request");
         assert!(req.starts_with("POST "));
+    }
+
+    #[test]
+    fn content_type_with_cr_lf_or_nul_returns_error() {
+        for content_type in [
+            "text/plain\r\nX-Injected: 1",
+            "text/\rplain",
+            "text/\nplain",
+            "text/\0plain",
+        ] {
+            let err = upload(content_type).err();
+            assert!(
+                matches!(err, Some(JmapBlobUploadError::InvalidContentType)),
+                "{content_type:?}: {err:?}"
+            );
+        }
+    }
+
+    fn upload(content_type: &str) -> Result<JmapBlobUpload, JmapBlobUploadError> {
+        JmapBlobUpload::new(&make_auth(), &make_url(), content_type, b"hi".to_vec())
     }
 
     fn expect_wants_write(cor: &mut JmapBlobUpload, arg: Option<&[u8]>) -> Vec<u8> {

@@ -494,7 +494,7 @@ impl JmapClientStd {
         content_type: &str,
         data: Vec<u8>,
     ) -> Result<JmapBlobUploadOutput, JmapClientStdError> {
-        let mut coroutine = JmapBlobUpload::new(&self.http_auth, upload_url, content_type, data);
+        let mut coroutine = JmapBlobUpload::new(&self.http_auth, upload_url, content_type, data)?;
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
 
