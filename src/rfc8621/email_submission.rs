@@ -215,9 +215,16 @@ pub enum JmapEmailSubmissionSetItemError {
         #[serde(default)]
         properties: Vec<String>,
     },
-    /// Catch-all for set errors not modelled above.
-    #[serde(other)]
-    Unknown,
+    /// A set error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the server named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
 }
 
 impl fmt::Display for JmapEmailSubmissionSetItemError {
@@ -259,7 +266,10 @@ impl fmt::Display for JmapEmailSubmissionSetItemError {
                 description,
                 properties,
             } => write_properties(f, description, properties),
-            Self::Unknown => write!(f, "JMAP unknown error"),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
         }
     }
 }

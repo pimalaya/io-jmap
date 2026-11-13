@@ -99,8 +99,12 @@ pub struct JmapEmailCopyArgs {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum JmapEmailCopyItemError {
-    /// The email already exists in the destination account (RFC 8621 §4.10).
+    /// The server forbids duplicates and the email already exists in the
+    /// destination account (RFC 8620 §5.4, RFC 8621 §4.7).
     AlreadyExists {
+        /// The id of the existing email.
+        #[serde(rename = "existingId")]
+        existing_id: String,
         /// Optional human-readable detail.
         description: Option<String>,
     },
@@ -117,9 +121,16 @@ pub enum JmapEmailCopyItemError {
         #[serde(default)]
         properties: Vec<String>,
     },
-    /// Catch-all for set errors not modelled above.
-    #[serde(other)]
-    Unknown,
+    /// A set error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the server named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
 }
 
 /// Failure causes during a JMAP `Email/copy` flow.
@@ -213,7 +224,7 @@ impl JmapCoroutine for JmapEmailCopy {
 
                 if name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `AlreadyExists { existing_id, description }` to `JmapEmailImportItemError` (RFC 8621 §4.8): a server forbidding duplicates names the email it already holds.
+
+### Changed
+
+- **BREAKING**: The catch-all `Unknown` of every per-object SetError enum (`JmapMailboxSetItemError`, `JmapEmailSetItemError`, `JmapEmailImportItemError`, `JmapEmailCopyItemError`, `JmapIdentitySetItemError`, `JmapEmailSubmissionSetItemError`, `JmapAddressBookSetItemError`, `JmapContactCardSetItemError`, `JmapContactCardCopyItemError`, `JmapCalendarEventSetItemError`) is now `Other { type_name, description }`, keeping the type and description the server sent.
+- **BREAKING**: `AlreadyExists` of `JmapEmailCopyItemError` and `JmapContactCardCopyItemError` carries the `existing_id` RFC 8620 §5.4 requires; one without it reads as `Other`.
+- **BREAKING**: `JmapMethodError::Unknown` is now `Other { type_name, description }`, keeping the type and description of a method error this library does not model (`fromAccountNotFound`), and `InvalidArguments` carries the `arguments` some servers (Fastmail) name, displayed as `JMAP invalidArguments [filter/inMailbox]`. A method response named `error` whose arguments are no error object reads as `Other` with an empty `type_name` and the parse failure as description.
+- **BREAKING**: `JmapVacationResponseUpdate` takes `Option<Option<String>>` for `from_date`, `to_date`, `subject`, `text_body` and `html_body`: `None` leaves the property unchanged, `Some(None)` clears it (`null`), which the previous `Option<String>` could not say.
+
+### Fixed
+
+- The chained `Foo/query` + `Foo/get` coroutines (`JmapMailboxQuery`, `JmapEmailQuery`, `JmapEmailSubmissionQuery`, `JmapCalendarEventQuery`, `JmapContactCardQuery`) return the objects in the order of the query ids: RFC 8620 §5.1 leaves the order of a `/get` list to the server, and Fastmail's `Mailbox/get` ignores the sort.
+- `VacationResponse/set` reads a `newState: null` (Fastmail) as an empty `new_state` rather than failing after the update was applied.
+- `VacationResponse/set` reads the partial object Fastmail echoes under `updated` (the properties it was sent) instead of failing for want of an `id`; `updated` is filled only when the echo is a whole VacationResponse.
+
 ## [0.7.0] - 2026-11-03
 
 ### Added

@@ -77,8 +77,8 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, filter::JmapFilter, request::JmapBatch,
-        request::JmapResultReference, send::*, session::JmapSession,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, filter::JmapFilter, query::order_by_ids,
+        request::JmapBatch, request::JmapResultReference, send::*, session::JmapSession,
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
@@ -387,7 +387,7 @@ impl JmapCoroutine for JmapEmailQuery {
 
                 if query_name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(query_args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(JmapEmailQueryError::QueryMethod(
                         err,
                     )));
@@ -411,13 +411,15 @@ impl JmapCoroutine for JmapEmailQuery {
 
                 if get_name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(get_args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(JmapEmailQueryError::GetMethod(err)));
                 }
 
                 match serde_json::from_value::<EmailGetResponse>(get_args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailQueryOutput {
-                        emails: r.list,
+                        emails: order_by_ids(r.list, &query_response.ids, |item| {
+                            item.id.as_deref()
+                        }),
                         total: query_response.total,
                         position: query_response.position,
                         query_state: query_response.query_state,
@@ -470,6 +472,8 @@ struct EmailGetByRefArgs<'a> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EmailQueryResponse {
+    #[serde(default)]
+    ids: Vec<String>,
     query_state: String,
     #[serde(default)]
     total: Option<u64>,

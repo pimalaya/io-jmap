@@ -4,7 +4,10 @@
 
 use core::{error::Error, fmt};
 
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +57,9 @@ pub enum JmapMethodError {
     InvalidArguments {
         /// Optional human-readable detail.
         description: Option<String>,
+        /// The invalid argument names, which some servers (Fastmail) send.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        arguments: Vec<String>,
     },
     /// Access denied for this method call (RFC 8620 §3.6.2), e.g. requesting
     /// the `url` or `keys` properties in `PushSubscription/get` (§7.2.1).
@@ -122,9 +128,16 @@ pub enum JmapMethodError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
-    /// Any error type this library does not know about.
-    #[serde(other)]
-    Unknown,
+    /// A method error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the response named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
 }
 
 impl fmt::Display for JmapMethodError {
@@ -173,8 +186,14 @@ impl fmt::Display for JmapMethodError {
                 }
                 Ok(())
             }
-            Self::InvalidArguments { description } => {
+            Self::InvalidArguments {
+                description,
+                arguments,
+            } => {
                 write!(f, "JMAP invalidArguments")?;
+                if !arguments.is_empty() {
+                    write!(f, " [{}]", arguments.join(", "))?;
+                }
                 if let Some(d) = description {
                     write!(f, ": {d}")?;
                 }
@@ -241,7 +260,21 @@ impl fmt::Display for JmapMethodError {
             Self::UnsupportedFilter { description } => {
                 write_described(f, "unsupportedFilter", description)
             }
-            Self::Unknown => write!(f, "JMAP unknown error"),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
+        }
+    }
+}
+
+impl JmapMethodError {
+    /// The error a method response named `error` reads as when its
+    /// arguments are no error object, the parse failure as description.
+    pub(crate) fn unreadable(err: serde_json::Error) -> Self {
+        Self::Other {
+            type_name: String::new(),
+            description: Some(err.to_string()),
         }
     }
 }
@@ -291,4 +324,36 @@ pub struct JmapSetError {
     /// The properties the error relates to, when applicable.
     #[serde(default)]
     pub properties: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::ToString;
+
+    use crate::rfc8620::error::JmapMethodError;
+
+    #[test]
+    fn an_unmodelled_type_keeps_what_the_server_said() {
+        let err: JmapMethodError = serde_json::from_value(serde_json::json!({
+            "type": "fromAccountNotFound",
+            "description": "Not a valid accountId",
+        }))
+        .unwrap();
+
+        assert_eq!(
+            err.to_string(),
+            "JMAP fromAccountNotFound: Not a valid accountId"
+        );
+    }
+
+    #[test]
+    fn invalid_arguments_name_the_arguments() {
+        let err: JmapMethodError = serde_json::from_value(serde_json::json!({
+            "type": "invalidArguments",
+            "arguments": ["filter/inMailbox"],
+        }))
+        .unwrap();
+
+        assert_eq!(err.to_string(), "JMAP invalidArguments [filter/inMailbox]");
+    }
 }

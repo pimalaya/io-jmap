@@ -101,11 +101,20 @@ pub struct JmapEmailImportArgs {
     pub received_at: Option<String>,
 }
 
-/// Per-object error returned in `Email/import` responses (RFC 8621 §4.9).
+/// Per-object error returned in `Email/import` responses (RFC 8621 §4.8).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum JmapEmailImportItemError {
-    /// The message body was not a valid RFC 5322 message (RFC 8621 §4.9).
+    /// The server forbids duplicates and the email already exists in the
+    /// account (RFC 8621 §4.8).
+    AlreadyExists {
+        /// The id of the existing email.
+        #[serde(rename = "existingId")]
+        existing_id: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// The message body was not a valid RFC 5322 message (RFC 8621 §4.8).
     InvalidEmail {
         /// Optional human-readable detail.
         description: Option<String>,
@@ -123,21 +132,41 @@ pub enum JmapEmailImportItemError {
         #[serde(default)]
         properties: Vec<String>,
     },
-    /// Catch-all for set errors not modelled above.
-    #[serde(other)]
-    Unknown,
+    /// A set error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the server named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
 }
 
 impl fmt::Display for JmapEmailImportItemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::AlreadyExists {
+                existing_id,
+                description,
+            } => {
+                write!(f, "JMAP alreadyExists (existing id {existing_id})")?;
+                if let Some(description) = description {
+                    write!(f, ": {description}")?;
+                }
+                Ok(())
+            }
             Self::InvalidEmail { description } => write_described(f, "invalidEmail", description),
             Self::NotFound { description } => write_described(f, "notFound", description),
             Self::InvalidProperties {
                 description,
                 properties,
             } => write_properties(f, description, properties),
-            Self::Unknown => write!(f, "JMAP unknown error"),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
         }
     }
 }
@@ -230,7 +259,7 @@ impl JmapCoroutine for JmapEmailImport {
 
                 if name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
@@ -277,10 +306,8 @@ mod tests {
 
     use super::*;
 
-    /// Fastmail answers `notCreated: null` when every import landed, which
-    /// RFC 8620 §5.3 allows of a create map.
-    #[test]
-    fn a_null_map_reads_as_empty() {
+    /// Runs one `Email/import` of `m0` against the response `body`.
+    fn import(body: &[u8]) -> JmapEmailImportOutput {
         let session: JmapSession = serde_json::from_value(serde_json::json!({
             "username": "",
             "accounts": {},
@@ -303,13 +330,6 @@ mod tests {
         let mut coroutine =
             JmapEmailImport::new(&session, &SecretString::from("Bearer t"), emails).unwrap();
 
-        let body = br#"{
-            "methodResponses": [["Email/import", {
-                "accountId": "a1", "oldState": "e1", "newState": "e2",
-                "created": {"m0": {"id": "E1", "blobId": "b1"}}, "notCreated": null
-            }, "c0"]],
-            "sessionState": "s1"
-        }"#;
         let mut reply = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
             body.len()
@@ -329,7 +349,69 @@ mod tests {
             panic!("the import did not complete");
         };
 
+        out
+    }
+
+    /// Fastmail answers `notCreated: null` when every import landed, which
+    /// RFC 8620 §5.3 allows of a create map.
+    #[test]
+    fn a_null_map_reads_as_empty() {
+        let out = import(
+            br#"{
+                "methodResponses": [["Email/import", {
+                    "accountId": "a1", "oldState": "e1", "newState": "e2",
+                    "created": {"m0": {"id": "E1", "blobId": "b1"}}, "notCreated": null
+                }, "c0"]],
+                "sessionState": "s1"
+            }"#,
+        );
+
         assert!(out.not_created.is_empty());
         assert_eq!(out.created["m0"].id.as_deref(), Some("E1"));
+    }
+
+    /// Fastmail refuses an import of a message the account holds with
+    /// `alreadyExists`, naming the existing email (RFC 8621 §4.8).
+    #[test]
+    fn a_duplicate_names_the_existing_email() {
+        let out = import(
+            br#"{
+                "methodResponses": [["Email/import", {
+                    "accountId": "a1", "oldState": "e1", "newState": "e1",
+                    "created": null,
+                    "notCreated": {"m0": {"type": "alreadyExists", "existingId": "E1"}}
+                }, "c0"]],
+                "sessionState": "s1"
+            }"#,
+        );
+
+        assert!(matches!(
+            &out.not_created["m0"],
+            JmapEmailImportItemError::AlreadyExists { existing_id, .. } if existing_id == "E1"
+        ));
+        assert_eq!(
+            out.not_created["m0"].to_string(),
+            "JMAP alreadyExists (existing id E1)"
+        );
+    }
+
+    #[test]
+    fn an_unmodelled_error_keeps_its_type_and_description() {
+        let out = import(
+            br#"{
+                "methodResponses": [["Email/import", {
+                    "accountId": "a1", "oldState": "e1", "newState": "e1",
+                    "notCreated": {"m0": {"type": "overQuota", "description": "full"}}
+                }, "c0"]],
+                "sessionState": "s1"
+            }"#,
+        );
+
+        assert!(matches!(
+            &out.not_created["m0"],
+            JmapEmailImportItemError::Other { type_name, description }
+                if type_name == "overQuota" && description.as_deref() == Some("full")
+        ));
+        assert_eq!(out.not_created["m0"].to_string(), "JMAP overQuota: full");
     }
 }

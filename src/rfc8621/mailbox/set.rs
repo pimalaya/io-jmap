@@ -159,9 +159,16 @@ pub enum JmapMailboxSetItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
-    /// Any error type this library does not know about.
-    #[serde(other)]
-    Unknown,
+    /// A set error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the server named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
 }
 
 /// Failure causes during a JMAP `Mailbox/set` flow.
@@ -273,8 +280,12 @@ impl JmapCoroutine for JmapMailboxSet {
                 let parse = |map: BTreeMap<String, serde_json::Value>| {
                     map.into_iter()
                         .map(|(k, v)| {
-                            let e = serde_json::from_value(v)
-                                .unwrap_or(JmapMailboxSetItemError::Unknown);
+                            let e = serde_json::from_value(v).unwrap_or(
+                                JmapMailboxSetItemError::Other {
+                                    type_name: String::new(),
+                                    description: None,
+                                },
+                            );
                             (k, e)
                         })
                         .collect()

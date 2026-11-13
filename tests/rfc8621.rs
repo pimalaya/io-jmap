@@ -209,6 +209,27 @@ fn mailbox_query_ok() {
 }
 
 #[test]
+fn mailbox_query_keeps_the_query_order() {
+    let body = br#"{
+      "methodResponses": [
+        ["Mailbox/query", {"queryState": "s1", "position": 0, "ids": ["m3", "m1", "m2"]}, "c0"],
+        ["Mailbox/get", {
+          "state": "s1",
+          "list": [{"id": "m1"}, {"id": "m2"}, {"id": "m3"}],
+          "notFound": []
+        }, "c1"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    let JmapCoroutineState::Complete(Ok(out)) = run_mailbox_query(&http_ok(body)) else {
+        panic!("the query did not complete");
+    };
+    let ids: Vec<_> = out.mailboxes.iter().map(|m| m.id.as_deref()).collect();
+    assert_eq!(ids, [Some("m3"), Some("m1"), Some("m2")]);
+}
+
+#[test]
 fn mailbox_query_empty() {
     let body = br#"{
       "methodResponses": [
@@ -505,6 +526,27 @@ fn email_query_ok() {
         }
         other => panic!("unexpected result: {other:?}"),
     }
+}
+
+#[test]
+fn email_query_keeps_the_query_order() {
+    let body = br#"{
+      "methodResponses": [
+        ["Email/query", {"queryState": "s1", "position": 0, "ids": ["e2", "e1"]}, "c0"],
+        ["Email/get", {
+          "state": "s1",
+          "list": [{"id": "e1"}, {"id": "e2"}],
+          "notFound": []
+        }, "c1"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    let JmapCoroutineState::Complete(Ok(out)) = run_email_query(&http_ok(body)) else {
+        panic!("the query did not complete");
+    };
+    let ids: Vec<_> = out.emails.iter().map(|e| e.id.as_deref()).collect();
+    assert_eq!(ids, [Some("e2"), Some("e1")]);
 }
 
 #[test]

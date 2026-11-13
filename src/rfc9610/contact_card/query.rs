@@ -67,7 +67,7 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch,
+        JMAP_CORE_CAPABILITY, error::JmapMethodError, query::order_by_ids, request::JmapBatch,
         request::JmapResultReference, send::*, session::JmapSession,
     },
     rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
@@ -332,7 +332,7 @@ impl JmapCoroutine for JmapContactCardQuery {
 
                 if query_name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(query_args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(
                         JmapContactCardQueryError::QueryMethod(err),
                     ));
@@ -356,7 +356,7 @@ impl JmapCoroutine for JmapContactCardQuery {
 
                 if get_name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(get_args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(
                         JmapContactCardQueryError::GetMethod(err),
                     ));
@@ -364,7 +364,7 @@ impl JmapCoroutine for JmapContactCardQuery {
 
                 match serde_json::from_value::<ContactCardGetResponse>(get_args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapContactCardQueryOutput {
-                        cards: r.list,
+                        cards: order_by_ids(r.list, &query_response.ids, |item| item.id.as_deref()),
                         total: query_response.total,
                         position: query_response.position,
                         query_state: query_response.query_state,
@@ -411,6 +411,8 @@ struct ContactCardGetByRefArgs<'a> {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ContactCardQueryResponse {
+    #[serde(default)]
+    ids: Vec<String>,
     query_state: String,
     #[serde(default)]
     total: Option<u64>,

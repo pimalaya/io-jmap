@@ -208,9 +208,16 @@ pub enum JmapCalendarEventSetItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
-    /// Catch-all for set errors not modelled above.
-    #[serde(other)]
-    Unknown,
+    /// A set error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the server named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
 }
 
 impl fmt::Display for JmapCalendarEventSetItemError {
@@ -231,7 +238,10 @@ impl fmt::Display for JmapCalendarEventSetItemError {
             Self::NoSupportedScheduleMethods { description } => {
                 write_described(f, "noSupportedScheduleMethods", description)
             }
-            Self::Unknown => write!(f, "JMAP unknown error"),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
         }
     }
 }
@@ -359,8 +369,12 @@ impl JmapCoroutine for JmapCalendarEventSet {
                 let parse = |map: BTreeMap<String, serde_json::Value>| {
                     map.into_iter()
                         .map(|(k, v)| {
-                            let e = serde_json::from_value(v)
-                                .unwrap_or(JmapCalendarEventSetItemError::Unknown);
+                            let e = serde_json::from_value(v).unwrap_or(
+                                JmapCalendarEventSetItemError::Other {
+                                    type_name: String::new(),
+                                    description: None,
+                                },
+                            );
                             (k, e)
                         })
                         .collect()

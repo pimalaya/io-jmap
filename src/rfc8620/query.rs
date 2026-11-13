@@ -23,7 +23,7 @@
 //! # let _ = coroutine;
 //! ```
 
-use alloc::{string::String, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
@@ -170,7 +170,7 @@ impl JmapCoroutine for JmapQuery {
 
                 if name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
@@ -229,6 +229,29 @@ struct QueryResponse {
     total: Option<u64>,
     #[serde(default)]
     limit: Option<u64>,
+}
+
+/// Sorts the `list` of a `Foo/get` in the order of the `Foo/query` ids it
+/// was fetched by, RFC 8620 §5.1 leaving the order of `list` to the
+/// server. An object whose id the query did not name goes last.
+pub(crate) fn order_by_ids<T>(
+    mut list: Vec<T>,
+    ids: &[String],
+    id: impl Fn(&T) -> Option<&str>,
+) -> Vec<T> {
+    let positions: BTreeMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(position, id)| (id.as_str(), position))
+        .collect();
+
+    list.sort_by_key(|item| {
+        id(item)
+            .and_then(|id| positions.get(id).copied())
+            .unwrap_or(usize::MAX)
+    });
+
+    list
 }
 
 #[cfg(test)]

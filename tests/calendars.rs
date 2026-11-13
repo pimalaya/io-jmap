@@ -744,7 +744,7 @@ fn calendar_event_set_types_each_refusal() {
             "k0": {"type": "noSupportedScheduleMethods", "description": "no iMIP"},
             "k1": {"type": "overQuota"},
             "k2": {"type": "tooLarge"},
-            "k3": {"type": "somethingNew"}
+            "k3": {"type": "somethingNew", "description": "later"}
           },
           "notUpdated": {
             "ev1": {"type": "invalidProperties", "properties": ["method"]},
@@ -780,9 +780,13 @@ fn calendar_event_set_types_each_refusal() {
         JmapCalendarEventSetItemError::TooLarge { .. }
     ));
     assert!(matches!(
-        out.not_created["k3"],
-        JmapCalendarEventSetItemError::Unknown
+        &out.not_created["k3"],
+        JmapCalendarEventSetItemError::Other { type_name, .. } if type_name == "somethingNew"
     ));
+    assert_eq!(
+        out.not_created["k3"].to_string(),
+        "JMAP somethingNew: later"
+    );
     assert_eq!(
         out.not_updated["ev1"].to_string(),
         "JMAP invalidProperties [method]"

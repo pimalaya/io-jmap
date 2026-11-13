@@ -34,7 +34,7 @@
 //! let auth = SecretString::from("Bearer xyz");
 //! let patch = JmapVacationResponseUpdate {
 //!     is_enabled: Some(true),
-//!     subject: Some("Out of office".into()),
+//!     subject: Some(Some("Out of office".into())),
 //!     ..Default::default()
 //! };
 //! let mut coroutine = JmapVacationResponseSet::new(&session, &auth, patch).unwrap();
@@ -78,7 +78,8 @@ use crate::{
 
 /// Patch object for `VacationResponse/set` update (RFC 8621 §8).
 ///
-/// Only `Some` fields are serialized; `None` fields are left unchanged.
+/// A `None` field is left unchanged, `Some(None)` clears it (`null`), as
+/// RFC 8620 §5.3 patches a property.
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapVacationResponseUpdate {
@@ -87,19 +88,19 @@ pub struct JmapVacationResponseUpdate {
     pub is_enabled: Option<bool>,
     /// RFC 3339 start of the vacation period.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub from_date: Option<String>,
+    pub from_date: Option<Option<String>>,
     /// RFC 3339 end of the vacation period.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub to_date: Option<String>,
+    pub to_date: Option<Option<String>>,
     /// Subject of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub subject: Option<String>,
+    pub subject: Option<Option<String>>,
     /// Plaintext body of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub text_body: Option<String>,
+    pub text_body: Option<Option<String>>,
     /// HTML body of the auto-reply message.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub html_body: Option<String>,
+    pub html_body: Option<Option<String>>,
 }
 
 /// Failure causes during a JMAP `VacationResponse/set` flow.
@@ -125,7 +126,8 @@ pub enum JmapVacationResponseSetError {
 /// Successful terminal output of [`JmapVacationResponseSet`].
 #[derive(Clone, Debug)]
 pub struct JmapVacationResponseSetOutput {
-    /// The new server state after the call.
+    /// The new server state after the call; empty when the server named
+    /// none, which Fastmail does.
     pub new_state: String,
     /// The updated singleton, when the server echoed it back.
     pub updated: Option<JmapVacationResponse>,
@@ -197,14 +199,19 @@ impl JmapCoroutine for JmapVacationResponseSet {
 
                 if name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
                 match serde_json::from_value::<VacationResponseSetResponse>(args) {
                     Ok(r) => JmapCoroutineState::Complete(Ok(JmapVacationResponseSetOutput {
-                        new_state: r.new_state,
-                        updated: r.updated.unwrap_or_default().into_values().flatten().next(),
+                        new_state: r.new_state.unwrap_or_default(),
+                        updated: r
+                            .updated
+                            .unwrap_or_default()
+                            .into_values()
+                            .flatten()
+                            .find_map(|value| serde_json::from_value(value).ok()),
                         keep_alive,
                     })),
                     Err(err) => JmapCoroutineState::Complete(Err(
@@ -230,7 +237,87 @@ struct VacationResponseSetArgs {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct VacationResponseSetResponse {
-    new_state: String,
+    // NOTE: RFC 8620 §5.3 requires it, but Fastmail answers `null`.
     #[serde(default)]
-    updated: Option<BTreeMap<String, Option<JmapVacationResponse>>>,
+    new_state: Option<String>,
+    // NOTE: RFC 8620 §5.3 echoes only the properties the server changed
+    // itself, which Fastmail fills with the ones it was sent: a partial
+    // object, read as a whole response only when it is one.
+    #[serde(default)]
+    updated: Option<BTreeMap<String, Option<serde_json::Value>>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::format;
+
+    use super::*;
+
+    /// A field left `None` stays out of the patch, `Some(None)` clears it.
+    #[test]
+    fn a_cleared_field_is_sent_as_null() {
+        let patch = JmapVacationResponseUpdate {
+            subject: Some(None),
+            text_body: Some(Some("away".into())),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            serde_json::to_value(&patch).unwrap(),
+            serde_json::json!({ "subject": null, "textBody": "away" })
+        );
+    }
+
+    /// Fastmail answers `newState: null` to an update it applied, echoing
+    /// the properties it was sent as a partial object.
+    #[test]
+    fn a_null_new_state_reads_as_empty() {
+        let session: JmapSession = serde_json::from_value(serde_json::json!({
+            "username": "",
+            "accounts": {},
+            "primaryAccounts": { "urn:ietf:params:jmap:mail": "a1" },
+            "capabilities": {},
+            "apiUrl": "https://api.example.com/jmap/",
+            "downloadUrl": "",
+            "uploadUrl": "",
+            "eventSourceUrl": "",
+            "state": "",
+        }))
+        .unwrap();
+        let patch = JmapVacationResponseUpdate {
+            is_enabled: Some(false),
+            ..Default::default()
+        };
+        let mut coroutine =
+            JmapVacationResponseSet::new(&session, &SecretString::from("Bearer t"), patch).unwrap();
+
+        let body = br#"{
+            "methodResponses": [["VacationResponse/set", {
+                "accountId": "a1", "oldState": null, "newState": null,
+                "updated": {"singleton": {"fromDate": null}}
+            }, "c0"]],
+            "sessionState": "s1"
+        }"#;
+        let mut reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        reply.extend_from_slice(body);
+
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsWrite(_))
+        ));
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsRead)
+        ));
+        let JmapCoroutineState::Complete(Ok(out)) = coroutine.resume(Some(&reply)) else {
+            panic!("the update did not complete");
+        };
+
+        assert!(out.new_state.is_empty());
+        assert!(out.updated.is_none());
+    }
 }

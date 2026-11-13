@@ -86,8 +86,12 @@ pub struct JmapContactCardCopyArgs {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum JmapContactCardCopyItemError {
-    /// The card already exists in the destination account (RFC 8620 §5.4).
+    /// The server forbids duplicates and the card already exists in the
+    /// destination account (RFC 8620 §5.4).
     AlreadyExists {
+        /// The id of the existing card.
+        #[serde(rename = "existingId")]
+        existing_id: String,
         /// Optional human-readable detail.
         description: Option<String>,
     },
@@ -105,9 +109,16 @@ pub enum JmapContactCardCopyItemError {
         #[serde(default)]
         properties: Vec<String>,
     },
-    /// Catch-all for set errors not modelled above.
-    #[serde(other)]
-    Unknown,
+    /// A set error type this library does not model, kept as the server
+    /// named it.
+    #[serde(untagged)]
+    Other {
+        /// The error type, empty when the server named none.
+        #[serde(rename = "type")]
+        type_name: String,
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
 }
 
 /// Failure causes during a JMAP `ContactCard/copy` flow.
@@ -203,7 +214,7 @@ impl JmapCoroutine for JmapContactCardCopy {
 
                 if name == "error" {
                     let err = serde_json::from_value::<JmapMethodError>(args)
-                        .unwrap_or(JmapMethodError::Unknown);
+                        .unwrap_or_else(JmapMethodError::unreadable);
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
