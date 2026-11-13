@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-13
+
 ### Added
 
 - Added `AlreadyExists { existing_id, description }` to `JmapEmailImportItemError` (RFC 8621 §4.8): a server forbidding duplicates names the email it already holds.
@@ -261,7 +263,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.7.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.8.0..HEAD
+[0.8.0]: https://github.com/pimalaya/io-jmap/compare/v0.7.0..v0.8.0
 [0.7.0]: https://github.com/pimalaya/io-jmap/compare/v0.6.0..v0.7.0
 [0.6.0]: https://github.com/pimalaya/io-jmap/compare/v0.5.0..v0.6.0
 [0.5.0]: https://github.com/pimalaya/io-jmap/compare/v0.4.2..v0.5.0
