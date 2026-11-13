@@ -280,6 +280,9 @@ pub struct JmapClientStdConnectOptions {
 
 const READ_BUFFER_SIZE: usize = 16 * 1024;
 
+/// How many redirects [`JmapClientStd::session_get`] follows.
+const MAX_SESSION_REDIRECTS: usize = 5;
+
 /// Std-blocking JMAP client wrapping a single boxed stream.
 pub struct JmapClientStd {
     /// The wrapped stream the coroutines read from and write to.
@@ -446,12 +449,15 @@ impl JmapClientStd {
     /// Runs [`JmapSessionGet`] and caches the discovered session.
     ///
     /// `url` is either a base URL for `/.well-known/jmap` discovery or a
-    /// direct session endpoint. A 3xx response terminates with
-    /// [`JmapClientStdError::UnexpectedRedirect`].
+    /// direct session endpoint. A redirect is followed on the same stream
+    /// when it stays on the same origin and the server keeps the
+    /// connection, five times at most; any other 3xx response terminates
+    /// with [`JmapClientStdError::UnexpectedRedirect`].
     pub fn session_get(&mut self, url: &Url) -> Result<&JmapSession, JmapClientStdError> {
         let mut coroutine = JmapSessionGet::new(&self.http_auth, url);
         let mut buf = [0u8; READ_BUFFER_SIZE];
         let mut arg: Option<&[u8]> = None;
+        let mut redirects = 0;
 
         loop {
             match coroutine.resume(arg.take()) {
@@ -468,8 +474,18 @@ impl JmapClientStd {
                     self.stream.write_all(&bytes)?;
                     arg = None;
                 }
-                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect { url, .. }) => {
-                    return Err(JmapClientStdError::UnexpectedRedirect(url));
+                JmapCoroutineState::Yielded(JmapRedirectYield::WantsRedirect {
+                    url,
+                    keep_alive,
+                    same_origin,
+                }) => {
+                    if !same_origin || !keep_alive || redirects == MAX_SESSION_REDIRECTS {
+                        return Err(JmapClientStdError::UnexpectedRedirect(url));
+                    }
+
+                    redirects += 1;
+                    coroutine = JmapSessionGet::new(&self.http_auth, &url);
+                    arg = None;
                 }
             }
         }
@@ -955,5 +971,143 @@ pub trait JmapStream: Read + Write + Send + Any {
 impl<T: Read + Write + Send + Any> JmapStream for T {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        borrow::ToOwned,
+        collections::VecDeque,
+        format,
+        io::{self, Read, Write},
+        string::String,
+        sync::{Arc, Mutex},
+        vec::Vec,
+    };
+
+    use secrecy::SecretString;
+    use url::Url;
+
+    use crate::client::{JmapClientStd, JmapClientStdError};
+
+    /// Stream answering each request with the next scripted reply.
+    struct Script {
+        replies: VecDeque<Vec<u8>>,
+        requests: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Read for Script {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let reply = self.replies.pop_front().unwrap_or_default();
+            buf[..reply.len()].copy_from_slice(&reply);
+            Ok(reply.len())
+        }
+    }
+
+    impl Write for Script {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.requests.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs a session discovery on `https://mail.example.com` against
+    /// `replies`, returning its result and the request lines written.
+    fn session_get(replies: &[&str]) -> (Result<String, JmapClientStdError>, Vec<String>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let script = Script {
+            replies: replies
+                .iter()
+                .map(|reply| reply.as_bytes().to_vec())
+                .collect(),
+            requests: requests.clone(),
+        };
+        let mut client = JmapClientStd::new(script, SecretString::from("Bearer t"));
+        let url: Url = "https://mail.example.com".parse().unwrap();
+
+        let username = client
+            .session_get(&url)
+            .map(|session| session.username.clone());
+
+        let requests = String::from_utf8(requests.lock().unwrap().clone()).unwrap();
+        let lines = requests
+            .lines()
+            .filter(|line| line.starts_with("GET "))
+            .map(str::to_owned)
+            .collect();
+
+        (username, lines)
+    }
+
+    fn redirect(location: &str, extra: &str) -> String {
+        format!("HTTP/1.1 301 Moved\r\nLocation: {location}\r\n{extra}Content-Length: 0\r\n\r\n")
+    }
+
+    fn session() -> String {
+        let body = r#"{
+            "capabilities": {}, "accounts": {}, "primaryAccounts": {}, "username": "alice",
+            "apiUrl": "https://mail.example.com/jmap/", "downloadUrl": "", "uploadUrl": "",
+            "eventSourceUrl": "", "state": "s"
+        }"#;
+
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn session_get_follows_a_same_origin_redirect() {
+        let (username, requests) = session_get(&[&redirect("/jmap/session", ""), &session()]);
+
+        assert_eq!(username.unwrap(), "alice");
+        assert_eq!(
+            requests,
+            [
+                "GET /.well-known/jmap HTTP/1.1",
+                "GET /jmap/session HTTP/1.1"
+            ]
+        );
+    }
+
+    #[test]
+    fn session_get_refuses_a_cross_origin_redirect() {
+        let location = "https://other.example.com/jmap/session";
+        let (username, requests) = session_get(&[&redirect(location, ""), &session()]);
+
+        assert!(matches!(
+            username,
+            Err(JmapClientStdError::UnexpectedRedirect(url)) if url.as_str() == location
+        ));
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[test]
+    fn session_get_refuses_a_redirect_closing_the_connection() {
+        let reply = redirect("/jmap/session", "Connection: close\r\n");
+        let (username, requests) = session_get(&[&reply, &session()]);
+
+        assert!(matches!(
+            username,
+            Err(JmapClientStdError::UnexpectedRedirect(_))
+        ));
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[test]
+    fn session_get_stops_after_five_redirects() {
+        let reply = redirect("/jmap/session", "");
+        let (username, requests) = session_get(&[reply.as_str(); 7]);
+
+        assert!(matches!(
+            username,
+            Err(JmapClientStdError::UnexpectedRedirect(_))
+        ));
+        assert_eq!(requests.len(), 6);
     }
 }

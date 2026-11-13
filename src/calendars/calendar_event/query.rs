@@ -86,7 +86,7 @@ use crate::{
         query::order_by_ids,
         request::{JmapBatch, JmapResultReference},
         send::*,
-        session::JmapSession,
+        session::{JmapSession, JmapSessionAccountError},
     },
 };
 
@@ -178,6 +178,9 @@ pub struct JmapCalendarEventSortComparator {
 /// `CalendarEvent/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapCalendarEventQueryError {
+    /// The session names no account to address the call to.
+    #[error("JMAP CalendarEvent/query failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The response carried no query response.
     #[error(
         "JMAP CalendarEvent/query failed: missing CalendarEvent/query response in method_responses"
@@ -264,11 +267,7 @@ impl JmapCalendarEventQuery {
         http_auth: &SecretString,
         opts: JmapCalendarEventQueryOptions,
     ) -> Result<Self, JmapCalendarEventQueryError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CALENDARS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CALENDARS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let query_args = CalendarEventQueryArgs {

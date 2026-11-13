@@ -70,12 +70,19 @@ use crate::{
     calendars::JMAP_CALENDARS_CAPABILITY,
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, changes::*, session::JmapSession},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        changes::*,
+        session::{JmapSession, JmapSessionAccountError},
+    },
 };
 
 /// Failure causes during a JMAP `CalendarEvent/changes` flow.
 #[derive(Debug, Error)]
 pub enum JmapCalendarEventChangesError {
+    /// The session names no account to address the call to.
+    #[error("JMAP CalendarEvent/changes failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner generic changes coroutine failed.
     #[error("JMAP CalendarEvent/changes failed: {0}")]
     Changes(#[from] JmapChangesError),
@@ -101,11 +108,7 @@ impl JmapCalendarEventChanges {
         since_state: impl Into<String>,
         opts: JmapCalendarEventChangesOptions,
     ) -> Result<Self, JmapCalendarEventChangesError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CALENDARS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CALENDARS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         Ok(Self {

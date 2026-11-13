@@ -67,8 +67,13 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, query::order_by_ids, request::JmapBatch,
-        request::JmapResultReference, send::*, session::JmapSession,
+        JMAP_CORE_CAPABILITY,
+        error::JmapMethodError,
+        query::order_by_ids,
+        request::JmapBatch,
+        request::JmapResultReference,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
     },
     rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
@@ -190,6 +195,9 @@ pub struct JmapContactCardSortComparator {
 /// `ContactCard/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardQueryError {
+    /// The session names no account to address the call to.
+    #[error("JMAP ContactCard/query failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The response carried no query response.
     #[error(
         "JMAP ContactCard/query failed: missing ContactCard/query response in method_responses"
@@ -262,11 +270,7 @@ impl JmapContactCardQuery {
         http_auth: &SecretString,
         opts: JmapContactCardQueryOptions,
     ) -> Result<Self, JmapContactCardQueryError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CONTACTS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CONTACTS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let query_args = ContactCardQueryArgs {

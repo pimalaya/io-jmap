@@ -126,10 +126,7 @@ impl JmapBlobUpload {
             return Err(JmapBlobUploadError::InvalidContentType);
         }
 
-        let host = upload_url.host_str().unwrap_or("localhost");
-
         let mut http_request = HttpRequest::get(upload_url.clone())
-            .header("Host", host)
             .header("Content-Type", content_type)
             .header("Authorization", http_auth.expose_secret())
             .body(data);
@@ -272,6 +269,21 @@ mod tests {
         let bytes = expect_wants_write(&mut cor, None);
         let req = core::str::from_utf8(&bytes).expect("utf8 request");
         assert!(req.starts_with("POST "));
+    }
+
+    #[test]
+    fn request_host_keeps_the_port() {
+        let url = "https://api.example.com:8443/jmap/upload/a1/";
+        let mut cor = JmapBlobUpload::new(
+            &make_auth(),
+            &url.parse().unwrap(),
+            "text/plain",
+            Vec::new(),
+        )
+        .unwrap();
+        let bytes = expect_wants_write(&mut cor, None);
+        let req = core::str::from_utf8(&bytes).unwrap().to_ascii_lowercase();
+        assert!(req.contains("\r\nhost: api.example.com:8443\r\n"), "{req}");
     }
 
     #[test]

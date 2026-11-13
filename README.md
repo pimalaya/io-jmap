@@ -22,9 +22,9 @@ This library is composed of 3 feature-gated layers:
 
 ## Features
 
-- **Session discovery**: resolves the JMAP session from a base URL or the well-known endpoint, surfacing redirects to the caller instead of following them.
+- **Session discovery**: resolves the JMAP session from a base URL or the well-known endpoint. The coroutine surfaces redirects to the caller; the blocking client follows the ones staying on the same origin and connection, and returns any other.
 - **Core protocol**: batched method calls, generic get, set, query and changes flows, blob upload and download.
-- **Push notifications**: push subscription management and the streaming Event Source channel, yielding one state change per push frame with cooperative shutdown.
+- **Push notifications**: push subscription management and the streaming Event Source channel, yielding one state change per push frame with its event id, resumable through `Last-Event-ID`, with cooperative shutdown.
 - **Mail**: mailboxes, emails, threads, identities, email submissions and vacation responses.
 - **Contacts**: address books and contact cards, the JSContact payload kept as raw JSON.
 - **Calendars**: calendars read, calendar events read and written, the JSCalendar payload kept as raw JSON and recurrence expanded by the server.

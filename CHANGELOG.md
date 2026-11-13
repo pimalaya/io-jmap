@@ -15,9 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `JmapRequestError`, the request-level errors of RFC 8620 §3.6.1 (`unknownCapability`, `notJSON`, `notRequest`, `limit`), read from the problem details of a refused request.
 - Added `JmapVacationResponseSetItemError`, the per-object error of `VacationResponse/set`.
 - Added `email_set` to `JmapEmailSubmissionSetOutput`: the answer to the `Email/set` the server runs for `onSuccessUpdateEmail` and `onSuccessDestroyEmail` (RFC 8621 §7.5), which was dropped.
+- Added `JmapEventSourceOptions`, whose `last_event_id` is sent as `Last-Event-ID` so a server pushes what changed since a previous connection (RFC 8620 §7.3).
+- Added `JmapSession::account_for`, the primary account of a capability or a `JmapSessionAccountError` when the session names none.
 
 ### Changed
 
+- **BREAKING**: `JmapEventSource::new` takes a `JmapEventSourceOptions`, and `JmapEventSourceError` gained `InvalidLastEventId`.
+- **BREAKING**: `JmapEventSourceYield::Frame` is now `Frame { change, id }`, carrying the last event id the server set.
+- **BREAKING**: `JmapEventSource` skips a frame naming another event than `state`, which used to be read as a StateChange and to fail the stream when it was none; an empty `types` subscribes to `*` instead of sending `types=`.
+- **BREAKING**: Every method coroutine built from a session fails with the new `Account` variant of its error when the session names no primary account for its capability, where it sent an empty `accountId`.
+- `JmapClientStd::session_get` follows a redirect staying on the same origin and connection, five at most, which `/.well-known/jmap` discovery commonly gets; any other redirect still fails with `UnexpectedRedirect`.
 - **BREAKING**: `JmapEventSourceError` gained `FrameTooLarge`: an SSE frame over `max_frame_len` fails the stream instead of growing without bound. A chunk over `max_chunk_len` fails with `ReadChunks(ChunkTooLarge)`, where the limit was 256 MiB.
 - **BREAKING**: `JmapSendError` gained `Request { status, error }`: a non-2xx answer whose body names a problem of the JMAP namespace no longer reads as `HttpStatus`.
 - **BREAKING**: `JmapMethodError` lost `UnknownCapability`, `NotJson`, `NotRequest` and `Limit`, which are request-level errors and now live in `JmapRequestError`.
@@ -36,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `JmapEmailPatch` escapes the keyword and the mailbox id of its patch paths as JSON Pointer tokens (RFC 6901 §3): the keyword `todo/later` is patched as `keywords/todo~1later`.
 - `EmailSubmission/set`, its cancel flow, `Email/import`, `Email/copy` and `ContactCard/copy` read a `newState` the server leaves out or answers `null` as an empty `new_state`, instead of failing and hiding the per-object errors.
 - `Email/parse` reads a `parsed: null` (RFC 8621 §4.9) as an empty map instead of failing and hiding `notParsable` and `notFound`.
+- The `Host` header keeps a port that is not the scheme default: the coroutines no longer set it by hand and leave it to io-http.
+- `Email/set` sends the emails to create without the properties left unset, which were written as `null`, server-set ones included (RFC 8620 §5.3).
 
 ## [0.7.0] - 2026-11-03
 

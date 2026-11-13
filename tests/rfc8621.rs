@@ -7,7 +7,10 @@ use std::collections::BTreeMap;
 
 use io_jmap::{
     coroutine::*,
-    rfc8620::{error::JmapMethodError, session::JmapSession},
+    rfc8620::{
+        error::JmapMethodError,
+        session::{JmapSession, JmapSessionAccountError},
+    },
     rfc8621::{
         email::{
             copy::*,
@@ -34,6 +37,7 @@ use io_jmap::{
                 JmapMailboxSetOutput,
             },
         },
+        vacation_response::get::{JmapVacationResponseGet, JmapVacationResponseGetError},
     },
 };
 use secrecy::SecretString;
@@ -746,6 +750,36 @@ fn complete<C: JmapCoroutine<Yield = JmapYield>>(mut coroutine: C, reply: &[u8])
             JmapCoroutineState::Complete(out) => return out,
         }
     }
+}
+
+#[test]
+fn constructor_without_a_primary_account_fails() {
+    let mut session = make_session();
+    let opts = JmapEmailGetOptions::default;
+
+    session.primary_accounts.clear();
+    assert!(matches!(
+        JmapEmailGet::new(&session, &make_token(), Vec::new(), opts()),
+        Err(JmapEmailGetError::Account(JmapSessionAccountError(capability)))
+            if capability == "urn:ietf:params:jmap:mail"
+    ));
+    assert!(matches!(
+        JmapVacationResponseGet::new(&session, &make_token()),
+        Err(JmapVacationResponseGetError::Account(_))
+    ));
+
+    let mail = "urn:ietf:params:jmap:mail".to_owned();
+    session.primary_accounts.insert(mail, String::new());
+    assert!(matches!(
+        JmapEmailGet::new(&session, &make_token(), Vec::new(), opts()),
+        Err(JmapEmailGetError::Account(_))
+    ));
+}
+
+#[test]
+fn vacation_response_get_falls_back_to_the_mail_account() {
+    let coroutine = JmapVacationResponseGet::new(&make_session(), &make_token());
+    assert!(coroutine.is_ok());
 }
 
 fn submission_create() -> BTreeMap<String, JmapEmailSubmissionCreate> {

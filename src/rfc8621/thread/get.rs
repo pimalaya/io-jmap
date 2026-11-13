@@ -60,13 +60,20 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, get::*, session::JmapSession},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        get::*,
+        session::{JmapSession, JmapSessionAccountError},
+    },
     rfc8621::{JMAP_MAIL_CAPABILITY, thread::JmapThread},
 };
 
 /// Failure causes during a JMAP `Thread/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapThreadGetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP Thread/get failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner generic get coroutine failed.
     #[error("JMAP Thread/get failed: {0}")]
     Get(#[from] JmapGetError),
@@ -97,11 +104,7 @@ impl JmapThreadGet {
         http_auth: &SecretString,
         ids: Vec<String>,
     ) -> Result<Self, JmapThreadGetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         Ok(Self {

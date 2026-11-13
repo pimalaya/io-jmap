@@ -63,7 +63,13 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        request::JmapBatch,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
+        set::*,
+    },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
         mailbox::{JmapMailbox, JmapMailboxRole},
@@ -174,6 +180,9 @@ pub enum JmapMailboxSetItemError {
 /// Failure causes during a JMAP `Mailbox/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapMailboxSetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP Mailbox/set failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner send coroutine failed.
     #[error("JMAP Mailbox/set failed: {0}")]
     Send(#[from] JmapSendError),
@@ -236,11 +245,7 @@ impl JmapMailboxSet {
         http_auth: &SecretString,
         args: JmapMailboxSetArgs,
     ) -> Result<Self, JmapMailboxSetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let json_args = serde_json::to_value(MailboxSetRequest { account_id, args })

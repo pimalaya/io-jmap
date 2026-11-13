@@ -31,6 +31,22 @@ Every request-response coroutine (`JmapSend` and the method coroutines built on 
 - WHEN the server streams `data:` lines with no blank line, past 64 bytes in all
 - THEN the coroutine completes with `FrameTooLarge(64)`
 
+### Requirement: Event source frames carry their id
+`JmapEventSource` SHALL yield each StateChange as `Frame { change, id }`, `id` being the last event id the server set (RFC 8620 §7.3), kept across frames as the SSE parser keeps it, for the caller to hand back as `last_event_id` on its next connection. It SHALL read as a StateChange a frame naming the `state` event or no event, and SHALL skip a frame naming any other (the `ping` of RFC 8620 §7.3 among them) without yielding or failing; a frame it reads whose data is no StateChange still fails with `DecodeFrame`.
+
+#### Scenario: An event the client does not know
+- GIVEN a stream sending `event: other` with the data `hello`
+- WHEN the frame is read
+- THEN the coroutine asks for more bytes
+
+### Requirement: Session discovery follows a redirect that stays put
+`JmapSessionGet` SHALL yield every 3xx answer as `WantsRedirect`, following none. `JmapClientStd::session_get` SHALL follow it, on the same stream and with the same credentials, when the redirect keeps the scheme, host and port and the server keeps the connection, five times at most, and SHALL fail with `UnexpectedRedirect(url)` in every other case: another origin, a closed connection, a sixth redirect. `JmapClientStd::blob_upload` and `blob_download` follow none.
+
+#### Scenario: A well-known URL answering with a redirect
+- GIVEN a server answering `GET /.well-known/jmap` with a 301 to `/jmap/session` and keeping the connection
+- WHEN `session_get` runs on the bare authority
+- THEN it sends `GET /jmap/session` on the same stream and returns that session
+
 ### Requirement: Blob downloads take their own limit
 `JmapBlobDownload` SHALL fail with `Send(BodyTooLarge(max_len))` once the blob exceeds its `max_len`, 256 MiB by default and settable after `new`. `JmapClientStd::blob_download` SHALL apply the client's `max_blob_len`, same default.
 

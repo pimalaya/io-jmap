@@ -80,7 +80,7 @@ use crate::{
         error::{JmapMethodError, write_described, write_properties},
         request::JmapBatch,
         send::*,
-        session::JmapSession,
+        session::{JmapSession, JmapSessionAccountError},
         set::SetResponse,
     },
     rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
@@ -175,6 +175,9 @@ impl fmt::Display for JmapEmailImportItemError {
 /// Failure causes during a JMAP `Email/import` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailImportError {
+    /// The session names no account to address the call to.
+    #[error("JMAP Email/import failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The response carried no method response.
     #[error("JMAP Email/import failed: missing response in method_responses")]
     MissingResponse,
@@ -217,11 +220,7 @@ impl JmapEmailImport {
         http_auth: &SecretString,
         emails: BTreeMap<String, JmapEmailImportArgs>,
     ) -> Result<Self, JmapEmailImportError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let args = serde_json::to_value(EmailImportArgs { account_id, emails })

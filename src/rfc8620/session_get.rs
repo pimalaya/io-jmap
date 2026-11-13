@@ -107,8 +107,6 @@ impl JmapSessionGet {
     /// triggering `GET /.well-known/jmap`) or a direct session endpoint
     /// (`https://api.example.com/jmap/session/`, used as-is).
     pub fn new(http_auth: &SecretString, url: &Url) -> Self {
-        let host = url.host_str().unwrap_or("localhost");
-
         let session_url = match url.path() {
             "" | "/" => {
                 let mut u = url.clone();
@@ -122,7 +120,6 @@ impl JmapSessionGet {
         trace!("session url: {session_url}");
 
         let http_request = HttpRequest::get(session_url)
-            .header("Host", host)
             .header("Accept", "application/json")
             .header("Authorization", http_auth.expose_secret());
 
@@ -263,6 +260,15 @@ mod tests {
         let bytes = expect_wants_write(&mut cor, None);
         let req = core::str::from_utf8(&bytes).expect("utf8 request");
         assert!(req.contains("/.well-known/jmap"));
+    }
+
+    #[test]
+    fn request_host_keeps_the_port() {
+        let url = "https://api.example.com:8443/".parse().unwrap();
+        let mut cor = JmapSessionGet::new(&make_auth(), &url);
+        let bytes = expect_wants_write(&mut cor, None);
+        let req = core::str::from_utf8(&bytes).unwrap().to_ascii_lowercase();
+        assert!(req.contains("\r\nhost: api.example.com:8443\r\n"), "{req}");
     }
 
     fn expect_wants_write(cor: &mut JmapSessionGet, arg: Option<&[u8]>) -> Vec<u8> {

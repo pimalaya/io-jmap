@@ -19,7 +19,10 @@
 //!         session::JmapSession,
 //!         event_source::{
 //!             JmapCloseAfter,
-//!             subscribe::{JmapEventSource, JmapEventSourceYield},
+//!             subscribe::{
+//!                 JmapEventSource, JmapEventSourceOptions,
+//!                 JmapEventSourceYield,
+//!             },
 //!         },
 //!     },
 //! };
@@ -42,9 +45,16 @@
 //! }"#).unwrap();
 //! let auth = SecretString::from("Bearer xyz");
 //! let shutdown = Arc::new(AtomicBool::new(false));
-//! let mut coroutine =
-//!     JmapEventSource::new(&session, &auth, &["Email"], 30, JmapCloseAfter::State, shutdown)
-//!         .unwrap();
+//! let mut coroutine = JmapEventSource::new(
+//!     &session,
+//!     &auth,
+//!     &["Email"],
+//!     30,
+//!     JmapCloseAfter::State,
+//!     shutdown,
+//!     JmapEventSourceOptions::default(),
+//! )
+//! .unwrap();
 //! let mut arg = None;
 //!
 //! loop {
@@ -56,7 +66,10 @@
 //!             let n = stream.read(&mut buf).unwrap();
 //!             arg = Some(&buf[..n]);
 //!         }
-//!         JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(change)) => {
+//!         JmapCoroutineState::Yielded(JmapEventSourceYield::Frame {
+//!             change,
+//!             ..
+//!         }) => {
 //!             println!("{change:?}");
 //!         }
 //!         JmapCoroutineState::Complete(Ok(())) => break,
@@ -105,9 +118,16 @@ pub const JMAP_DEFAULT_MAX_CHUNK_LEN: usize = 1024 * 1024;
 /// Per-step yield for [`JmapEventSource`].
 #[derive(Debug)]
 pub enum JmapEventSourceYield {
-    /// One decoded push notification. Empty-data SSE frames (pings) surface as
-    /// the default [`JmapStateChange`] with an empty `changed` map: keep-alive.
-    Frame(JmapStateChange),
+    /// One decoded push notification, from a frame naming the `state` event
+    /// or none. A frame with no data surfaces as the default
+    /// [`JmapStateChange`] with an empty `changed` map: keep-alive.
+    Frame {
+        /// The decoded StateChange.
+        change: JmapStateChange,
+        /// The last event id the server set, to hand back as
+        /// [`JmapEventSourceOptions::last_event_id`] when reconnecting.
+        id: Option<String>,
+    },
     /// The caller reads more bytes and feeds them back on the next resume.
     WantsRead,
     /// The caller writes these bytes; the next resume typically takes `None`.
@@ -126,6 +146,9 @@ pub enum JmapEventSourceError {
     /// The subscription URL built from the session could not be parsed.
     #[error("JMAP event-source failed: invalid URL {0}")]
     InvalidUrl(String),
+    /// The last event id holds a CR, LF or NUL (RFC 9110 §5.5).
+    #[error("JMAP event-source failed: invalid last event id")]
+    InvalidLastEventId,
     /// The response head could not be read.
     #[error("JMAP event-source failed: {0}")]
     ReadHeaders(#[from] Http11HeadersReadError),
@@ -138,6 +161,14 @@ pub enum JmapEventSourceError {
     /// An SSE frame could not be decoded as a StateChange.
     #[error("JMAP event-source failed: {0}")]
     DecodeFrame(#[from] JmapStateChangeParseError),
+}
+
+/// Options for [`JmapEventSource::new`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct JmapEventSourceOptions {
+    /// The id of the last event seen on a previous connection, sent as
+    /// `Last-Event-ID` for the server to push what changed since.
+    pub last_event_id: Option<String>,
 }
 
 /// I/O-free streaming coroutine for the JMAP `EventSource` push channel.
@@ -162,7 +193,7 @@ pub struct JmapEventSource {
 
 impl JmapEventSource {
     /// Builds the JMAP push subscription URL from `event_source_url`, with
-    /// `types` (comma-separated, empty for every type), `closeafter` (see
+    /// `types` (comma-separated, `*` when empty), `closeafter` (see
     /// [`JmapCloseAfter`]) and `ping` (seconds).
     ///
     /// RFC 8620 §7.3 makes `event_source_url` a URI template naming the
@@ -176,7 +207,10 @@ impl JmapEventSource {
         close_after: JmapCloseAfter,
     ) -> String {
         let base = &session.event_source_url;
-        let types = types.join(",");
+        let types = match types {
+            [] => "*".into(),
+            types => types.join(","),
+        };
         let close_after = close_after.as_str();
         let ping = format!("{ping_seconds}");
 
@@ -208,15 +242,22 @@ impl JmapEventSource {
         ping_seconds: u64,
         close_after: JmapCloseAfter,
         shutdown: Arc<AtomicBool>,
+        opts: JmapEventSourceOptions,
     ) -> Result<Self, JmapEventSourceError> {
         let url_str = Self::subscribe_url(session, types, ping_seconds, close_after);
         let url = Url::parse(&url_str).map_err(|_| JmapEventSourceError::InvalidUrl(url_str))?;
 
-        let host = url.host_str().unwrap_or("localhost");
-        let request = HttpRequest::get(url.clone())
-            .header("Host", host)
+        let mut request = HttpRequest::get(url.clone())
             .header("Accept", "text/event-stream")
             .header("Authorization", http_auth.expose_secret());
+
+        if let Some(id) = opts.last_event_id {
+            if id.bytes().any(|b| matches!(b, b'\r' | b'\n' | 0)) {
+                return Err(JmapEventSourceError::InvalidLastEventId);
+            }
+
+            request = request.header("Last-Event-ID", id);
+        }
 
         debug!("prepare event source subscription request");
         trace!("subscription url: {url}");
@@ -336,9 +377,18 @@ impl JmapCoroutine for JmapEventSource {
 
                     match parser.resume(parser_input.as_deref()) {
                         HttpCoroutineState::Yielded(SseFrameParserYield::Frame(frame)) => {
+                            if let Some(event) = &frame.event
+                                && event != "state"
+                            {
+                                trace!("ignore event `{event}`");
+                                continue;
+                            }
+
                             return match JmapStateChange::parse(&frame.data) {
                                 Ok(change) => {
-                                    JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(change))
+                                    let id = frame.id;
+                                    let frame = JmapEventSourceYield::Frame { change, id };
+                                    JmapCoroutineState::Yielded(frame)
                                 }
                                 Err(err) => JmapCoroutineState::Complete(Err(err.into())),
                             };
@@ -516,8 +566,81 @@ mod tests {
         let url = JmapEventSource::subscribe_url(&session, &[], 15, JmapCloseAfter::State);
         assert_eq!(
             url,
-            "https://jmap.example.org/events?token=abc&types=&closeafter=state&ping=15"
+            "https://jmap.example.org/events?token=abc&types=*&closeafter=state&ping=15"
         );
+    }
+
+    #[test]
+    fn request_host_keeps_the_port() {
+        let session = JmapSession {
+            event_source_url: "https://example.org:8443/sse".into(),
+            ..synthetic_session()
+        };
+        let auth = SecretString::from("Bearer t".to_string());
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let opts = JmapEventSourceOptions::default();
+        let mut es =
+            JmapEventSource::new(&session, &auth, &[], 30, JmapCloseAfter::No, shutdown, opts)
+                .unwrap();
+
+        let JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes)) = es.resume(None)
+        else {
+            panic!("expected initial WantsWrite");
+        };
+        let req = core::str::from_utf8(&bytes).unwrap().to_ascii_lowercase();
+        assert!(req.contains("\r\nhost: example.org:8443\r\n"), "{req}");
+    }
+
+    #[test]
+    fn frame_of_another_event_is_ignored() {
+        let mut es = streaming(JMAP_DEFAULT_MAX_FRAME_LEN);
+
+        expect_wants_read(&mut es, &chunk(b"event: other\ndata: hello\n\n"));
+    }
+
+    #[test]
+    fn frame_yields_its_event_id() {
+        let mut es = streaming(JMAP_DEFAULT_MAX_FRAME_LEN);
+        let frame =
+            b"id: evt-1\nevent: state\ndata: {\"@type\":\"StateChange\",\"changed\":{}}\n\n";
+
+        match es.resume(Some(&chunk(frame))) {
+            JmapCoroutineState::Yielded(JmapEventSourceYield::Frame { id, .. }) => {
+                assert_eq!(id.as_deref(), Some("evt-1"));
+            }
+            other => panic!("expected Frame yield, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn last_event_id_is_sent_and_checked() {
+        let session = JmapSession {
+            event_source_url: "https://example.org/sse".into(),
+            ..synthetic_session()
+        };
+        let auth = SecretString::from("Bearer t".to_string());
+        let subscribe = |id: &str| {
+            let shutdown = Arc::new(AtomicBool::new(false));
+            let opts = JmapEventSourceOptions {
+                last_event_id: Some(id.into()),
+            };
+            JmapEventSource::new(&session, &auth, &[], 30, JmapCloseAfter::No, shutdown, opts)
+        };
+
+        let mut es = subscribe("evt-1").unwrap();
+        let JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(bytes)) = es.resume(None)
+        else {
+            panic!("expected initial WantsWrite");
+        };
+        let req = core::str::from_utf8(&bytes).unwrap();
+        assert!(req.contains("\r\nLast-Event-ID: evt-1\r\n"), "{req}");
+
+        for id in ["evt\r\nX-Injected: 1", "evt\n", "evt\0"] {
+            assert!(matches!(
+                subscribe(id).err(),
+                Some(JmapEventSourceError::InvalidLastEventId)
+            ));
+        }
     }
 
     // NOTE: regression guard. Head reader over-reads into the chunked body;
@@ -539,6 +662,7 @@ mod tests {
             30,
             JmapCloseAfter::State,
             shutdown,
+            JmapEventSourceOptions::default(),
         )
         .unwrap();
 
@@ -563,7 +687,7 @@ mod tests {
         // NOTE: head + body arrive in one socket read; matches the Fastmail
         // trace shape that triggered the bug.
         match es.resume(Some(&wire)) {
-            JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(change)) => {
+            JmapCoroutineState::Yielded(JmapEventSourceYield::Frame { change, .. }) => {
                 assert_eq!(change.r#type, "StateChange");
                 assert_eq!(change.changed["u1"]["Email"], "s1");
             }
@@ -614,7 +738,7 @@ mod tests {
             let frame = b": ping\ndata: {\"@type\":\"StateChange\",\"changed\":{}}\n\n";
 
             match es.resume(Some(&chunk(frame))) {
-                JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(_)) => {}
+                JmapCoroutineState::Yielded(JmapEventSourceYield::Frame { .. }) => {}
                 other => panic!("expected Frame yield, got {other:?}"),
             }
         }
@@ -633,7 +757,7 @@ mod tests {
 
         loop {
             match es.resume(arg.take()) {
-                JmapCoroutineState::Yielded(JmapEventSourceYield::Frame(_)) => frames += 1,
+                JmapCoroutineState::Yielded(JmapEventSourceYield::Frame { .. }) => frames += 1,
                 JmapCoroutineState::Yielded(JmapEventSourceYield::WantsRead) => break,
                 other => panic!("expected Frame or WantsRead, got {other:?}"),
             }
@@ -661,8 +785,10 @@ mod tests {
         };
         let auth = SecretString::from("Bearer t".to_string());
         let shutdown = Arc::new(AtomicBool::new(false));
+        let opts = JmapEventSourceOptions::default();
         let mut es =
-            JmapEventSource::new(&session, &auth, &[], 30, JmapCloseAfter::No, shutdown).unwrap();
+            JmapEventSource::new(&session, &auth, &[], 30, JmapCloseAfter::No, shutdown, opts)
+                .unwrap();
         es.max_frame_len = max_frame_len;
 
         let JmapCoroutineState::Yielded(JmapEventSourceYield::WantsWrite(_)) = es.resume(None)

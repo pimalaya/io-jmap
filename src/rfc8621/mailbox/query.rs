@@ -64,8 +64,13 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, query::order_by_ids, request::JmapBatch,
-        request::JmapResultReference, send::*, session::JmapSession,
+        JMAP_CORE_CAPABILITY,
+        error::JmapMethodError,
+        query::order_by_ids,
+        request::JmapBatch,
+        request::JmapResultReference,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
@@ -120,6 +125,9 @@ pub struct JmapMailboxFilter {
 /// Failure causes during a batched JMAP `Mailbox/query` + `Mailbox/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapMailboxQueryError {
+    /// The session names no account to address the call to.
+    #[error("JMAP Mailbox/query failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The response carried no query response.
     #[error("JMAP Mailbox/query failed: missing Mailbox/query response in method_responses")]
     MissingQueryResponse,
@@ -189,11 +197,7 @@ impl JmapMailboxQuery {
         http_auth: &SecretString,
         opts: JmapMailboxQueryOptions,
     ) -> Result<Self, JmapMailboxQueryError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let query_args = MailboxQueryArgs {

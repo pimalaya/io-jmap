@@ -7,6 +7,7 @@ use alloc::{collections::BTreeMap, string::String};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use thiserror::Error;
 use url::{ParseError, Url};
 
 use crate::rfc8620::{JMAP_CORE_CAPABILITY, JmapCoreCapability};
@@ -46,6 +47,15 @@ impl JmapSession {
             .unwrap_or_default()
     }
 
+    /// Returns the primary account id for the given capability URN,
+    /// failing when the session names none or an empty one.
+    pub fn account_for(&self, capability: &str) -> Result<&str, JmapSessionAccountError> {
+        match self.primary_accounts.get(capability) {
+            Some(id) if !id.is_empty() => Ok(id),
+            _ => Err(JmapSessionAccountError(capability.into())),
+        }
+    }
+
     /// Returns the server's core limits (RFC 8620 §2), every one `None`
     /// when the core capability is absent or unreadable.
     pub fn core_capability(&self) -> JmapCoreCapability {
@@ -79,6 +89,14 @@ impl JmapSession {
         Url::parse(&filled)
     }
 }
+
+/// The session names no primary account for a capability (RFC 8620 §2).
+#[derive(Clone, Debug, Eq, PartialEq, Error)]
+#[error("no primary account for the capability {0}")]
+pub struct JmapSessionAccountError(
+    /// The capability URN.
+    pub String,
+);
 
 /// One RFC 6570 template variable as a URL component: everything outside
 /// the RFC 3986 unreserved set percent-encoded, an id being opaque and
@@ -131,6 +149,19 @@ mod tests {
             "state": "s1",
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn account_for_wants_a_named_non_empty_account() {
+        let mut session = session(json!({}));
+        let missing = JmapSessionAccountError("mail".into());
+        assert_eq!(session.account_for("mail"), Err(missing.clone()));
+
+        session.primary_accounts.insert("mail".into(), "".into());
+        assert_eq!(session.account_for("mail"), Err(missing));
+
+        session.primary_accounts.insert("mail".into(), "a1".into());
+        assert_eq!(session.account_for("mail"), Ok("a1"));
     }
 
     #[test]

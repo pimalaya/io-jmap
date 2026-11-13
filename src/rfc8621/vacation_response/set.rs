@@ -73,7 +73,7 @@ use crate::{
         error::{JmapMethodError, write_described, write_properties},
         request::JmapBatch,
         send::*,
-        session::JmapSession,
+        session::{JmapSession, JmapSessionAccountError},
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
@@ -157,6 +157,9 @@ impl fmt::Display for JmapVacationResponseSetItemError {
 /// Failure causes during a JMAP `VacationResponse/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapVacationResponseSetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP VacationResponse/set failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The server refused the update, leaving the singleton as it was.
     #[error("JMAP VacationResponse/set failed: {0}")]
     NotUpdated(JmapVacationResponseSetItemError),
@@ -202,11 +205,9 @@ impl JmapVacationResponseSet {
         patch: JmapVacationResponseUpdate,
     ) -> Result<Self, JmapVacationResponseSetError> {
         let account_id = session
-            .primary_accounts
-            .get(JMAP_VACATION_RESPONSE_CAPABILITY)
-            .or_else(|| session.primary_accounts.get(JMAP_MAIL_CAPABILITY))
-            .cloned()
-            .unwrap_or_default();
+            .account_for(JMAP_VACATION_RESPONSE_CAPABILITY)
+            .or_else(|_| session.account_for(JMAP_MAIL_CAPABILITY))?;
+        let account_id = String::from(account_id);
         let api_url = &session.api_url;
 
         let args = serde_json::to_value(VacationResponseSetArgs {

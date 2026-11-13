@@ -127,10 +127,7 @@ impl JmapSend {
     ) -> Result<Self, JmapSendError> {
         let body = serde_json::to_vec(&request).map_err(JmapSendError::SerializeRequest)?;
 
-        let host = api_url.host_str().unwrap_or("localhost");
-
         let mut http_request = HttpRequest::get(api_url.clone())
-            .header("Host", host)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .header("Authorization", http_auth.expose_secret())
@@ -327,6 +324,15 @@ mod tests {
         let reply = build_http_reply(200, b"{not json");
         let err = expect_complete_err(&mut cor, &reply);
         assert!(matches!(err, JmapSendError::ParseResponse(_)));
+    }
+
+    #[test]
+    fn request_host_keeps_the_port() {
+        let url = "https://api.example.com:8443/jmap/".parse().unwrap();
+        let mut cor = JmapSend::new(&make_auth(), &url, make_request()).unwrap();
+        let bytes = expect_wants_write(&mut cor, None);
+        let req = core::str::from_utf8(&bytes).unwrap().to_ascii_lowercase();
+        assert!(req.contains("\r\nhost: api.example.com:8443\r\n"), "{req}");
     }
 
     #[test]

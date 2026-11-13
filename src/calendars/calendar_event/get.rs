@@ -68,12 +68,21 @@ use crate::{
     calendars::{JMAP_CALENDARS_CAPABILITY, calendar_event::JmapCalendarEvent},
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, get::*, request::JmapBatch, send::*, session::JmapSession},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        get::*,
+        request::JmapBatch,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
+    },
 };
 
 /// Failure causes during a JMAP `CalendarEvent/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapCalendarEventGetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP CalendarEvent/get failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner send coroutine failed.
     #[error("JMAP CalendarEvent/get failed: {0}")]
     Send(#[from] JmapSendError),
@@ -132,11 +141,7 @@ impl JmapCalendarEventGet {
         http_auth: &SecretString,
         opts: JmapCalendarEventGetOptions,
     ) -> Result<Self, JmapCalendarEventGetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CALENDARS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CALENDARS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let args = serde_json::to_value(CalendarEventGetArgs {

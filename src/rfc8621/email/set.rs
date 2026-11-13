@@ -60,7 +60,8 @@ use core::fmt;
 use alloc::{collections::BTreeMap, format, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, ser::Error as _};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
@@ -71,7 +72,7 @@ use crate::{
         error::{write_described, write_properties},
         request::JmapBatch,
         send::*,
-        session::JmapSession,
+        session::{JmapSession, JmapSessionAccountError},
         set::*,
     },
     rfc8621::{JMAP_MAIL_CAPABILITY, email::JmapEmail},
@@ -259,6 +260,9 @@ impl fmt::Display for JmapEmailSetItemError {
 /// Failure causes during a JMAP `Email/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailSetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP Email/set failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner send coroutine failed.
     #[error("JMAP Email/set failed: {0}")]
     Send(#[from] JmapSendError),
@@ -274,8 +278,12 @@ pub enum JmapEmailSetError {
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapEmailSetArgs {
-    /// Objects to create (client ID → partial email object).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Objects to create (client ID → partial email object), sent without
+    /// their unset properties.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_create"
+    )]
     pub create: Option<BTreeMap<String, JmapEmail>>,
     /// Objects to update (email ID → patch).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -412,11 +420,7 @@ impl JmapEmailSet {
         http_auth: &SecretString,
         args: JmapEmailSetArgs,
     ) -> Result<Self, JmapEmailSetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let json_args = serde_json::to_value(EmailSetRequest { account_id, args })
@@ -492,11 +496,71 @@ struct EmailSetRequest {
     args: JmapEmailSetArgs,
 }
 
+/// Serialises the emails to create without the properties left unset,
+/// which RFC 8620 §5.3 wants omitted where `JmapEmail` writes `null`.
+fn serialize_create<S: Serializer>(
+    create: &Option<BTreeMap<String, JmapEmail>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut create = serde_json::to_value(create).map_err(S::Error::custom)?;
+    strip_nulls(&mut create);
+    create.serialize(serializer)
+}
+
+/// Removes every `null` member of the objects in `value`.
+fn strip_nulls(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            object.retain(|_, member| !member.is_null());
+            object.values_mut().for_each(strip_nulls);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_nulls),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use alloc::{collections::BTreeMap, string::ToString, vec};
+
     use serde_json::json;
 
-    use crate::rfc8621::email::set::JmapEmailPatch;
+    use crate::rfc8621::email::{
+        JmapEmail, JmapEmailAddress, JmapEmailBodyPart,
+        set::{JmapEmailPatch, JmapEmailSetArgs},
+    };
+
+    #[test]
+    fn create_omits_unset_properties() {
+        let email = JmapEmail {
+            mailbox_ids: Some(BTreeMap::from([("drafts".to_string(), true)])),
+            subject: Some("Hi".to_string()),
+            from: Some(vec![JmapEmailAddress {
+                name: None,
+                email: "a@example.org".to_string(),
+            }]),
+            text_body: Some(vec![JmapEmailBodyPart {
+                part_id: Some("1".to_string()),
+                r#type: Some("text/plain".to_string()),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        let mut args = JmapEmailSetArgs::default();
+        args.create("k1", email);
+
+        assert_eq!(
+            serde_json::to_value(args).unwrap(),
+            json!({
+                "create": {"k1": {
+                    "mailboxIds": {"drafts": true},
+                    "subject": "Hi",
+                    "from": [{"email": "a@example.org"}],
+                    "textBody": [{"partId": "1", "type": "text/plain"}],
+                }},
+            })
+        );
+    }
 
     #[test]
     fn patch_paths_escape_keywords_and_mailbox_ids() {

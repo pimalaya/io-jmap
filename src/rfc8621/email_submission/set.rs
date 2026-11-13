@@ -72,8 +72,12 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
-        session::JmapSession, set::SetResponse,
+        JMAP_CORE_CAPABILITY,
+        error::JmapMethodError,
+        request::JmapBatch,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
+        set::SetResponse,
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
@@ -132,6 +136,9 @@ impl From<BTreeMap<String, JmapEmailSubmissionCreate>> for JmapEmailSubmissionSe
 /// Failure causes during a JMAP `EmailSubmission/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailSubmissionSetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP EmailSubmission/set failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The response carried no method response.
     #[error("JMAP EmailSubmission/set failed: missing response in method_responses")]
     MissingResponse,
@@ -181,11 +188,7 @@ impl JmapEmailSubmissionSet {
         http_auth: &SecretString,
         args: impl Into<JmapEmailSubmissionSetArgs>,
     ) -> Result<Self, JmapEmailSubmissionSetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let args = serde_json::to_value(EmailSubmissionSetRequest {

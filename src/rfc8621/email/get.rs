@@ -71,7 +71,13 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, get::*, request::JmapBatch, send::*, session::JmapSession},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        get::*,
+        request::JmapBatch,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
+    },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
         email::{JmapEmail, JmapEmailProperty},
@@ -81,6 +87,9 @@ use crate::{
 /// Failure causes during a JMAP `Email/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailGetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP Email/get failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner send coroutine failed.
     #[error("JMAP Email/get failed: {0}")]
     Send(#[from] JmapSendError),
@@ -131,11 +140,7 @@ impl JmapEmailGet {
         ids: Vec<String>,
         opts: JmapEmailGetOptions,
     ) -> Result<Self, JmapEmailGetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let args = serde_json::to_value(EmailGetArgs {

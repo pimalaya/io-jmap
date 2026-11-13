@@ -77,8 +77,14 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, filter::JmapFilter, query::order_by_ids,
-        request::JmapBatch, request::JmapResultReference, send::*, session::JmapSession,
+        JMAP_CORE_CAPABILITY,
+        error::JmapMethodError,
+        filter::JmapFilter,
+        query::order_by_ids,
+        request::JmapBatch,
+        request::JmapResultReference,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
     },
     rfc8621::{
         JMAP_MAIL_CAPABILITY,
@@ -220,6 +226,9 @@ impl JmapEmailComparator {
 /// Failure causes during a batched JMAP `Email/query` + `Email/get` flow.
 #[derive(Debug, Error)]
 pub enum JmapEmailQueryError {
+    /// The session names no account to address the call to.
+    #[error("JMAP Email/query failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The response carried no query response.
     #[error("JMAP Email/query failed: missing Email/query response in method_responses")]
     MissingQueryResponse,
@@ -314,11 +323,7 @@ impl JmapEmailQuery {
         http_auth: &SecretString,
         opts: JmapEmailQueryOptions,
     ) -> Result<Self, JmapEmailQueryError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_MAIL_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_MAIL_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let query_args = EmailQueryArgs {

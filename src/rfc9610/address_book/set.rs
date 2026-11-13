@@ -65,7 +65,13 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     jmap_try,
-    rfc8620::{JMAP_CORE_CAPABILITY, request::JmapBatch, send::*, session::JmapSession, set::*},
+    rfc8620::{
+        JMAP_CORE_CAPABILITY,
+        request::JmapBatch,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
+        set::*,
+    },
     rfc9610::{
         JMAP_CONTACTS_CAPABILITY,
         address_book::{JmapAddressBook, JmapAddressBookRights},
@@ -175,6 +181,9 @@ pub enum JmapAddressBookSetItemError {
 /// Failure causes during a JMAP `AddressBook/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapAddressBookSetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP AddressBook/set failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner send coroutine failed.
     #[error("JMAP AddressBook/set failed: {0}")]
     Send(#[from] JmapSendError),
@@ -243,11 +252,7 @@ impl JmapAddressBookSet {
         http_auth: &SecretString,
         args: JmapAddressBookSetArgs,
     ) -> Result<Self, JmapAddressBookSetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CONTACTS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CONTACTS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let json_args = serde_json::to_value(AddressBookSetRequest { account_id, args })

@@ -70,7 +70,7 @@ use crate::{
         error::{write_described, write_properties},
         request::JmapBatch,
         send::*,
-        session::JmapSession,
+        session::{JmapSession, JmapSessionAccountError},
         set::*,
     },
     rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
@@ -158,6 +158,9 @@ impl fmt::Display for JmapContactCardSetItemError {
 /// Failure causes during a JMAP `ContactCard/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardSetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP ContactCard/set failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner send coroutine failed.
     #[error("JMAP ContactCard/set failed: {0}")]
     Send(#[from] JmapSendError),
@@ -217,11 +220,7 @@ impl JmapContactCardSet {
         http_auth: &SecretString,
         args: JmapContactCardSetArgs,
     ) -> Result<Self, JmapContactCardSetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CONTACTS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CONTACTS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let json_args = serde_json::to_value(ContactCardSetRequest { account_id, args })

@@ -99,10 +99,7 @@ impl JmapBlobDownload {
     /// `download_url` is the fully resolved download URL (no template
     /// placeholders).
     pub fn new(http_auth: &SecretString, download_url: &Url) -> Self {
-        let host = download_url.host_str().unwrap_or("localhost");
-
         let http_request = HttpRequest::get(download_url.clone())
-            .header("Host", host)
             .header("Authorization", http_auth.expose_secret());
 
         debug!("prepare blob download request");
@@ -255,6 +252,15 @@ mod tests {
         let bytes = expect_wants_write(&mut cor, None);
         let req = core::str::from_utf8(&bytes).expect("utf8 request");
         assert!(req.starts_with("GET "));
+    }
+
+    #[test]
+    fn request_host_keeps_the_port() {
+        let url = "https://api.example.com:8443/jmap/download/a1/b1/blob";
+        let mut cor = JmapBlobDownload::new(&make_auth(), &url.parse().unwrap());
+        let bytes = expect_wants_write(&mut cor, None);
+        let req = core::str::from_utf8(&bytes).unwrap().to_ascii_lowercase();
+        assert!(req.contains("\r\nhost: api.example.com:8443\r\n"), "{req}");
     }
 
     fn expect_wants_write(cor: &mut JmapBlobDownload, arg: Option<&[u8]>) -> Vec<u8> {

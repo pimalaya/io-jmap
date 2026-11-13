@@ -85,7 +85,7 @@ use crate::{
         error::{write_described, write_properties},
         request::JmapBatch,
         send::*,
-        session::JmapSession,
+        session::{JmapSession, JmapSessionAccountError},
         set::*,
     },
 };
@@ -249,6 +249,9 @@ impl fmt::Display for JmapCalendarEventSetItemError {
 /// Failure causes during a JMAP `CalendarEvent/set` flow.
 #[derive(Debug, Error)]
 pub enum JmapCalendarEventSetError {
+    /// The session names no account to address the call to.
+    #[error("JMAP CalendarEvent/set failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The inner send coroutine failed.
     #[error("JMAP CalendarEvent/set failed: {0}")]
     Send(#[from] JmapSendError),
@@ -325,11 +328,7 @@ impl JmapCalendarEventSet {
         http_auth: &SecretString,
         args: JmapCalendarEventSetArgs,
     ) -> Result<Self, JmapCalendarEventSetError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CALENDARS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CALENDARS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let json_args = serde_json::to_value(CalendarEventSetRequest { account_id, args })

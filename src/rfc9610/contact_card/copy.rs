@@ -64,8 +64,12 @@ use crate::{
     coroutine::*,
     jmap_try,
     rfc8620::{
-        JMAP_CORE_CAPABILITY, error::JmapMethodError, request::JmapBatch, send::*,
-        session::JmapSession, set::SetResponse,
+        JMAP_CORE_CAPABILITY,
+        error::JmapMethodError,
+        request::JmapBatch,
+        send::*,
+        session::{JmapSession, JmapSessionAccountError},
+        set::SetResponse,
     },
     rfc9610::{JMAP_CONTACTS_CAPABILITY, contact_card::JmapContactCard},
 };
@@ -124,6 +128,9 @@ pub enum JmapContactCardCopyItemError {
 /// Failure causes during a JMAP `ContactCard/copy` flow.
 #[derive(Debug, Error)]
 pub enum JmapContactCardCopyError {
+    /// The session names no account to address the call to.
+    #[error("JMAP ContactCard/copy failed: {0}")]
+    Account(#[from] JmapSessionAccountError),
     /// The response carried no method response.
     #[error("JMAP ContactCard/copy failed: missing response in method_responses")]
     MissingResponse,
@@ -167,11 +174,7 @@ impl JmapContactCardCopy {
         from_account_id: impl Into<String>,
         cards: BTreeMap<String, JmapContactCardCopyArgs>,
     ) -> Result<Self, JmapContactCardCopyError> {
-        let account_id = session
-            .primary_accounts
-            .get(JMAP_CONTACTS_CAPABILITY)
-            .cloned()
-            .unwrap_or_default();
+        let account_id = String::from(session.account_for(JMAP_CONTACTS_CAPABILITY)?);
         let api_url = &session.api_url;
 
         let args = serde_json::to_value(ContactCardCopyArgs {
