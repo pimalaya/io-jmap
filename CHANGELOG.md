@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `JmapUnparsed`, an object of a `Foo/get` `list` that did not deserialize, with its `id` when it is a string and the error message.
 - Added `Display` to `JmapEmailCopyItemError` and `JmapMailboxSetItemError`, as `JMAP <type>[: <description>]`.
+- Added `Display` to `JmapIdentitySetItemError`, as `JMAP <type>[: <description>]`.
+- Added `Display` to `JmapAddressBookSetItemError`, as `JMAP <type>[: <description>]`.
+- Added `Display` to `JmapContactCardCopyItemError`, as `JMAP <type>[: <description>]`.
 
 ### Changed
 

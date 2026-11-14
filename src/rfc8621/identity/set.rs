@@ -55,6 +55,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -66,7 +68,7 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY,
-        error::JmapMethodError,
+        error::{JmapMethodError, write_described, write_properties},
         request::JmapBatch,
         send::*,
         session::{JmapSession, JmapSessionAccountError},
@@ -169,6 +171,25 @@ pub enum JmapIdentitySetItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+}
+
+impl fmt::Display for JmapIdentitySetItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidPatch { description } => write_described(f, "invalidPatch", description),
+            Self::WillDestroy { description } => write_described(f, "willDestroy", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Singleton { description } => write_described(f, "singleton", description),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
+        }
+    }
 }
 
 /// Failure causes during a JMAP `Identity/set` flow.
@@ -368,4 +389,37 @@ struct IdentitySetResponse {
     not_updated: Option<BTreeMap<String, JmapIdentitySetItemError>>,
     #[serde(default)]
     not_destroyed: Option<BTreeMap<String, JmapIdentitySetItemError>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::ToString;
+
+    use serde_json::{from_value, json};
+
+    use super::JmapIdentitySetItemError;
+
+    #[test]
+    fn a_refusal_reads_as_its_type_and_description() {
+        let refused: JmapIdentitySetItemError =
+            from_value(json!({ "type": "singleton", "description": "d" })).unwrap();
+
+        assert!(matches!(
+            refused,
+            JmapIdentitySetItemError::Singleton { .. }
+        ));
+        assert_eq!(refused.to_string(), "JMAP singleton: d");
+    }
+
+    #[test]
+    fn an_unmodelled_error_keeps_its_type_and_description() {
+        let refused: JmapIdentitySetItemError =
+            from_value(json!({ "type": "forbiddenFrom", "description": "d" })).unwrap();
+
+        assert!(matches!(
+            &refused,
+            JmapIdentitySetItemError::Other { type_name, .. } if type_name == "forbiddenFrom"
+        ));
+        assert_eq!(refused.to_string(), "JMAP forbiddenFrom: d");
+    }
 }

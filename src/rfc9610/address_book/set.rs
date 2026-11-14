@@ -56,6 +56,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -67,6 +69,7 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY,
+        error::{write_described, write_properties},
         request::JmapBatch,
         send::*,
         session::{JmapSession, JmapSessionAccountError},
@@ -178,6 +181,28 @@ pub enum JmapAddressBookSetItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+}
+
+impl fmt::Display for JmapAddressBookSetItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddressBookHasContents { description } => {
+                write_described(f, "addressBookHasContents", description)
+            }
+            Self::Forbidden { description } => write_described(f, "forbidden", description),
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidPatch { description } => write_described(f, "invalidPatch", description),
+            Self::WillDestroy { description } => write_described(f, "willDestroy", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
+        }
+    }
 }
 
 /// Failure causes during a JMAP `AddressBook/set` flow.
@@ -333,9 +358,11 @@ struct AddressBookSetRequest {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use alloc::string::ToString;
 
-    use crate::rfc9610::address_book::set::JmapAddressBookUpdate;
+    use serde_json::{from_value, json};
+
+    use crate::rfc9610::address_book::set::{JmapAddressBookSetItemError, JmapAddressBookUpdate};
 
     #[test]
     fn update_clears_a_nullable_property() {
@@ -349,5 +376,32 @@ mod tests {
             serde_json::to_value(patch).unwrap(),
             json!({ "description": null, "shareWith": null })
         );
+    }
+
+    #[test]
+    fn a_refusal_reads_as_its_type_and_description() {
+        let refused: JmapAddressBookSetItemError = from_value(json!({
+            "type": "addressBookHasContents",
+            "description": "d",
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            refused,
+            JmapAddressBookSetItemError::AddressBookHasContents { .. }
+        ));
+        assert_eq!(refused.to_string(), "JMAP addressBookHasContents: d");
+    }
+
+    #[test]
+    fn an_unmodelled_error_keeps_its_type_and_description() {
+        let refused: JmapAddressBookSetItemError =
+            from_value(json!({ "type": "overQuota", "description": "d" })).unwrap();
+
+        assert!(matches!(
+            &refused,
+            JmapAddressBookSetItemError::Other { type_name, .. } if type_name == "overQuota"
+        ));
+        assert_eq!(refused.to_string(), "JMAP overQuota: d");
     }
 }

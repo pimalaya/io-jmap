@@ -54,6 +54,8 @@
 //! println!("{} created", out.created.len());
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -65,7 +67,7 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY,
-        error::JmapMethodError,
+        error::{JmapMethodError, write_described, write_properties},
         request::JmapBatch,
         send::*,
         session::{JmapSession, JmapSessionAccountError},
@@ -123,6 +125,32 @@ pub enum JmapContactCardCopyItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+}
+
+impl fmt::Display for JmapContactCardCopyItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AlreadyExists {
+                existing_id,
+                description,
+            } => {
+                write!(f, "JMAP alreadyExists (existing id {existing_id})")?;
+                if let Some(description) = description {
+                    write!(f, ": {description}")?;
+                }
+                Ok(())
+            }
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
+        }
+    }
 }
 
 /// Failure causes during a JMAP `ContactCard/copy` flow.
@@ -312,5 +340,37 @@ mod tests {
             out.not_created["c1"],
             JmapContactCardCopyItemError::NotFound { .. }
         ));
+    }
+
+    #[test]
+    fn already_exists_keeps_the_id_the_server_names() {
+        let refused: JmapContactCardCopyItemError = serde_json::from_value(serde_json::json!({
+            "type": "alreadyExists",
+            "existingId": "K1",
+            "description": "d",
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            &refused,
+            JmapContactCardCopyItemError::AlreadyExists { existing_id, .. } if existing_id == "K1"
+        ));
+        assert_eq!(
+            refused.to_string(),
+            "JMAP alreadyExists (existing id K1): d"
+        );
+    }
+
+    #[test]
+    fn an_unmodelled_error_keeps_its_type_and_description() {
+        let refused: JmapContactCardCopyItemError =
+            serde_json::from_value(serde_json::json!({ "type": "forbidden", "description": "d" }))
+                .unwrap();
+
+        assert!(matches!(
+            &refused,
+            JmapContactCardCopyItemError::Other { type_name, .. } if type_name == "forbidden"
+        ));
+        assert_eq!(refused.to_string(), "JMAP forbidden: d");
     }
 }
