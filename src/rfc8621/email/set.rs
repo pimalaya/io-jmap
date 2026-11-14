@@ -219,6 +219,28 @@ pub enum JmapEmailSetItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// Standard set error (RFC 8620 §5.3): the action is not permitted.
+    Forbidden {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the action would exceed a quota.
+    OverQuota {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the object would exceed a size
+    /// limit.
+    TooLarge {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): too many objects of this type
+    /// were created lately.
+    RateLimit {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// A set error type this library does not model, kept as the server
     /// named it.
     #[serde(untagged)]
@@ -249,6 +271,10 @@ impl fmt::Display for JmapEmailSetItemError {
                 properties,
             } => write_properties(f, description, properties),
             Self::Singleton { description } => write_described(f, "singleton", description),
+            Self::Forbidden { description } => write_described(f, "forbidden", description),
+            Self::OverQuota { description } => write_described(f, "overQuota", description),
+            Self::TooLarge { description } => write_described(f, "tooLarge", description),
+            Self::RateLimit { description } => write_described(f, "rateLimit", description),
             Self::Other {
                 type_name,
                 description,

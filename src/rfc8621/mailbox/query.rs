@@ -66,6 +66,7 @@ use crate::{
     rfc8620::{
         JMAP_CORE_CAPABILITY,
         error::JmapMethodError,
+        get::{JmapGetItem, JmapUnparsed, split_unparsed},
         query::order_by_ids,
         request::JmapBatch,
         request::JmapResultReference,
@@ -174,6 +175,10 @@ pub struct JmapMailboxQueryOptions {
 pub struct JmapMailboxQueryOutput {
     /// The fetched mailboxes.
     pub mailboxes: Vec<JmapMailbox>,
+    /// The returned objects that did not deserialize.
+    pub unparsed: Vec<JmapUnparsed>,
+    /// The queried ids the chained get did not find.
+    pub not_found: Vec<String>,
     /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
     /// Zero-based index of the first returned id.
@@ -294,15 +299,21 @@ impl JmapCoroutine for JmapMailboxQuery {
                 }
 
                 match serde_json::from_str::<MailboxGetResponse>(get_args.get()) {
-                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapMailboxQueryOutput {
-                        mailboxes: order_by_ids(r.list, &query_response.ids, |item| {
-                            item.id.as_deref()
-                        }),
-                        total: query_response.total,
-                        position: query_response.position,
-                        query_state: query_response.query_state,
-                        keep_alive,
-                    })),
+                    Ok(r) => {
+                        let (list, unparsed) = split_unparsed(r.list);
+                        let mailboxes =
+                            order_by_ids(list, &query_response.ids, |item| item.id.as_deref());
+
+                        JmapCoroutineState::Complete(Ok(JmapMailboxQueryOutput {
+                            mailboxes,
+                            unparsed,
+                            not_found: r.not_found,
+                            total: query_response.total,
+                            position: query_response.position,
+                            query_state: query_response.query_state,
+                            keep_alive,
+                        }))
+                    }
                     Err(err) => JmapCoroutineState::Complete(Err(
                         JmapMailboxQueryError::ParseGetResponse(err),
                     )),
@@ -356,5 +367,7 @@ struct MailboxQueryResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MailboxGetResponse {
-    list: Vec<JmapMailbox>,
+    list: Vec<JmapGetItem<JmapMailbox>>,
+    #[serde(default)]
+    not_found: Vec<String>,
 }

@@ -247,6 +247,8 @@ pub struct JmapContactCardQueryOptions {
 pub struct JmapContactCardQueryOutput {
     /// The fetched contact cards.
     pub cards: Vec<JmapContactCard>,
+    /// The queried ids the chained get did not find.
+    pub not_found: Vec<String>,
     /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
     /// Zero-based index of the first returned id.
@@ -372,6 +374,7 @@ impl JmapCoroutine for JmapContactCardQuery {
                         total: query_response.total,
                         position: query_response.position,
                         query_state: query_response.query_state,
+                        not_found: r.not_found,
                         keep_alive,
                     })),
                     Err(err) => JmapCoroutineState::Complete(Err(
@@ -428,4 +431,6 @@ struct ContactCardQueryResponse {
 #[serde(rename_all = "camelCase")]
 struct ContactCardGetResponse {
     list: Vec<JmapContactCard>,
+    #[serde(default)]
+    not_found: Vec<String>,
 }

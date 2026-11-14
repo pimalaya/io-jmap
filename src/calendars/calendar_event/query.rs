@@ -243,6 +243,8 @@ pub struct JmapCalendarEventQueryOptions {
 pub struct JmapCalendarEventQueryOutput {
     /// The fetched calendar events.
     pub events: Vec<JmapCalendarEvent>,
+    /// The queried ids the chained get did not find.
+    pub not_found: Vec<String>,
     /// The total number of matching objects, when the server computed
     /// it.
     pub total: Option<u64>,
@@ -376,6 +378,7 @@ impl JmapCoroutine for JmapCalendarEventQuery {
                         total: query_response.total,
                         position: query_response.position,
                         query_state: query_response.query_state,
+                        not_found: r.not_found,
                         keep_alive,
                     })),
                     Err(err) => JmapCoroutineState::Complete(Err(
@@ -440,6 +443,8 @@ struct CalendarEventQueryResponse {
 #[serde(rename_all = "camelCase")]
 struct CalendarEventGetResponse {
     list: Vec<JmapCalendarEvent>,
+    #[serde(default)]
+    not_found: Vec<String>,
 }
 
 fn is_false(b: &bool) -> bool {

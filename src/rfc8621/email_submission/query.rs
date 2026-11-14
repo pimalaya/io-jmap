@@ -184,6 +184,8 @@ pub struct JmapEmailSubmissionQueryOptions {
 pub struct JmapEmailSubmissionQueryOutput {
     /// The fetched email submissions.
     pub submissions: Vec<JmapEmailSubmission>,
+    /// The queried ids the chained get did not find.
+    pub not_found: Vec<String>,
     /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
     /// Zero-based index of the first returned id.
@@ -313,6 +315,7 @@ impl JmapCoroutine for JmapEmailSubmissionQuery {
                         total: query_response.total,
                         position: query_response.position,
                         query_state: query_response.query_state,
+                        not_found: r.not_found,
                         keep_alive,
                     })),
                     Err(err) => JmapCoroutineState::Complete(Err(
@@ -367,4 +370,6 @@ struct SubmissionQueryResponse {
 #[serde(rename_all = "camelCase")]
 struct SubmissionGetResponse {
     list: Vec<JmapEmailSubmission>,
+    #[serde(default)]
+    not_found: Vec<String>,
 }

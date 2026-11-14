@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: a-get-keeps-what-it-misses
-status: active
+status: landed
 created: 2026-11-14
 ---
 

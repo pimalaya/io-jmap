@@ -56,10 +56,14 @@
 
 use core::marker::PhantomData;
 
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde_json::value::RawValue;
 use thiserror::Error;
 use url::Url;
 
@@ -109,6 +113,15 @@ pub struct JmapGetOutput<T> {
     pub state: String,
     /// Whether the server indicated the connection can be reused.
     pub keep_alive: bool,
+}
+
+/// An object of a `Foo/get` `list` that did not deserialize.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JmapUnparsed {
+    /// The object's `id`, when it is a string.
+    pub id: Option<String>,
+    /// What the deserialization said.
+    pub error: String,
 }
 
 /// Generic I/O-free coroutine for the JMAP `Foo/get` method (RFC 8620 §5.1).
@@ -212,6 +225,51 @@ struct GetResponse<T> {
     #[serde(default)]
     not_found: Vec<String>,
     state: String,
+}
+
+/// One object of a `Foo/get` `list`, read on its own.
+///
+/// Reads from borrowed JSON text only (`serde_json::from_str`).
+pub(crate) enum JmapGetItem<T> {
+    Parsed(T),
+    Unparsed(JmapUnparsed),
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for JmapGetItem<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = <&RawValue>::deserialize(deserializer)?;
+
+        match serde_json::from_str(raw.get()) {
+            Ok(item) => Ok(Self::Parsed(item)),
+            Err(err) => {
+                let id = serde_json::from_str::<UnparsedId>(raw.get())
+                    .ok()
+                    .and_then(|unparsed| unparsed.id);
+                let error = err.to_string();
+                Ok(Self::Unparsed(JmapUnparsed { id, error }))
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UnparsedId {
+    id: Option<String>,
+}
+
+/// Splits the objects read from the ones that did not deserialize.
+pub(crate) fn split_unparsed<T>(items: Vec<JmapGetItem<T>>) -> (Vec<T>, Vec<JmapUnparsed>) {
+    let mut parsed = Vec::with_capacity(items.len());
+    let mut unparsed = Vec::new();
+
+    for item in items {
+        match item {
+            JmapGetItem::Parsed(item) => parsed.push(item),
+            JmapGetItem::Unparsed(item) => unparsed.push(item),
+        }
+    }
+
+    (parsed, unparsed)
 }
 
 #[cfg(test)]

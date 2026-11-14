@@ -80,6 +80,7 @@ use crate::{
         JMAP_CORE_CAPABILITY,
         error::JmapMethodError,
         filter::JmapFilter,
+        get::{JmapGetItem, JmapUnparsed, split_unparsed},
         query::order_by_ids,
         request::JmapBatch,
         request::JmapResultReference,
@@ -301,6 +302,10 @@ impl Default for JmapEmailQueryOptions {
 pub struct JmapEmailQueryOutput {
     /// The fetched emails.
     pub emails: Vec<JmapEmail>,
+    /// The returned objects that did not deserialize.
+    pub unparsed: Vec<JmapUnparsed>,
+    /// The queried ids the chained get did not find.
+    pub not_found: Vec<String>,
     /// The total number of matching objects, when the server computed it.
     pub total: Option<u64>,
     /// Zero-based index of the first returned id.
@@ -421,15 +426,21 @@ impl JmapCoroutine for JmapEmailQuery {
                 }
 
                 match serde_json::from_str::<EmailGetResponse>(get_args.get()) {
-                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapEmailQueryOutput {
-                        emails: order_by_ids(r.list, &query_response.ids, |item| {
-                            item.id.as_deref()
-                        }),
-                        total: query_response.total,
-                        position: query_response.position,
-                        query_state: query_response.query_state,
-                        keep_alive,
-                    })),
+                    Ok(r) => {
+                        let (list, unparsed) = split_unparsed(r.list);
+                        let emails =
+                            order_by_ids(list, &query_response.ids, |item| item.id.as_deref());
+
+                        JmapCoroutineState::Complete(Ok(JmapEmailQueryOutput {
+                            emails,
+                            unparsed,
+                            not_found: r.not_found,
+                            total: query_response.total,
+                            position: query_response.position,
+                            query_state: query_response.query_state,
+                            keep_alive,
+                        }))
+                    }
                     Err(err) => JmapCoroutineState::Complete(Err(
                         JmapEmailQueryError::ParseGetResponse(err),
                     )),
@@ -489,5 +500,7 @@ struct EmailQueryResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EmailGetResponse {
-    list: Vec<JmapEmail>,
+    list: Vec<JmapGetItem<JmapEmail>>,
+    #[serde(default)]
+    not_found: Vec<String>,
 }

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `JmapUnparsed`, an object of a `Foo/get` `list` that did not deserialize, with its `id` when it is a string and the error message.
+- Added `Display` to `JmapEmailCopyItemError` and `JmapMailboxSetItemError`, as `JMAP <type>[: <description>]`.
+
+### Changed
+
+- **BREAKING**: Added `not_found` to `JmapEmailQueryOutput`, `JmapMailboxQueryOutput`, `JmapEmailSubmissionQueryOutput`, `JmapCalendarEventQueryOutput` and `JmapContactCardQueryOutput`.
+
+  The chained `/get`'s `notFound`, which was dropped.
+
+- **BREAKING**: Added `unparsed` to `JmapEmailGetOutput`, `JmapEmailQueryOutput`, `JmapMailboxGetOutput` and `JmapMailboxQueryOutput`.
+
+  An object of the `list` that does not deserialize is returned there instead of failing the whole call.
+
+- **BREAKING**: Added `Forbidden`, `OverQuota`, `TooLarge` and `RateLimit` to `JmapEmailSetItemError`, `JmapEmailCopyItemError`, `JmapEmailImportItemError` and `JmapMailboxSetItemError`.
+
+  These standard types (RFC 8620 §5.3) read as `Other` before.
+
+- **BREAKING**: Added `invalid_recipients` to `JmapEmailSubmissionSetItemError::InvalidRecipients` and `max_recipients` to `TooManyRecipients` (RFC 8621 §7.5).
+
 ## [0.9.0] - 2026-11-13
 
 ### Changed

@@ -133,6 +133,28 @@ pub enum JmapEmailImportItemError {
         #[serde(default)]
         properties: Vec<String>,
     },
+    /// Standard set error (RFC 8620 §5.3): the action is not permitted.
+    Forbidden {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the action would exceed a quota.
+    OverQuota {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the object would exceed a size
+    /// limit.
+    TooLarge {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): too many objects of this type
+    /// were created lately.
+    RateLimit {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// A set error type this library does not model, kept as the server
     /// named it.
     #[serde(untagged)]
@@ -164,6 +186,10 @@ impl fmt::Display for JmapEmailImportItemError {
                 description,
                 properties,
             } => write_properties(f, description, properties),
+            Self::Forbidden { description } => write_described(f, "forbidden", description),
+            Self::OverQuota { description } => write_described(f, "overQuota", description),
+            Self::TooLarge { description } => write_described(f, "tooLarge", description),
+            Self::RateLimit { description } => write_described(f, "rateLimit", description),
             Self::Other {
                 type_name,
                 description,
@@ -393,7 +419,7 @@ mod tests {
             br#"{
                 "methodResponses": [["Email/import", {
                     "accountId": "a1", "oldState": "e1", "newState": "e1",
-                    "notCreated": {"m0": {"type": "overQuota", "description": "full"}}
+                    "notCreated": {"m0": {"type": "blobNotFound", "description": "gone"}}
                 }, "c0"]],
                 "sessionState": "s1"
             }"#,
@@ -402,8 +428,8 @@ mod tests {
         assert!(matches!(
             &out.not_created["m0"],
             JmapEmailImportItemError::Other { type_name, description }
-                if type_name == "overQuota" && description.as_deref() == Some("full")
+                if type_name == "blobNotFound" && description.as_deref() == Some("gone")
         ));
-        assert_eq!(out.not_created["m0"].to_string(), "JMAP overQuota: full");
+        assert_eq!(out.not_created["m0"].to_string(), "JMAP blobNotFound: gone");
     }
 }

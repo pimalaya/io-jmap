@@ -140,6 +140,9 @@ pub enum JmapEmailSubmissionSetItemError {
     TooManyRecipients {
         /// Optional human-readable detail.
         description: Option<String>,
+        /// The most recipients the server accepts.
+        #[serde(default, rename = "maxRecipients")]
+        max_recipients: Option<u64>,
     },
     /// The message had no recipients (RFC 8621 §7.5).
     NoRecipients {
@@ -150,6 +153,9 @@ pub enum JmapEmailSubmissionSetItemError {
     InvalidRecipients {
         /// Optional human-readable detail.
         description: Option<String>,
+        /// The recipient addresses the server refused.
+        #[serde(default, rename = "invalidRecipients")]
+        invalid_recipients: Vec<String>,
     },
     /// The From address is not permitted for this identity (RFC 8621 §7.5).
     ForbiddenFrom {
@@ -230,12 +236,29 @@ pub enum JmapEmailSubmissionSetItemError {
 impl fmt::Display for JmapEmailSubmissionSetItemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::TooManyRecipients { description } => {
-                write_described(f, "tooManyRecipients", description)
+            Self::TooManyRecipients {
+                description,
+                max_recipients,
+            } => {
+                write_described(f, "tooManyRecipients", description)?;
+                match max_recipients {
+                    Some(max) => write!(f, " (at most {max} recipients)"),
+                    None => Ok(()),
+                }
             }
             Self::NoRecipients { description } => write_described(f, "noRecipients", description),
-            Self::InvalidRecipients { description } => {
-                write_described(f, "invalidRecipients", description)
+            Self::InvalidRecipients {
+                description,
+                invalid_recipients,
+            } => {
+                write!(f, "JMAP invalidRecipients")?;
+                if !invalid_recipients.is_empty() {
+                    write!(f, " [{}]", invalid_recipients.join(", "))?;
+                }
+                if let Some(description) = description {
+                    write!(f, ": {description}")?;
+                }
+                Ok(())
             }
             Self::ForbiddenFrom { description } => write_described(f, "forbiddenFrom", description),
             Self::ForbiddenMailFrom { description } => {
@@ -306,6 +329,68 @@ mod tests {
             }
         ));
         assert_eq!(refused.to_string(), "JMAP tooLarge (at most 1000 octets)");
+    }
+
+    #[test]
+    fn invalid_recipients_keeps_the_addresses_the_server_lists() {
+        let refused: JmapEmailSubmissionSetItemError = from_value(json!({
+            "type": "invalidRecipients",
+            "invalidRecipients": ["a@x", "b@y"],
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            &refused,
+            JmapEmailSubmissionSetItemError::InvalidRecipients {
+                invalid_recipients,
+                ..
+            } if invalid_recipients == &["a@x", "b@y"]
+        ));
+        assert_eq!(refused.to_string(), "JMAP invalidRecipients [a@x, b@y]");
+    }
+
+    #[test]
+    fn invalid_recipients_without_a_list_reads_empty() {
+        let refused: JmapEmailSubmissionSetItemError =
+            from_value(json!({ "type": "invalidRecipients", "description": "d" })).unwrap();
+
+        assert!(matches!(
+            &refused,
+            JmapEmailSubmissionSetItemError::InvalidRecipients {
+                invalid_recipients,
+                ..
+            } if invalid_recipients.is_empty()
+        ));
+        assert_eq!(refused.to_string(), "JMAP invalidRecipients: d");
+    }
+
+    #[test]
+    fn too_many_recipients_keeps_the_limit_the_server_sends() {
+        let refused: JmapEmailSubmissionSetItemError =
+            from_value(json!({ "type": "tooManyRecipients", "maxRecipients": 50 })).unwrap();
+
+        assert!(matches!(
+            refused,
+            JmapEmailSubmissionSetItemError::TooManyRecipients {
+                max_recipients: Some(50),
+                ..
+            }
+        ));
+        assert_eq!(
+            refused.to_string(),
+            "JMAP tooManyRecipients (at most 50 recipients)"
+        );
+
+        let refused: JmapEmailSubmissionSetItemError =
+            from_value(json!({ "type": "tooManyRecipients" })).unwrap();
+
+        assert!(matches!(
+            refused,
+            JmapEmailSubmissionSetItemError::TooManyRecipients {
+                max_recipients: None,
+                ..
+            }
+        ));
     }
 
     #[test]

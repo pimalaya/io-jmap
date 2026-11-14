@@ -97,6 +97,8 @@ pub struct JmapMailboxGetOptions {
 pub struct JmapMailboxGetOutput {
     /// The fetched mailboxes.
     pub mailboxes: Vec<JmapMailbox>,
+    /// The returned objects that did not deserialize.
+    pub unparsed: Vec<JmapUnparsed>,
     /// The requested ids the server did not find.
     pub not_found: Vec<String>,
     /// The new server state after the call.
@@ -160,8 +162,11 @@ impl JmapCoroutine for JmapMailboxGet {
                     state,
                     keep_alive,
                 } = jmap_try!(get, arg);
+                let (list, unparsed) = split_unparsed(list);
+
                 JmapCoroutineState::Complete(Ok(JmapMailboxGetOutput {
                     mailboxes: list,
+                    unparsed,
                     not_found,
                     new_state: state,
                     keep_alive,
@@ -172,5 +177,5 @@ impl JmapCoroutine for JmapMailboxGet {
 }
 
 enum State {
-    Get(JmapGet<JmapMailbox>),
+    Get(JmapGet<JmapGetItem<JmapMailbox>>),
 }

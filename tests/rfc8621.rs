@@ -9,6 +9,7 @@ use io_jmap::{
     coroutine::*,
     rfc8620::{
         error::JmapMethodError,
+        get::JmapGetError,
         session::{JmapSession, JmapSessionAccountError},
     },
     rfc8621::{
@@ -35,14 +36,14 @@ use io_jmap::{
             },
             set::{
                 JmapMailboxCreate, JmapMailboxSet, JmapMailboxSetArgs, JmapMailboxSetError,
-                JmapMailboxSetOutput, JmapMailboxUpdate,
+                JmapMailboxSetItemError, JmapMailboxSetOutput, JmapMailboxUpdate,
             },
         },
         vacation_response::get::{JmapVacationResponseGet, JmapVacationResponseGetError},
     },
 };
 use secrecy::SecretString;
-use serde_json::Value;
+use serde_json::{Value, from_value, json};
 
 /// A minimal session object with a single mail account `acc1`.
 const SESSION_JSON: &[u8] = br#"{
@@ -239,6 +240,30 @@ fn mailbox_query_keeps_the_query_order() {
     };
     let ids: Vec<_> = out.mailboxes.iter().map(|m| m.id.as_deref()).collect();
     assert_eq!(ids, [Some("m3"), Some("m1"), Some("m2")]);
+}
+
+#[test]
+fn mailbox_query_keeps_a_mailbox_that_does_not_deserialize() {
+    let body = br#"{
+      "methodResponses": [
+        ["Mailbox/query", {"queryState": "s1", "position": 0, "ids": ["m2", "m1"]}, "c0"],
+        ["Mailbox/get", {
+          "state": "s1",
+          "list": [{"id": "m1", "name": "Inbox"}, {"id": 2, "name": "Sent"}],
+          "notFound": []
+        }, "c1"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    let JmapCoroutineState::Complete(Ok(out)) = run_mailbox_query(&http_ok(body)) else {
+        panic!("the query did not complete");
+    };
+    let ids: Vec<_> = out.mailboxes.iter().map(|m| m.id.as_deref()).collect();
+    assert_eq!(ids, [Some("m1")]);
+    assert_eq!(out.unparsed.len(), 1);
+    assert_eq!(out.unparsed[0].id, None);
+    assert!(!out.unparsed[0].error.is_empty());
 }
 
 #[test]
@@ -562,6 +587,24 @@ fn email_query_keeps_the_query_order() {
 }
 
 #[test]
+fn email_query_keeps_what_its_get_did_not_find() {
+    let body = br#"{
+      "methodResponses": [
+        ["Email/query", {"queryState": "s1", "position": 0, "ids": ["e1", "e2"]}, "c0"],
+        ["Email/get", {"state": "s1", "list": [{"id": "e1"}], "notFound": ["e2"]}, "c1"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    let JmapCoroutineState::Complete(Ok(out)) = run_email_query(&http_ok(body)) else {
+        panic!("the query did not complete");
+    };
+    let ids: Vec<_> = out.emails.iter().map(|e| e.id.as_deref()).collect();
+    assert_eq!(ids, [Some("e1")]);
+    assert_eq!(out.not_found, ["e2"]);
+}
+
+#[test]
 fn email_query_empty() {
     let body = br#"{
       "methodResponses": [
@@ -738,6 +781,105 @@ fn email_get_not_found() {
         }
         other => panic!("unexpected result: {other:?}"),
     }
+}
+
+#[test]
+fn email_get_keeps_an_email_that_does_not_deserialize() {
+    let body = br#"{
+      "methodResponses": [
+        ["Email/get", {
+          "state": "s1",
+          "list": [{"id": "e1", "subject": "Hi"}, {"id": "e2", "receivedAt": 42}],
+          "notFound": []
+        }, "c0"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    let ids = vec!["e1".to_owned(), "e2".to_owned()];
+    let JmapCoroutineState::Complete(Ok(out)) = run_email_get(&http_ok(body), ids) else {
+        panic!("the get did not complete");
+    };
+    let ids: Vec<_> = out.emails.iter().map(|e| e.id.as_deref()).collect();
+    assert_eq!(ids, [Some("e1")]);
+    assert_eq!(out.unparsed.len(), 1);
+    assert_eq!(out.unparsed[0].id.as_deref(), Some("e2"));
+    assert!(out.unparsed[0].error.contains("invalid type"));
+}
+
+#[test]
+fn email_get_list_that_is_no_array_fails() {
+    let body = br#"{
+      "methodResponses": [["Email/get", {"state": "s1", "list": "nope"}, "c0"]],
+      "sessionState": "s1"
+    }"#;
+
+    assert!(matches!(
+        run_email_get(&http_ok(body), Vec::new()),
+        JmapCoroutineState::Complete(Err(JmapEmailGetError::Get(JmapGetError::ParseResponse(_))))
+    ));
+}
+
+#[test]
+fn the_standard_set_errors_are_typed() {
+    for name in ["forbidden", "overQuota", "tooLarge", "rateLimit"] {
+        let error = json!({"type": name, "description": "d"});
+        let expected = format!("JMAP {name}: d");
+
+        let set: JmapEmailSetItemError = from_value(error.clone()).unwrap();
+        assert!(
+            !matches!(set, JmapEmailSetItemError::Other { .. }),
+            "{name}"
+        );
+        assert_eq!(set.to_string(), expected);
+
+        let copy: JmapEmailCopyItemError = from_value(error.clone()).unwrap();
+        assert!(
+            !matches!(copy, JmapEmailCopyItemError::Other { .. }),
+            "{name}"
+        );
+        assert_eq!(copy.to_string(), expected);
+
+        let import: JmapEmailImportItemError = from_value(error.clone()).unwrap();
+        assert!(
+            !matches!(import, JmapEmailImportItemError::Other { .. }),
+            "{name}"
+        );
+        assert_eq!(import.to_string(), expected);
+
+        let mailbox: JmapMailboxSetItemError = from_value(error).unwrap();
+        assert!(
+            !matches!(mailbox, JmapMailboxSetItemError::Other { .. }),
+            "{name}"
+        );
+        assert_eq!(mailbox.to_string(), expected);
+    }
+}
+
+#[test]
+fn email_set_reads_a_refused_keyword_update() {
+    let body = br#"{
+      "methodResponses": [
+        ["Email/set", {
+          "accountId": "acc1",
+          "newState": "s2",
+          "notUpdated": {"e1": {"type": "forbidden", "description": "read-only mailbox"}}
+        }, "c0"]
+      ],
+      "sessionState": "s1"
+    }"#;
+
+    let mut args = JmapEmailSetArgs::default();
+    args.set_keyword("e1", "$seen");
+    let coroutine = JmapEmailSet::new(&make_session(), &make_token(), args).unwrap();
+    let out = complete(coroutine, &http_ok(body)).expect("refusal read");
+
+    let refused = &out.not_updated["e1"];
+    assert!(matches!(
+        refused,
+        JmapEmailSetItemError::Forbidden { description: Some(d) } if d == "read-only mailbox"
+    ));
+    assert_eq!(refused.to_string(), "JMAP forbidden: read-only mailbox");
 }
 
 /// Resumes `coroutine` to completion, answering its one read with `reply`.

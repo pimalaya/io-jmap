@@ -54,6 +54,8 @@
 //! println!("new state {}", out.new_state);
 //! ```
 
+use core::fmt;
+
 use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use secrecy::SecretString;
@@ -65,6 +67,7 @@ use crate::{
     jmap_try,
     rfc8620::{
         JMAP_CORE_CAPABILITY,
+        error::{write_described, write_properties},
         request::JmapBatch,
         send::*,
         session::{JmapSession, JmapSessionAccountError},
@@ -167,6 +170,28 @@ pub enum JmapMailboxSetItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+    /// Standard set error (RFC 8620 §5.3): the action is not permitted.
+    Forbidden {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the action would exceed a quota.
+    OverQuota {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): the object would exceed a size
+    /// limit.
+    TooLarge {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
+    /// Standard set error (RFC 8620 §5.3): too many objects of this type
+    /// were created lately.
+    RateLimit {
+        /// Optional human-readable detail.
+        description: Option<String>,
+    },
     /// A set error type this library does not model, kept as the server
     /// named it.
     #[serde(untagged)]
@@ -177,6 +202,35 @@ pub enum JmapMailboxSetItemError {
         /// Optional human-readable detail.
         description: Option<String>,
     },
+}
+
+impl fmt::Display for JmapMailboxSetItemError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MailboxHasChild { description } => {
+                write_described(f, "mailboxHasChild", description)
+            }
+            Self::MailboxHasEmail { description } => {
+                write_described(f, "mailboxHasEmail", description)
+            }
+            Self::NotFound { description } => write_described(f, "notFound", description),
+            Self::InvalidPatch { description } => write_described(f, "invalidPatch", description),
+            Self::WillDestroy { description } => write_described(f, "willDestroy", description),
+            Self::InvalidProperties {
+                description,
+                properties,
+            } => write_properties(f, description, properties),
+            Self::Singleton { description } => write_described(f, "singleton", description),
+            Self::Forbidden { description } => write_described(f, "forbidden", description),
+            Self::OverQuota { description } => write_described(f, "overQuota", description),
+            Self::TooLarge { description } => write_described(f, "tooLarge", description),
+            Self::RateLimit { description } => write_described(f, "rateLimit", description),
+            Self::Other {
+                type_name,
+                description,
+            } => write_described(f, type_name, description),
+        }
+    }
 }
 
 /// Failure causes during a JMAP `Mailbox/set` flow.
