@@ -415,4 +415,23 @@ mod tests {
             state => panic!("expected Complete(Err), got {state:?}"),
         }
     }
+
+    /// RFC 8620 §5.3: a `created` entry holds the id and the properties
+    /// the server set or the client left out, nothing more, so every type
+    /// a `Foo/set` returns reads one holding its id alone.
+    #[test]
+    fn every_set_type_reads_a_created_entry_holding_its_id_alone() {
+        let entry = serde_json::json!({ "id": "x" });
+
+        serde_json::from_value::<crate::rfc8621::mailbox::JmapMailbox>(entry.clone()).unwrap();
+        serde_json::from_value::<crate::rfc8621::email::JmapEmail>(entry.clone()).unwrap();
+        serde_json::from_value::<crate::calendars::calendar::JmapCalendar>(entry.clone()).unwrap();
+        serde_json::from_value::<crate::calendars::calendar_event::JmapCalendarEvent>(
+            entry.clone(),
+        )
+        .unwrap();
+        serde_json::from_value::<crate::rfc9610::address_book::JmapAddressBook>(entry.clone())
+            .unwrap();
+        serde_json::from_value::<crate::rfc9610::contact_card::JmapContactCard>(entry).unwrap();
+    }
 }

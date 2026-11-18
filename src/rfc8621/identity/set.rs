@@ -1,6 +1,7 @@
 //! JMAP `Identity/set` coroutine (RFC 8621 §6.4): builds a custom set batch
-//! (Identity has no generic `JmapSet` reuse because its set response is parsed
-//! loosely to tolerate partial server output).
+//! rather than reuse the generic `JmapSet`, a `created` entry holding only
+//! what the server set (RFC 8620 §5.3), which reads as an identity once laid
+//! over the create it answers.
 //!
 //! # Example
 //!
@@ -273,6 +274,7 @@ pub struct JmapIdentitySetOutput {
 
 /// I/O-free coroutine for the JMAP `Identity/set` method.
 pub struct JmapIdentitySet {
+    creates: serde_json::Map<String, serde_json::Value>,
     state: State,
 }
 
@@ -294,6 +296,11 @@ impl JmapIdentitySet {
         })
         .map_err(JmapIdentitySetError::SerializeArgs)?;
 
+        let creates = match &json_args["create"] {
+            serde_json::Value::Object(creates) => creates.clone(),
+            _ => serde_json::Map::new(),
+        };
+
         let mut batch = JmapBatch::new();
         batch.add("Identity/set", json_args);
         let request = batch.into_request(vec![
@@ -303,6 +310,7 @@ impl JmapIdentitySet {
         ]);
 
         Ok(Self {
+            creates,
             state: State::Send(JmapSend::new(http_auth, api_url, request)?),
         })
     }
@@ -332,21 +340,58 @@ impl JmapCoroutine for JmapIdentitySet {
                     return JmapCoroutineState::Complete(Err(err.into()));
                 }
 
-                match serde_json::from_str::<IdentitySetResponse>(args.get()) {
-                    Ok(r) => JmapCoroutineState::Complete(Ok(JmapIdentitySetOutput {
-                        new_state: r.new_state.unwrap_or_default(),
-                        created: BTreeMap::new(),
-                        updated: BTreeMap::new(),
-                        destroyed: r.destroyed.unwrap_or_default(),
-                        not_created: r.not_created.unwrap_or_default(),
-                        not_updated: r.not_updated.unwrap_or_default(),
-                        not_destroyed: r.not_destroyed.unwrap_or_default(),
-                        keep_alive,
-                    })),
+                let r = match serde_json::from_str::<IdentitySetResponse>(args.get()) {
+                    Ok(r) => r,
                     Err(err) => {
-                        JmapCoroutineState::Complete(Err(JmapIdentitySetError::ParseResponse(err)))
+                        return JmapCoroutineState::Complete(Err(
+                            JmapIdentitySetError::ParseResponse(err),
+                        ));
+                    }
+                };
+
+                let mut created = BTreeMap::new();
+                for (client_id, entry) in r.created.unwrap_or_default() {
+                    let mut identity = match self.creates.get(&client_id) {
+                        Some(serde_json::Value::Object(create)) => create.clone(),
+                        _ => serde_json::Map::new(),
+                    };
+                    identity.extend(entry);
+
+                    match serde_json::from_value(serde_json::Value::Object(identity)) {
+                        Ok(identity) => {
+                            created.insert(client_id, identity);
+                        }
+                        Err(err) => {
+                            return JmapCoroutineState::Complete(Err(
+                                JmapIdentitySetError::ParseResponse(err),
+                            ));
+                        }
                     }
                 }
+
+                let updated = r
+                    .updated
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, entry)| {
+                        let identity = entry.and_then(|mut entry| {
+                            entry.insert("id".into(), id.clone().into());
+                            serde_json::from_value(serde_json::Value::Object(entry)).ok()
+                        });
+                        (id, identity)
+                    })
+                    .collect();
+
+                JmapCoroutineState::Complete(Ok(JmapIdentitySetOutput {
+                    new_state: r.new_state.unwrap_or_default(),
+                    created,
+                    updated,
+                    destroyed: r.destroyed.unwrap_or_default(),
+                    not_created: r.not_created.unwrap_or_default(),
+                    not_updated: r.not_updated.unwrap_or_default(),
+                    not_destroyed: r.not_destroyed.unwrap_or_default(),
+                    keep_alive,
+                }))
             }
         }
     }
@@ -373,14 +418,13 @@ struct IdentitySetRequest {
 struct IdentitySetResponse {
     #[serde(default)]
     new_state: Option<String>,
-    /// Parsed as raw JSON to avoid issues with partial server responses.
+    /// What the server set on each created identity, its id at least.
     #[serde(default)]
-    #[allow(dead_code)]
-    created: Option<serde_json::Value>,
-    /// Parsed as raw JSON to avoid issues with partial server responses.
+    created: Option<BTreeMap<String, serde_json::Map<String, serde_json::Value>>>,
+    /// What the server changed on each updated identity beyond the patch,
+    /// `null` when nothing.
     #[serde(default)]
-    #[allow(dead_code)]
-    updated: Option<serde_json::Value>,
+    updated: Option<BTreeMap<String, Option<serde_json::Map<String, serde_json::Value>>>>,
     #[serde(default)]
     destroyed: Option<Vec<String>>,
     #[serde(default)]
@@ -393,11 +437,70 @@ struct IdentitySetResponse {
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::ToString;
+    use alloc::{collections::BTreeMap, format, string::ToString, vec::Vec};
 
+    use secrecy::SecretString;
     use serde_json::{from_value, json};
 
-    use super::JmapIdentitySetItemError;
+    use super::{
+        JmapIdentityCreate, JmapIdentitySet, JmapIdentitySetArgs, JmapIdentitySetItemError,
+    };
+    use crate::{
+        coroutine::{JmapCoroutine, JmapCoroutineState, JmapYield},
+        rfc8620::session::JmapSession,
+    };
+
+    /// What Fastmail answers a create (RFC 8620 §5.3): the id and what it
+    /// set, `mayDelete`, the rest being the client's.
+    #[test]
+    fn a_created_identity_reads_from_its_create_and_the_answer() {
+        let session: JmapSession = serde_json::from_value(json!({
+            "username": "", "accounts": {},
+            "primaryAccounts": {"urn:ietf:params:jmap:mail": "a1"},
+            "capabilities": {}, "apiUrl": "https://api.example.com/jmap/",
+            "downloadUrl": "", "uploadUrl": "", "eventSourceUrl": "", "state": ""
+        }))
+        .unwrap();
+        let create = JmapIdentityCreate {
+            name: "Alice".into(),
+            email: "alice@example.org".into(),
+            ..Default::default()
+        };
+        let args = JmapIdentitySetArgs {
+            create: BTreeMap::from([("c1".into(), create)]),
+            ..Default::default()
+        };
+        let auth = SecretString::from("Bearer test");
+        let mut coroutine = JmapIdentitySet::new(&session, &auth, args).unwrap();
+
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsWrite(_))
+        ));
+        assert!(matches!(
+            coroutine.resume(None),
+            JmapCoroutineState::Yielded(JmapYield::WantsRead)
+        ));
+
+        let body = br#"{"methodResponses":[["Identity/set",{"accountId":"a1","newState":"s2","created":{"c1":{"id":"I1","mayDelete":true}},"updated":{"I0":null}},"c0"]],"sessionState":"s2"}"#;
+        let mut reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        reply.extend_from_slice(body);
+        let reply: Vec<u8> = reply;
+
+        let JmapCoroutineState::Complete(Ok(out)) = coroutine.resume(Some(&reply)) else {
+            panic!("the set did not complete");
+        };
+        let identity = &out.created["c1"];
+        assert_eq!(identity.id, "I1");
+        assert_eq!(identity.name, "Alice");
+        assert_eq!(identity.email, "alice@example.org");
+        assert!(identity.may_delete);
+        assert!(out.updated.contains_key("I0"));
+    }
 
     #[test]
     fn a_refusal_reads_as_its_type_and_description() {
