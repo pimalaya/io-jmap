@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `JmapCalendarSet`, the `Calendar/set` coroutine, and `JmapClientStd::calendar_set`.
+- Added `JmapCalendarEvent::to_ical`, the iCalendar object of an event, behind the `ical` feature.
+
 ## [0.10.0] - 2026-11-15
 
 ### Added

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod changes;
 pub mod get;
+pub mod set;
 
 /// A JMAP Calendar object (draft-ietf-jmap-calendars): a named
 /// collection of CalendarEvents.

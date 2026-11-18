@@ -11,8 +11,8 @@ JMAP for Calendars (draft-ietf-jmap-calendars-27), the one domain of the JMAP su
 ### Requirement: The draft revision is named once
 The module header of `src/calendars.rs` SHALL name the draft revision the module implements, and no other place in the module SHALL name a revision or cite a section number, a reference into a moving target being worse than none.
 
-### Requirement: Calendars are read
-io-jmap SHALL cover `Calendar/get` (`JmapCalendarGet`, its properties a closed `JmapCalendarProperty` enum) and `Calendar/changes` (`JmapCalendarChanges`). `Calendar/set` is not covered.
+### Requirement: Calendars are read and written
+io-jmap SHALL cover `Calendar/get` (`JmapCalendarGet`, its properties a closed `JmapCalendarProperty` enum), `Calendar/changes` (`JmapCalendarChanges`) and `Calendar/set` (`JmapCalendarSet`). `Calendar/set` SHALL create, update by patch (`JmapCalendarUpdate`, a nullable property cleared by `Some(None)`) and destroy calendars, sending the draft's `onDestroyRemoveEvents` and `onSuccessSetIsDefault`, and SHALL type its per-object errors as `JmapCalendarSetItemError`, the RFC 8620 §5.3 ones plus the draft's `calendarHasEvent`.
 
 `JmapCalendarRights` SHALL read a right the server omits as false rather than fail the whole `Calendar/get`, and SHALL read `mayRSVP` under that spelling. `isVisible` SHALL read as `Option<bool>`, `None` meaning the server was not asked, since the draft defaults it to true.
 
@@ -33,7 +33,7 @@ io-jmap SHALL cover `CalendarEvent/get` (`JmapCalendarEventGet`), carrying the d
 `JmapCalendarEventPatch::diff` SHALL compute the patch from a base event to a staged one: each differing top-level member whole, a removed one as null, `uid` never nulled, and `recurrenceOverrides` patched per recurrence id.
 
 ### Requirement: iCalendar converts into an event behind the ical feature
-With the `ical` feature, `JmapCalendarEvent::from_ical` SHALL convert a parsed iCalendar object into the event of its one JSCalendar 2.0 entry, with no id and no calendar: overrides fold into `recurrenceOverrides`, an `EXDATE` into an `excluded` override, and the entry's `method` is dropped. Without the feature io-jmap SHALL NOT depend on ical-rs.
+With the `ical` feature, `JmapCalendarEvent::from_ical` SHALL convert a parsed iCalendar object into the event of its one JSCalendar 2.0 entry, with no id and no calendar: overrides fold into `recurrenceOverrides`, an `EXDATE` into an `excluded` override, and the entry's `method` is dropped. `JmapCalendarEvent::to_ical` SHALL convert the JSCalendar payload back to an iCalendar object, the JMAP properties left out. Without the feature io-jmap SHALL NOT depend on ical-rs.
 
 ### Requirement: The rest of the draft is out
-`Calendar/set`, `CalendarEvent/copy`, `CalendarEvent/parse`, `CalendarEventNotification/*` and `ParticipantIdentity/*` SHALL stay out until a consumer writes or reads them, a coroutine with no caller being untested surface.
+`CalendarEvent/copy`, `CalendarEvent/parse`, `CalendarEventNotification/*` and `ParticipantIdentity/*` SHALL stay out until a consumer writes or reads them, a coroutine with no caller being untested surface.

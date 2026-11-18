@@ -9,9 +9,11 @@
 //!
 //! [`JmapCalendarEventPatch::diff`]: crate::calendars::calendar_event::set::JmapCalendarEventPatch::diff
 
+use alloc::string::{String, ToString};
 use ical::{
     component::IcalComponent, ical::Ical, jscalendar::IcalJscalendarVersion, prop::IcalPropKind,
 };
+
 use serde_json::Value;
 use thiserror::Error;
 
@@ -61,6 +63,18 @@ impl JmapCalendarEvent {
             event,
             ..Default::default()
         })
+    }
+
+    /// Converts the event's JSCalendar properties to an iCalendar object.
+    ///
+    /// The JMAP properties (`id`, `calendarIds`, the draft and origin
+    /// flags, `utcStart` and `utcEnd`) are not part of the event, and stay
+    /// out of the object.
+    pub fn to_ical(&self) -> Result<String, JmapCalendarEventIcalError> {
+        let event = Value::Object(self.event.clone());
+        let calendar =
+            Ical::from_jscalendar(&event).map_err(|_| JmapCalendarEventIcalError::NotOneEvent)?;
+        Ok(calendar.to_string())
     }
 }
 
@@ -113,6 +127,24 @@ mod tests {
 
     fn keys(patch: &JmapCalendarEventPatch) -> Vec<&str> {
         patch.0.keys().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn an_event_converts_back_to_its_calendar_object() {
+        let cst = IcalCst::parse(SERIES).unwrap();
+        let mut event = JmapCalendarEvent::from_ical(&cst.decode()).unwrap();
+        event.id = Some("e1".into());
+
+        let ical = event.to_ical().unwrap();
+
+        assert!(ical.contains("UID:standup\r\n"), "{ical}");
+        assert!(ical.contains("RRULE:FREQ=WEEKLY\r\n"), "{ical}");
+        assert!(
+            ical.contains("RECURRENCE-ID;TZID=Europe/Paris:20261008T090000\r\n"),
+            "{ical}"
+        );
+        assert!(ical.contains("SUMMARY:Standup\\, later\r\n"), "{ical}");
+        assert!(!ical.contains("e1"), "{ical}");
     }
 
     #[test]

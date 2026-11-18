@@ -59,7 +59,7 @@ use url::Url;
 
 use crate::{
     calendars::{
-        calendar::{changes::*, get::*},
+        calendar::{changes::*, get::*, set::*},
         calendar_event::{changes::*, get::*, query::*, set::*},
     },
     coroutine::*,
@@ -199,6 +199,9 @@ pub enum JmapClientStdError {
     /// The `Calendar/get` coroutine failed.
     #[error(transparent)]
     CalendarGet(#[from] JmapCalendarGetError),
+    /// The `Calendar/set` coroutine failed.
+    #[error(transparent)]
+    CalendarSet(#[from] JmapCalendarSetError),
     /// The `Calendar/changes` coroutine failed.
     #[error(transparent)]
     CalendarChanges(#[from] JmapCalendarChangesError),
@@ -890,6 +893,15 @@ impl JmapClientStd {
         opts: JmapCalendarGetOptions,
     ) -> Result<JmapCalendarGetOutput, JmapClientStdError> {
         let coroutine = JmapCalendarGet::new(self.session_or_err()?, &self.http_auth, opts)?;
+        self.run(coroutine)
+    }
+
+    /// Runs [`JmapCalendarSet`] (`Calendar/set`).
+    pub fn calendar_set(
+        &mut self,
+        args: JmapCalendarSetArgs,
+    ) -> Result<JmapCalendarSetOutput, JmapClientStdError> {
+        let coroutine = JmapCalendarSet::new(self.session_or_err()?, &self.http_auth, args)?;
         self.run(coroutine)
     }
 
