@@ -4,21 +4,31 @@ use alloc::{string::String, vec::Vec};
 
 use serde::Deserialize;
 
+#[cfg(feature = "client")]
 pub mod blob_download;
+#[cfg(feature = "client")]
 pub mod blob_upload;
+#[cfg(feature = "client")]
 pub mod changes;
+#[cfg(feature = "client")]
 pub mod coroutine;
 pub mod error;
 pub mod event_source;
 pub mod filter;
+#[cfg(feature = "client")]
 pub mod get;
 pub mod push_subscription;
+#[cfg(feature = "client")]
 pub mod query;
+#[cfg(feature = "client")]
 pub mod query_changes;
 pub mod request;
+#[cfg(feature = "client")]
 pub mod send;
 pub mod session;
+#[cfg(feature = "client")]
 pub mod session_get;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// Core JMAP capability (RFC 8620).

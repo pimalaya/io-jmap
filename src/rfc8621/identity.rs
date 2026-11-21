@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::rfc8621::email::JmapEmailAddress;
 
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// A JMAP Identity object (RFC 8621 §6.1).

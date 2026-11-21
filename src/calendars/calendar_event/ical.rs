@@ -93,17 +93,16 @@ pub enum JmapCalendarEventIcalError {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{
-        string::{String, ToString},
-        vec::Vec,
-    };
+    use alloc::string::{String, ToString};
+    #[cfg(feature = "client")]
+    use alloc::vec::Vec;
 
     use ical::tree::cst::IcalCst;
     use serde_json::{Map, Value};
 
-    use crate::calendars::calendar_event::{
-        JmapCalendarEvent, ical::JmapCalendarEventIcalError, set::JmapCalendarEventPatch,
-    };
+    #[cfg(feature = "client")]
+    use crate::calendars::calendar_event::set::JmapCalendarEventPatch;
+    use crate::calendars::calendar_event::{JmapCalendarEvent, ical::JmapCalendarEventIcalError};
 
     const NEW_ENTRY: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Pimalaya//Test//EN\r\n\
         BEGIN:VEVENT\r\nUID:lunch\r\nDTSTAMP:20261009T080000Z\r\n\
@@ -125,6 +124,7 @@ mod tests {
         JmapCalendarEvent::from_ical(&cst.decode()).map(|event| event.event)
     }
 
+    #[cfg(feature = "client")]
     fn keys(patch: &JmapCalendarEventPatch) -> Vec<&str> {
         patch.0.keys().map(String::as_str).collect()
     }
@@ -228,6 +228,7 @@ mod tests {
         assert!(err.to_string().contains("one recurrence rule"), "{err}");
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn an_edit_patches_only_what_it_changed() {
         let base = event(SERIES).unwrap();
@@ -240,6 +241,7 @@ mod tests {
         assert!(JmapCalendarEventPatch::diff(&base, &base).0.is_empty());
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn an_occurrence_moved_again_patches_its_override_alone() {
         let base = event(SERIES).unwrap();

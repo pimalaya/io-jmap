@@ -7,19 +7,22 @@
 //! counterpart riding the vCardProps and JSPROP escape hatches. FN maps from
 //! `name.full` alone, never composed from the name components.
 
-use alloc::{
-    collections::BTreeMap,
-    string::{String, ToString},
-};
+#[cfg(feature = "client")]
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
 
-use serde_json::{Map, Value};
+#[cfg(feature = "client")]
+use serde_json::Map;
+use serde_json::Value;
 use thiserror::Error;
 use vcard::{
     tree::{cst::VcardCst, error::VcardParseError},
     vcard::Vcard,
 };
 
-use crate::rfc9610::contact_card::{JmapContactCard, set::JmapContactCardPatch};
+use crate::rfc9610::contact_card::JmapContactCard;
+#[cfg(feature = "client")]
+use crate::rfc9610::contact_card::set::JmapContactCardPatch;
 
 impl JmapContactCard {
     /// Converts the card's JSContact properties to a vCard 4.0 document.
@@ -55,6 +58,7 @@ impl JmapContactCard {
     /// Each property differing goes whole, a removed one as a null, except the
     /// `uid` RFC 9610 §3 groups cards on. Without a base, every property goes,
     /// which cannot clear the server-side ones the edited vCard lost track of.
+    #[cfg(feature = "client")]
     pub fn update_from_vcard(
         vcard: &str,
         base_vcard: Option<&str>,
@@ -87,6 +91,7 @@ pub enum JmapContactCardVcardError {
 
 /// The top-level members of `card` differing from `base`, and a null for
 /// each one `base` holds that `card` lost, `uid` aside.
+#[cfg(feature = "client")]
 fn diff(card: Map<String, Value>, base: &Map<String, Value>) -> BTreeMap<String, Value> {
     let mut patch = BTreeMap::new();
 
@@ -107,9 +112,12 @@ fn diff(card: Map<String, Value>, base: &Map<String, Value>) -> BTreeMap<String,
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "client")]
     use alloc::string::ToString;
 
-    use serde_json::{Value, json};
+    #[cfg(feature = "client")]
+    use serde_json::Value;
+    use serde_json::json;
 
     use crate::rfc9610::contact_card::JmapContactCard;
 
@@ -160,6 +168,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn invalid_vcard_is_refused() {
         let err = JmapContactCard::from_vcard("not a vcard").unwrap_err();
@@ -169,6 +178,7 @@ mod tests {
         assert!(err.to_string().starts_with("Invalid vCard: "), "{err}");
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn patch_without_base_carries_every_property() {
         let patch = JmapContactCard::update_from_vcard(VCARD, None).unwrap().0;
@@ -179,6 +189,7 @@ mod tests {
         assert!(!patch.contains_key("addressBookIds"), "{patch:?}");
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn patch_against_base_keeps_only_changes() {
         let edited = VCARD.replace("Jane Doe", "Jane Smith");
@@ -192,6 +203,7 @@ mod tests {
         assert!(!patch.contains_key("uid"), "{patch:?}");
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn patch_nulls_removed_properties() {
         let edited = VCARD.replace("TEL:+33612345678\r\n", "");
@@ -203,6 +215,7 @@ mod tests {
         assert!(!patch.contains_key("uid"), "{patch:?}");
     }
 
+    #[cfg(feature = "client")]
     #[test]
     fn patch_never_nulls_the_uid() {
         let edited = VCARD.replace("UID:abc\r\n", "");

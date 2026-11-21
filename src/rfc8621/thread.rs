@@ -4,7 +4,9 @@ use alloc::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "client")]
 pub mod changes;
+#[cfg(feature = "client")]
 pub mod get;
 
 /// A JMAP Thread object (RFC 8621 §3.1).

@@ -13,7 +13,9 @@ use alloc::{
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// A JMAP PushSubscription object (RFC 8620 §7.2), as returned by the server.

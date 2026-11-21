@@ -4,8 +4,11 @@ use alloc::{collections::BTreeMap, string::String};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "client")]
 pub mod changes;
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// A JMAP AddressBook object (RFC 9610 §2): a named collection of

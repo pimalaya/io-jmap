@@ -5,14 +5,14 @@
 
 use core::{error::Error, fmt};
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+#[cfg(feature = "client")]
+use alloc::string::ToString;
+use alloc::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
 /// The namespace of the JMAP problem types (RFC 8620 §3.6.1).
+#[cfg(feature = "client")]
 const JMAP_ERROR_URN: &str = "urn:ietf:params:jmap:error:";
 
 /// A JMAP request-level error (RFC 8620 §3.6.1): the problem details
@@ -66,6 +66,7 @@ pub enum JmapRequestError {
 impl JmapRequestError {
     /// Reads the body of a refused request, `None` unless it holds a
     /// problem of the JMAP namespace.
+    #[cfg(feature = "client")]
     pub(crate) fn from_body(body: &[u8]) -> Option<Self> {
         match serde_json::from_slice(body).ok()? {
             Self::Other { type_name, .. } if !type_name.starts_with(JMAP_ERROR_URN) => None,
@@ -304,6 +305,7 @@ impl fmt::Display for JmapMethodError {
 impl JmapMethodError {
     /// The error a method response named `error` reads as when its
     /// arguments are no error object, the parse failure as description.
+    #[cfg(feature = "client")]
     pub(crate) fn unreadable(err: serde_json::Error) -> Self {
         Self::Other {
             type_name: String::new(),

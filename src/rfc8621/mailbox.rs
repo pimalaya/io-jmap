@@ -6,9 +6,13 @@ use alloc::string::{String, ToString};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+#[cfg(feature = "client")]
 pub mod changes;
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod query;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// A JMAP Mailbox object (RFC 8621 §2.1): a named container for emails.

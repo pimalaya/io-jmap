@@ -4,12 +4,19 @@ use alloc::{collections::BTreeMap, string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "client")]
 pub mod changes;
+#[cfg(feature = "client")]
 pub mod copy;
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod import;
+#[cfg(feature = "client")]
 pub mod parse;
+#[cfg(feature = "client")]
 pub mod query;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// The email has been read.

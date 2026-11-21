@@ -8,9 +8,19 @@
 //! exchange is a resumable state machine emitting read and write
 //! requests instead of performing I/O itself. The caller owns the
 //! socket and pumps the coroutine with the bytes it read, whatever the
-//! runtime (blocking, async, in-memory tests). The `client` feature
-//! ships a ready-made std-blocking pump for callers who just want a
-//! working client.
+//! runtime (blocking, async, in-memory tests). The `std` feature ships
+//! a ready-made std-blocking pump for callers who just want a working
+//! client.
+//!
+//! ## Features
+//!
+//! The vocabulary (capabilities, the session, request and error objects
+//! and the data types) is always compiled, and so are the `ical` and
+//! `vcard` conversions under their own feature. `client`, on by default,
+//! adds the coroutines, the `Foo/set` patches built from a conversion,
+//! and io-http, log and secrecy. `std` adds the blocking client, and
+//! each TLS feature (`rustls-ring` by default, `rustls-aws`,
+//! `native-tls`) its connector.
 //!
 //! ## Layout: one folder per RFC
 //!
@@ -37,11 +47,11 @@
 //! taking it already parsed so the caller bounds untrusted input.
 //!
 //! Two modules span the RFC modules and therefore live at the crate
-//! root: [`coroutine`] defines the coroutine contract every state
-//! machine implements, and the optional [`client`] module (`client`
-//! feature) is the std-blocking pump: a light client wrapping any
-//! stream you opened yourself, or a full client opening the TCP/TLS
-//! connection itself when one of the TLS features is enabled.
+//! root: [`coroutine`] (`client` feature) defines the coroutine
+//! contract every state machine implements, and the optional [`client`]
+//! module (`std` feature) is the std-blocking pump: a light client
+//! wrapping any stream you opened yourself, or a full client opening the
+//! TCP/TLS connection itself when one of the TLS features is enabled.
 //!
 //! ## The coroutine contract
 //!
@@ -60,19 +70,20 @@
 //!
 //! ## Conventions
 //!
-//! The crate is no_std with alloc; std only enters behind the `client`
+//! The crate is no_std with alloc; std only enters behind the `std`
 //! feature. Every public item carries the bare `Jmap` prefix, the
 //! protocol not being version-scoped. Logging follows the library
 //! rules: state changes at debug level, in-process steps and data
 //! dumps at trace level.
 
 extern crate alloc;
-#[cfg(feature = "client")]
+#[cfg(feature = "std")]
 extern crate std;
 
 pub mod calendars;
-#[cfg(feature = "client")]
+#[cfg(feature = "std")]
 pub mod client;
+#[cfg(feature = "client")]
 pub mod coroutine;
 pub mod rfc8620;
 pub mod rfc8621;

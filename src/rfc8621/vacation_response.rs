@@ -4,7 +4,9 @@ use alloc::string::String;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// JMAP for Vacation Response capability (RFC 8621 §8).

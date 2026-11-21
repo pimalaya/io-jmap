@@ -8,9 +8,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::rfc8620::error::{write_described, write_properties};
 
+#[cfg(feature = "client")]
 pub mod cancel;
+#[cfg(feature = "client")]
 pub mod get;
+#[cfg(feature = "client")]
 pub mod query;
+#[cfg(feature = "client")]
 pub mod set;
 
 /// JMAP for Mail Submission capability (RFC 8621 §7).

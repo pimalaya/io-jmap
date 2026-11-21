@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING**: Renamed the `client` feature, which gated the blocking client and std, to `std`.
+
+  A consumer naming it moves to the new name:
+
+  ```toml
+  # before
+  io-jmap = { version = "0.10", default-features = false, features = ["client"] }
+  # after
+  io-jmap = { version = "0.11", default-features = false, features = ["std"] }
+  ```
+
+- **BREAKING**: Changed the `client` feature to gate the coroutines (`coroutine`, every method submodule of `rfc8620`, `rfc8621`, `rfc9610` and `calendars`, `JmapContactCard::update_from_vcard`) and the io-http, log and secrecy dependencies.
+
+  It is on by default and implied by `std` and the TLS features. A consumer turning default features off to drive the coroutines itself adds it:
+
+  ```toml
+  # before
+  io-jmap = { version = "0.10", default-features = false }
+  # after
+  io-jmap = { version = "0.11", default-features = false, features = ["client"] }
+  ```
+
+  The vocabulary stays compiled without it: the capabilities, the session, request, error, filter and event source objects, the data types, and the `ical` and `vcard` conversions to and from a payload.
+
 ## [0.10.1] - 2026-11-18
 
 ### Added

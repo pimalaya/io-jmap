@@ -12,6 +12,7 @@ use alloc::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+#[cfg(feature = "client")]
 pub mod subscribe;
 
 /// Wire value of the `@type` property of a StateChange object.
@@ -84,6 +85,7 @@ pub enum JmapCloseAfter {
 }
 
 impl JmapCloseAfter {
+    #[cfg(feature = "client")]
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::No => "no",

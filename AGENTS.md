@@ -38,7 +38,7 @@ Check the structure yourself against the strict rules (CAIRN.md §8): a discover
 
 - Run every cargo command through the nix devshell: `nix develop --command cargo <...>`.
 - Run `cargo fmt` on the crate after finishing code changes.
-- io-jmap is an I/O-free library: the coroutines take no stream and build on io-http's, and every layer above them sits behind a feature (`client` for the blocking client, `rustls-ring`, `rustls-aws` or `native-tls` for the full client, plus `vcard`, `ical` and `schemars`). Build both sides of a gate you touch.
+- io-jmap is an I/O-free library: the coroutines take no stream and build on io-http's, and every layer above them sits behind a feature (`client` for the coroutines and io-http, log and secrecy, `std` for the blocking client, `rustls-ring`, `rustls-aws` or `native-tls` for the full client, plus `vcard`, `ical` and `schemars`). Build both sides of a gate you touch.
 - The tree is laid out by RFC (`rfc8620`, `rfc8621`, `rfc9610`); a draft lives under its domain name (`calendars`) until it gets a number.
 - Never adjust production code to fit a test: adjust the test to match correct behaviour.
 - No em dashes in prose, per the Pimalaya guidelines.
