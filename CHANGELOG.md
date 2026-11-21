@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Moved to io-http 0.9; `client` enables `io-http/client`.
 - **BREAKING**: Renamed the `client` feature, which gated the blocking client and std, to `std`.
 
   A consumer naming it moves to the new name:
