@@ -25,6 +25,8 @@ impl JmapCalendarEvent {
     ///
     /// Overrides fold into `recurrenceOverrides`, an `EXDATE` an `excluded`
     /// one, and the entry's `method` is dropped, a stored event carrying none.
+    /// The entry takes the Group's `version`, a stored event being a
+    /// top-level JSCalendar object.
     /// The caller parses the object, bounding its nesting depth when untrusted.
     pub fn from_ical(calendar: &Ical<'_>) -> Result<Self, JmapCalendarEventIcalError> {
         let rules = |component: &IcalComponent| {
@@ -42,9 +44,9 @@ impl JmapCalendarEvent {
             return Err(JmapCalendarEventIcalError::RecurrenceRules);
         }
 
-        let mut entries = match calendar.to_jscalendar_as(IcalJscalendarVersion::V2_0) {
-            Value::Object(mut group) => group.remove("entries"),
-            _ => None,
+        let (version, mut entries) = match calendar.to_jscalendar_as(IcalJscalendarVersion::V2_0) {
+            Value::Object(mut group) => (group.remove("version"), group.remove("entries")),
+            _ => (None, None),
         };
         let entry = match entries.as_mut() {
             Some(Value::Array(entries)) if entries.len() == 1 => entries.pop(),
@@ -58,6 +60,10 @@ impl JmapCalendarEvent {
         // draft has a stored event carry none, a server refusing one as
         // invalid; it belongs to a scheduling message.
         event.remove("method");
+
+        if let Some(version) = version {
+            event.insert("version".into(), version);
+        }
 
         Ok(Self {
             event,
@@ -162,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn a_series_is_written_as_jscalendar_2_0_without_its_method() {
+    fn a_series_is_written_as_a_jscalendar_2_0_object_without_its_method() {
         let series = NEW_ENTRY
             .replace("VERSION:2.0\r\n", "VERSION:2.0\r\nMETHOD:REQUEST\r\n")
             .replace(
@@ -174,7 +180,7 @@ mod tests {
         let event = event(&series).unwrap();
 
         assert!(event.get("method").is_none(), "{event:?}");
-        assert!(event.get("version").is_none(), "{event:?}");
+        assert_eq!(event.get("version"), Some(&Value::from("2.0")));
         assert_eq!(event["recurrenceRule"]["frequency"], "weekly");
         assert_eq!(event["recurrenceRule"]["count"], 4);
         assert!(event.get("recurrenceRules").is_none(), "{event:?}");

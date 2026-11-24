@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `JmapCalendarEvent::from_ical` dropping the JSCalendar Group's `version`: the event now carries `version: "2.0"`, which Fastmail requires of a created event (`invalidProperties`, `version`).
+
 ## [0.11.0] - 2026-11-21
 
 ### Changed
