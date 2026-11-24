@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-24
+
 ### Fixed
 
 - Fixed `JmapCalendarEvent::from_ical` dropping the JSCalendar Group's `version`: the event now carries `version: "2.0"`, which Fastmail requires of a created event (`invalidProperties`, `version`).
@@ -344,7 +346,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Compiles the underlying TLS dependencies in vendored mode (forwarded to `pimalaya-stream/vendored`).
 
-[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.11.0..HEAD
+[unreleased]: https://github.com/pimalaya/io-jmap/compare/v0.11.1..HEAD
+[0.11.1]: https://github.com/pimalaya/io-jmap/compare/v0.11.0..v0.11.1
 [0.11.0]: https://github.com/pimalaya/io-jmap/compare/v0.10.1..v0.11.0
 [0.10.1]: https://github.com/pimalaya/io-jmap/compare/v0.10.0..v0.10.1
 [0.10.0]: https://github.com/pimalaya/io-jmap/compare/v0.9.0..v0.10.0
